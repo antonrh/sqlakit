@@ -1,0 +1,172 @@
+[project]
+name = "sqlakit"
+version = "0.1.0"
+description = "A toolkit for SQLAlchemy applications."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "sqlalchemy[asyncio]>=2.0.43",
+]
+
+[project.optional-dependencies]
+sql = [
+    "jinja2sql>=0.11.0",
+]
+debug = [
+    "sqlparse>=0.6.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "sqlakit"
+module-root = ""
+
+[tool.uv]
+default-groups = ["dev", "docs"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ty>=0.0.72",
+    "ruff>=0.16.3",
+    "poethepoet>=0.48.0",
+    "anyio>=4.14.2",
+    "trio>=0.34.0",
+    "aiosqlite>=0.22.1",
+    "pytest-cov>=7.1.0",
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
+    "httpx2>=2.10.0",
+    "sqlmodel>=0.0.39",
+    "jinja2sql>=0.11.0",
+    "pydantic>=2.13.4",
+    "sqlparse>=0.6.0",
+    "rich>=15.0.0",
+    "pytest-docker>=3.2.5",
+    "psycopg[binary]>=3.3.4",
+    "pymysql>=1.2.0",
+    "aiomysql>=0.3.2",
+    "oracledb>=4.0.2",
+    "flask>=3.1.3",
+    "dirty-equals>=0.11",
+    "codespell>=2.4.3",
+]
+docs = [
+    "mkdocs>=1.6.1,<2",
+    "mkdocs-material>=9.7.7",
+    "mkdocstrings[python]>=1.0.6",
+    # mkdocstrings lays out long signatures with it, and leaves them on one
+    # line without it, so the built site would differ from a local build.
+    "ruff>=0.16.3",
+]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "error",
+    # Python 3.13 made `sqlite3.Connection` warn when the garbage collector
+    # finalises it instead of a `close()`. The tests build throwaway databases
+    # by the dozen and let them go, so this says nothing about the code.
+    "ignore:unclosed database:ResourceWarning",
+]
+# `pytester` runs the conftest the docs show, in a session of its own.
+addopts = "-p pytester"
+
+[tool.ruff]
+include = [
+    "sqlakit/**/*.py",
+    "tools/**/*.py",
+    "tests/**/*.py",
+    "examples/**/*.py",
+    "pyproject.toml",
+]
+
+[tool.ruff.format]
+# The code samples in docstrings are formatted like the code around them.
+docstring-code-format = true
+docstring-code-line-length = 79
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "CPY001", # copyright notice in every file
+    "D1", # docstrings are not mandatory
+    "D203", # incompatible with D211
+    "D213", # incompatible with D212
+    "E501", # line length is enforced by the formatter
+    "COM812", # conflicts with the formatter
+    "ISC001", # conflicts with the formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",     # tests assert
+    "PLR2004",  # and compare against the values they mean
+    "SLF001",   # they read the internals they are testing
+    "PT012",    # a `raises` block is allowed to set the scene
+    "B018",     # touching an attribute is how a test triggers it
+    "SIM117",   # nested `with` reads better than a long line of them
+    "PLC0415",  # a fixture imports what it is about, where it is about it
+    "DTZ001",   # naive datetimes are fine as fixtures
+    "ARG001",   # a fixture may be requested for its side effect
+    "PT011",    # `raises` without `match` is enough for our own errors
+    "ANN401",   # test helpers take whatever the example hands them
+    "D401",     # test docstrings read as descriptions
+    "N818",     # a test's own exception needs no Error suffix
+    "FBT001",   # parametrised booleans arrive positionally
+    "PLW0108",  # a lambda in a parameter table is deliberate
+    "DTZ005",   # naive datetimes are fine as fixtures
+    "S106",     # the passwords here are fake, and the point of the test
+]
+"tools/**/*.py" = [
+    "INP001",   # a script, not a package
+    "T201",     # a script that says what it found
+]
+"examples/**/*.py" = [
+    "INP001",   # examples are read one file at a time, not imported as a package
+    "ARG001",   # FastAPI hands handlers a request they may not use
+    "TC003",    # examples keep their imports where a reader expects them
+]
+
+[tool.ty.src]
+include = [
+    "sqlakit/**/*",
+    "tests/**/*",
+    "examples/**/*",
+    "tools/**/*",
+]
+
+[tool.poe.tasks.fmt]
+help = "Format and auto-fix"
+sequence = ["ruff format", "ruff check --fix"]
+default_item_type = "cmd"
+
+[tool.poe.tasks.docs]
+help = "Serve the documentation"
+cmd = "mkdocs serve"
+
+[tool.poe.tasks.test]
+help = "Run the tests that need nothing but Python"
+cmd = "pytest --ignore=tests/integration"
+
+[tool.poe.tasks.test-integration]
+help = "Run the tests that need PostgreSQL and MySQL, in containers"
+cmd = "pytest tests/integration"
+
+[tool.poe.tasks.lint]
+help = "Lint + type-check"
+sequence = [
+    "ruff format --check",
+    "ruff check",
+    "ty check",
+    "codespell",
+    "python tools/lint_docs.py",
+]
+default_item_type = "cmd"
+
+[tool.codespell]
+# `froms` is SQLAlchemy's own word for what a SELECT selects from.
+ignore-words-list = "froms"
+skip = "./.venv,./site,./uv.lock,./.git"

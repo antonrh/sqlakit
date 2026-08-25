@@ -1,0 +1,23 @@
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.13"
+  jobs:
+    create_environment:
+      - asdf plugin add uv
+      - asdf install uv latest
+      - asdf global uv latest
+      - uv venv
+    install:
+      # The docs group alone: the default groups carry the whole test rig,
+      # Oracle and Postgres drivers included, and none of it renders a page.
+      - uv sync --frozen --no-default-groups --group docs
+    build:
+      html:
+        # --strict fails the build on a broken link or an unresolved reference.
+        - NO_COLOR=1 uv run mkdocs build --strict --site-dir $READTHEDOCS_OUTPUT/html
+
+mkdocs:
+  configuration: mkdocs.yml

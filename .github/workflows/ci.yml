@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  UV_FROZEN: '1'
+
+jobs:
+  lint:
+    name: Code quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --all-extras
+      # Formatting, linting, types, spelling, and the docs' own code blocks.
+      - name: Lint
+        run: uv run poe lint
+
+  docs:
+    name: Build the documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --all-extras
+      # --strict fails on a broken link or an unresolved reference.
+      - name: Build
+        run: uv run mkdocs build --strict
+
+  tests:
+    name: Tests on ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13', '3.14']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install uv and set the Python version
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --all-extras
+      # Everything but tests/integration, which needs the containers below.
+      - name: Run tests
+        run: uv run pytest --ignore=tests/integration --cov=sqlakit --cov-report=xml
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
+        if: matrix.python == '3.11'
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --all-extras
+      - name: Run integration tests
+        run: uv run pytest tests/integration

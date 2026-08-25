@@ -1,0 +1,41 @@
+services:
+
+  postgres:
+    image: postgres:18-alpine
+    ports:
+      - "7433:5432"
+    environment:
+      POSTGRES_USER: "sqlakit"
+      POSTGRES_PASSWORD: "sqlakit"
+      POSTGRES_DB: "sqlakit_test"
+    command: "-p 5432"
+
+  mysql:
+    image: mysql:8.4
+    ports:
+      - "7306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: "sqlakit"
+      MYSQL_DATABASE: "sqlakit_test"
+      MYSQL_USER: "sqlakit"
+      MYSQL_PASSWORD: "sqlakit"
+    command: "--port=3306"
+
+  mariadb:
+    image: mariadb:11.4
+    ports:
+      - "7307:3306"
+    environment:
+      MARIADB_ROOT_PASSWORD: "sqlakit"
+      MARIADB_DATABASE: "sqlakit_test"
+      MARIADB_USER: "sqlakit"
+      MARIADB_PASSWORD: "sqlakit"
+
+  oracle:
+    image: gvenzl/oracle-free:23-slim
+    ports:
+      - "7521:1521"
+    environment:
+      ORACLE_PASSWORD: "sqlakit"
+      APP_USER: "sqlakit"
+      APP_USER_PASSWORD: "sqlakit"
