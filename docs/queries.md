@@ -204,7 +204,8 @@ db.query(User).order_by(sa.nulls_last(User.sent_at))
 ```
 
 It also accepts an ordering string: `name`, `name.desc` or
-`name.desc.nulls_last`. The default direction is ascending.
+`name.desc.nulls_last`. The default direction is ascending. Pass several, and
+the rows are ordered by each in turn:
 
 ```python
 sort = "created_at.desc"  # e.g. a query parameter
