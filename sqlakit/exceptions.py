@@ -326,6 +326,17 @@ class BulkQueryError(SQLAKitError, TypeError):
         )
 
 
+class PageItemsMismatchError(SQLAKitError, TypeError):
+    """Raised when a page transform returns the wrong number of items."""
+
+    def __init__(self, expected: int = 0, got: int = 0) -> None:
+        super().__init__(
+            f"The page holds {expected} items and the transform returned {got}. "
+            f"Totals and cursors belong to the page's rows, so a transform has "
+            f"to return one item per row."
+        )
+
+
 class UnknownOrderFieldError(SQLAKitError, ValueError):
     """Raised when an ordering names a field the model does not offer."""
 

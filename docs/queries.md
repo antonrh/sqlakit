@@ -430,7 +430,8 @@ page = (
 ```
 
 `map_all` passes the whole list in one call, for work done on all items at
-once:
+once. The totals and the cursors belong to the page's rows, so a transform has
+to return one item per row; a different count raises `PageItemsMismatchError`:
 
 ```python
 page = page.map_all(lambda users: serialize_many(users))
