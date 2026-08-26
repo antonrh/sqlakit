@@ -42,8 +42,8 @@ class Novel(Base, table=True):
     writer_id: int = Field(foreign_key="writer.id")
     published_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
-    # A pydantic model wants every class attribute annotated, and a `ClassVar`
-    # is how you say this one is not a field.
+    # A pydantic model requires an annotation on every class attribute;
+    # `ClassVar` marks this one as not a field.
     query: ClassVar[NovelQuery] = NovelQuery.as_descriptor()
 
     # Every mapped column is sortable unless a model narrows it. These are the

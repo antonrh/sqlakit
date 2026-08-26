@@ -1,6 +1,6 @@
 # Multiple databases
 
-Configure the registry with one entry per database, and `"default"` is the one
+Configure the registry with one entry per database. `"default"` is the one
 everything falls back to:
 
 ```python
@@ -18,16 +18,16 @@ db.session  # the default one
 db["replica"].session  # another, by alias
 ```
 
-An entry takes what `Database` takes: a URL or the arguments to build one, plus
-`engine_args`, `session_args` and `templates` of its own.
+An entry accepts the same arguments as `Database`: a URL or the parts to build
+one, plus its own `engine_args`, `session_args` and `templates`.
 
-What follows is where a model lives, which database a block runs on, and how to
-send a single query somewhere else.
+This page covers where a model lives, which database a block runs on, and how
+to send a single query somewhere else.
 
 ## Where does a model live?
 
-On the database its `__db__` names, which a base class says once for everything
-under it:
+On the database set in its `__db__`, which a base class can set once for
+everything under it:
 
 ```python
 from sqlakit.orm import Model
@@ -42,15 +42,15 @@ class Report(WarehouseBase):
     __tablename__ = "reports"
 ```
 
-Reads, writes and the tables [`provisioned_tables()`](testing.md) creates all
-follow it.
+Reads, writes and the tables created by
+[`provisioned_tables()`](testing.md) all follow it.
 
-`__db__` belongs to the [model layer](models.md). A plain mapped class is handed
-its database instead: `warehouse.query(Report)`.
+`__db__` is part of the [model layer](models.md). With a plain mapped class,
+pass the database directly: `warehouse.query(Report)`.
 
-`__db__` needs a class you can edit. For the ones you cannot edit, such as
-models from a package you depend on, or for a placement that belongs in
-settings, a **router** answers the same question from outside:
+`__db__` requires a class you can edit. For models you cannot edit, such as
+models from a third-party package, or when the placement belongs in settings,
+use a **router**, which makes the same decision from outside:
 
 ```python
 # app/db.py
@@ -68,11 +68,11 @@ class Placement(Router):
 
 ```python
 db.route(Placement())
-db.route(lambda model: ELSEWHERE.get(model))  # a function does as well
+db.route(lambda model: ELSEWHERE.get(model))  # a plain function also works
 ```
 
-`configure()` takes them too, by import path, so the policy can come from
-settings rather than from a call somewhere:
+`configure()` also accepts routers, by import path, so the policy can live in
+settings rather than in a call somewhere:
 
 ```python
 db.configure(
@@ -90,47 +90,46 @@ A router is a class with `db_for`, or any callable of the same shape:
 def db_for(model: type) -> str | None: ...
 ```
 
-There is one argument, and it is the model class. Not the instance, not the
-statement, not whether this is a read or a write, so splitting reads from writes
-through a router is not something it can do.
+The only argument is the model class. Not the instance, not the statement, and
+not whether this is a read or a write, so a router cannot split reads from
+writes.
 
-What comes back is the alias the model lives on, or `None` when the router has
-nothing to say about that model. The alias has to be one the registry was
-configured with, or resolving it raises `UnknownDatabaseError`.
+The return value is the alias the model lives on, or `None` if the router has
+no answer for that model. The alias must be one the registry was configured
+with; otherwise resolving it raises `UnknownDatabaseError`.
 
-Routers are asked in the order given, and the first with an answer decides. When
-none of them answers, the word goes to the model's own `__db__`, and failing
-that to the default database. `route()` with nothing clears them.
+Routers are called in the order given, and the first one that returns an alias
+decides. If none of them does, the model's own `__db__` applies, and failing
+that the default database. `route()` with no arguments clears them.
 
-A router runs every time a model resolves its database, so expensive work inside
-one is worth avoiding. The answer for a given model also has to stay the same.
-Once it starts changing, the writes go to one database and the reads to another.
+A router runs every time a model resolves its database, so avoid expensive work
+inside it. The answer for a given model must also stay the same: once it starts
+changing, writes go to one database and reads to another.
 
 ## Which database is this block on?
 
-`db.using(alias)` hands back that database, standing in for the default one
-while a block of it is open:
+`db.using(alias)` returns that database, and while one of its blocks is open it
+stands in for the default one:
 
 ```python
 with db.using("replica").connect():
     report = build_report()  # models on the default database read the replica
 ```
 
-The read-only path of an application is that one line. A tenant on its own shard
-is the same line:
+That one line covers the read-only path of an application. A tenant on its own
+shard works the same way:
 
 ```python
 async with db.using(shard_of(tenant)).transaction():
     await move_the_tenant_in()
 ```
 
-`using()` stands in only for models that have no `__db__` of their own. A model
-that names one, such as the warehouse model above, keeps going to its own
-database. The redirection ends when the block does, including when it ends by
-raising.
+`using()` only affects models without a `__db__` of their own. A model that
+sets one, such as the warehouse model above, keeps using its own database. The
+redirection ends with the block, including when the block ends by raising.
 
-Entered on its own it redirects and opens nothing, for a block someone else
-opens:
+You can also enter `db.using("replica")` on its own: it only redirects and
+doesn't open anything. Use it when the block is opened somewhere else:
 
 ```python
 with db.using("replica"):
@@ -141,41 +140,40 @@ with db.using("replica"):
 
 ```python
 User.query.using("replica").order_by("name").page(limit=20)
-User.query.using(warehouse).count()  # a database, rather than a name
+User.query.using(warehouse).count()  # a `Database` object instead of an alias
 ```
 
-One query, wherever you said, whatever the block around it is doing.
+One query goes to the database you named, regardless of the surrounding block.
 
-[SQL templates](sql.md) name their database the same way, by starting from it.
-`db.sql(...)` runs on the default one, `db["warehouse"].sql(...)` on that one.
-Routers say where a *model* lives, and a template is not a model, so nothing
-routes it for you.
+With [SQL templates](sql.md), the database you call decides: `db.sql(...)`
+runs on the default one, `db["warehouse"].sql(...)` on the warehouse.
+Routers decide where a *model* lives, and a template is not a model, so
+templates are never routed.
 
 ## What none of this does
 
-**It does not open connections for you.** Naming a database chooses one. A
-statement still runs in a block, and reaching a database nothing has opened
-raises `MissingSessionError`. That keeps the choice readable: the statements run
-on the connection opened by the block you are inside.
+**It does not open connections for you.** Naming a database only chooses one. A
+statement still runs inside a block, and using a database no block has opened
+raises `MissingSessionError`. That keeps the choice readable: the statements
+run on the connection opened by the block you are inside.
 
-**It does not split reads from writes behind your back.** A framework that sends
-every read to a replica breaks inside a transaction. The row you have just
-written is missing from the very next read, because that read travels on another
+**It does not split reads from writes behind your back.** A framework that
+sends every read to a replica breaks inside a transaction: the row you just
+wrote is missing from the very next read, because that read runs on another
 connection, and an uncommitted transaction is invisible from there. Here the
-block decides, so that bug cannot arrive by configuration. Spreading reads over
-several replicas is the same line as before, with the choice made where
-connections are opened:
+block decides, so this bug cannot come from configuration. To spread reads over
+several replicas, make the choice where connections are opened:
 
 ```python
 async with db.using(random.choice(REPLICAS)).connect():
     return await get_report(request)
 ```
 
-by turn, by region, or by whatever your deployment knows.
+Round-robin, by region, or by whatever rule fits your deployment.
 
-**It does not police relationships.** A relationship between models on two
-databases does not work in `SQLAlchemy`, so there is nothing to permit or
+**It does not police relationships.** `SQLAlchemy` does not support a
+relationship between models on two databases, so there is nothing to permit or
 forbid.
 
-Next: [debugging](debugging.md) for a recording that says which database ran
-what, and [testing](testing.md) for a schema and a rollback on every one.
+Next: [debugging](debugging.md) for a recording that shows which database ran
+what, and [testing](testing.md) for a schema and a rollback on every database.

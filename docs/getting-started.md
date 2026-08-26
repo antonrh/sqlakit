@@ -1,7 +1,7 @@
 # Getting started
 
-Connecting to a database, writing inside a transaction, and a test that rolls
-back after itself.
+This page walks you through the basics: connecting to a database, writing
+inside a transaction, and writing a test that cleans up after itself.
 
 ## Install
 
@@ -11,9 +11,9 @@ $ pip install sqlakit
 
 ## Connect
 
-Create a `Database`. The object itself opens nothing and does not create
-`app.db` yet. It only remembers the URL, and the engine and the connection
-arrive the first time something reaches for the database.
+Create a `Database`. It doesn't connect to anything yet and doesn't create
+`app.db`. It only stores the URL; the engine and the first connection are
+created the first time you use the database.
 
 ```python
 # app/db.py
@@ -35,8 +35,7 @@ with db.connect() as conn:
 
 ## Define a table
 
-Models stay plain `SQLAlchemy` classes. SQLAKit does not ask for a base of its
-own.
+Models are plain `SQLAlchemy` classes. You don't need a special base class:
 
 ```python
 # app/models.py
@@ -73,11 +72,11 @@ with db.connect():
     print(db.session.scalars(sa.select(User.name)).all())  # ['ada']
 ```
 
-The transaction commits when the block ends, and rolls back if the block
-raises.
+The transaction commits when the block ends, and rolls back if the block raises
+an exception.
 
-`db.session` takes the session from the current context. Threading it through
-every function as an argument is no longer your job:
+`db.session` returns the session of the current block, so you don't have to
+pass it through every function as an argument:
 
 ```python
 # app/users.py
@@ -101,13 +100,14 @@ with db.connect():
     print(db.session.scalars(sa.select(User.name)).all())  # ['grace']
 ```
 
-`rename` opens nothing and commits nothing. The block around it decides both.
+Notice that `rename` doesn't open a connection and doesn't commit. The block
+around it takes care of both.
 
 ## Write a test
 
 One fixture creates the tables once for the whole run. Each test then runs
-inside a transaction of its own, rolled back at the end, so what one test wrote
-never reaches the next:
+inside its own transaction, which is rolled back at the end, so data written by
+one test never leaks into the next:
 
 ```python
 # tests/conftest.py
@@ -150,25 +150,26 @@ def test_rename() -> None:
     assert db.session.scalar(sa.select(User.name)) == "grace"
 ```
 
-Run them with `python -m pytest`, which puts the project directory on the path
-so `app` imports. The schema goes when the run ends, so the tests want neither a
-database prepared in advance nor cleaning up in between.
+Run the tests with `python -m pytest`. It puts the project directory on the
+path, so the `app` package can be imported. The schema is dropped when the run
+ends, so you don't need a prepared database and there's nothing to clean up in
+between.
 
 ## What you have now
 
-- A database that any code below a block can reach, with no function taking a
-  session.
-- A transaction that commits at the end of the block and rolls back when it
-  raises.
+- A database that any code inside a block can use, without passing a session
+  around.
+- A transaction that commits at the end of the block and rolls back on an
+  exception.
 - A test that writes rows and leaves the database as it found it.
 
 ## Next
 
-- [Context](context.md) for the blocks there are, what each one commits, and how
+- [Context](context.md): the available blocks, what each one commits, and how
   they nest.
 - [Models](models.md) if you want instances that save themselves. The layer is
   optional.
-- [Blocks under asyncio](context.md#async) if you are here for `FastAPI` or
-  `aiohttp`: the same thing from `sqlakit.asyncio`, with `await`.
-- [Examples](examples.md) for whole programs: a `FastAPI` service, and
+- [Blocks under asyncio](context.md#async) if you're here for `FastAPI` or
+  `aiohttp`: the same blocks from `sqlakit.asyncio`, with `await`.
+- [Examples](examples.md): complete programs, including a `FastAPI` service and
   `SQLModel` with and without the model layer.

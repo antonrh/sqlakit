@@ -1,13 +1,13 @@
 # Queries
 
-A query reads rows of one model on the session of the open block. There is more
-than one way to reach it, and which one depends only on how the model was
-declared.
+A query reads rows of one model, using the session of the open block. There
+are several ways to get a query, and which one you use depends only on how
+the model was declared.
 
 ## From the database
 
-A plain `SQLAlchemy` class knows nothing about this library, so the database
-builds the query over it:
+A plain `SQLAlchemy` class isn't tied to this library in any way, so you build
+the query from the database object:
 
 ```python
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -33,13 +33,13 @@ with db.connect():
     active = db.query(User).where(User.is_active).all()
 ```
 
-The block binds the session the query will run on. Every example below sits
-inside a block, and the page stops saying so from here on.
+The block binds the session the query runs on. Every example below assumes an
+open block, so the block is left out from here on.
 
 ## In a repository
 
-An application that keeps saving out of its models hands the database to a
-repository, which reaches the same builder:
+If you'd rather keep persistence out of your models, hand the database to a
+repository; it uses the same builder:
 
 ```python
 from datetime import datetime
@@ -70,7 +70,7 @@ class UserRepository:
         )
 
     def last_ordered_before(self, when: datetime) -> list[User]:
-        # SQL of its own, mapped back onto the model.
+        # Raw SQL, mapped back onto the model.
         return self.query.from_statement(
             sa.text("""
                 SELECT users.* FROM users
@@ -81,23 +81,23 @@ class UserRepository:
         ).all()
 ```
 
-That last method is the case where the builder gets longer rather than clearer.
-`from_sql` does the same thing from a file, with the values bound: see
+The last method shows a query that is easier to write as SQL than through the
+builder. `from_sql` does the same from a file, with the values bound: see
 [SQL templates](sql.md).
 
-Every example below is written through `db.query(User)`. The hooks are read off
-the mapped class itself, so `__orderable__`, `__cursor_key__` and
-`__query_filter__` work on any declarative class.
+Every example below uses `db.query(User)`. The hooks (`__orderable__`,
+`__cursor_key__`, `__query_filter__`) are read from the mapped class itself,
+so they work on any declarative class.
 
-If reaching a query straight off the class suits you better, there is
-[`Model.query`](models.md), which builds the very same object.
+If you prefer to get a query straight from the class, use
+[`Model.query`](models.md); it builds the same object.
 
-In [examples](examples.md) both are written out in full, with `SQLModel` classes
-and with a repository.
+Both approaches are shown in full in the [examples](examples.md), with
+`SQLModel` classes and with a repository.
 
 ## Building
 
-Every method returns a new query, so one can be kept and branched from:
+Every method returns a new query, so you can keep one and branch from it:
 
 ```python
 active = db.query(User).where(User.is_active)
@@ -112,7 +112,7 @@ active.filter_by(team="red").first()
 | `where`, `filter_by` | narrow the selection |
 | `join`, `outerjoin`, `select_from` | bring in other tables |
 | `order_by`, `distinct`, `limit`, `offset` | shape the result |
-| `order_by("name.desc")` | ordering by a string the request carries |
+| `order_by("name.desc")` | ordering by a string from the request |
 | `group_by`, `having` | aggregate |
 | `options`, `joinedload`, `selectinload`, `subqueryload`, `contains_eager` | load relationships |
 | `with_for_update`, `execution_options` | how the statement runs |
@@ -122,21 +122,21 @@ active.filter_by(team="red").first()
 | `get`, `get_one` | one row by primary key |
 | `all`, `first`, `one`, `one_or_none` | rows as instances |
 | `latest`, `earliest` | the row with the highest or lowest value of a column |
-| `count`, `exists` | how many there are, and whether there are any |
+| `count`, `exists` | how many rows match, and whether any do |
 | `page`, `cursor_page` | one page of them |
 | `chunks` | every row, a batch at a time |
 | `only_columns` | columns instead of instances |
-| `from_statement`, `from_sql` | rows of SQL you wrote |
+| `from_statement`, `from_sql` | rows from SQL you wrote |
 | `create`, `create_many` | write new rows |
 | `update`, `delete` | write to every matching row |
 
-Everything else lives in one attribute: `query.select` hands back the
-`SQLAlchemy` `Select` that was assembled underneath.
+For everything else, `query.select` returns the underlying `SQLAlchemy`
+`Select`.
 
-The calls that require a row name the model that had none. `get_one` and `one`
+When a required row is missing, the error names the model. `get_one` and `one`
 raise `InstanceNotFoundError`, and `one` and `one_or_none` raise
-`MultipleInstancesFoundError` when more than one row matches. Both errors carry
-the model's name:
+`MultipleInstancesFoundError` when more than one row matches. Both errors
+carry the model's name:
 
 ```python
 from sqlakit import InstanceNotFoundError
@@ -147,8 +147,8 @@ except InstanceNotFoundError as error:
     raise HTTPException(404, f"{error.model} not found")
 ```
 
-Both inherit `SQLAlchemy`'s `NoResultFound` and `MultipleResultsFound`, so an
-`except` you already wrote goes on working.
+Both inherit from `SQLAlchemy`'s `NoResultFound` and `MultipleResultsFound`,
+so any `except` clauses you already have keep working.
 
 ## One row by key
 
@@ -160,86 +160,87 @@ db.query(User).get(1)
 db.query(User).get_one(1)
 ```
 
-Both look the row up by primary key. A query narrowed by `where` is not ignored
-by them but rejected, with `KeyLookupError`. The loading you asked for and a
-lock do carry over:
+Both look the row up by primary key. If the query was narrowed with `where`,
+they raise `KeyLookupError` instead of silently ignoring the condition. Loader
+options and locks do carry over:
 
 ```python
 db.query(User).joinedload(User.team).get(1)
 db.query(User).with_for_update().get_one(1)
 ```
 
-Both look in the session's identity map first. When the row is already there,
-they hand back the same instance and never reach the database. The second call
-below runs no statement at all and returns that same object:
+Both check the session's identity map first. If the row is already loaded,
+they return the same instance without touching the database. The second call
+below runs no statement and returns the same object:
 
 ```python
 user = db.query(User).get(1)
 assert db.query(User).get(1) is user
 ```
 
-The map holds them with weak references, so the saving lasts exactly as long as
-the instance lives in your code. Where one row is touched from several places,
-that cuts out most of the reads.
+The map holds instances with weak references, so this caching lasts only while
+the instance is alive in your code. When you use the same row from several
+places, most of those lookups never reach the database.
 
-The values in an instance belong to the moment it was loaded, and a write from
-another transaction does not reach them. `refresh()` reads the current ones:
+An instance keeps the values it was loaded with; a write from another
+transaction doesn't update them. `refresh()` reads the current values:
 
 ```python
 db.session.refresh(user)
 ```
 
-The query itself always goes to the database, but it hands out instances from
-the identity map. Rows the session already holds come back as the same objects,
-with the attributes they had before. Fresh values come from `refresh()` or from
-a new transaction.
+A query always runs against the database, but it returns instances from the
+identity map. Rows the session already holds come back as the same objects,
+with the attributes they had before. To get fresh values, call `refresh()` or
+start a new transaction.
 
 ## Ordering
 
-`order_by` here is the one from `SQLAlchemy`, so columns work as they always do:
+`order_by` behaves like the `SQLAlchemy` one, so columns work as usual:
 
 ```python
 db.query(User).order_by(User.created_at.desc(), User.id.asc())
 db.query(User).order_by(sa.nulls_last(User.sent_at))
 ```
 
-It takes an ordering string as well: `name`, `name.desc` or
-`name.desc.nulls_last`. Ascending unless the string says otherwise.
+It also accepts an ordering string: `name`, `name.desc` or
+`name.desc.nulls_last`. The default direction is ascending.
 
 ```python
-sort = "created_at.desc"  # a query parameter, say
+sort = "created_at.desc"  # e.g. a query parameter
 
 db.query(User).order_by(sort).page(limit=20, offset=40)
 db.query(User).order_by("team", "created_at.desc").cursor_page(limit=20)
 ```
 
-Both kinds live together in one call, so a default ordering and a requested one
-stand side by side:
+Strings and columns can be mixed in one call, for example a requested ordering
+plus a default one:
 
 ```python
 db.query(User).order_by(sort, User.id)
 ```
 
-The name is looked up among what the model offers rather than pasted into the
-SQL. A field you never meant to order by raises `UnknownOrderFieldError` and
-never reaches the database. `None` is skipped and a list is unpacked, so an
-ordering can be passed in whatever shape it arrived:
+The field name is checked against the model's allowed fields, not pasted into
+the SQL. An unknown field raises `UnknownOrderFieldError` and never reaches
+the database. `None` is skipped and a list is unpacked, so you can pass the
+ordering in whatever shape it arrived:
 
 ```python
 db.query(User).order_by(sort)  # a string, or None when the client sent nothing
 db.query(User).order_by(["team", "name.desc"])  # or several
 ```
 
-`ci_fields` names the fields compared without case:
+`ci_fields` lists the fields that are compared case-insensitively:
 
 ```python
 db.query(User).order_by("name", ci_fields=["name"]).page(limit=20)
 ```
 
-The ordering then goes by `lower(name)`, which a cursor cannot page. Take it
-with `page`, or fold the case in `__orderable__`, where it can be indexed.
+The ordering then uses `lower(name)`, which cursor pagination doesn't support.
+Use it with `page`, or put the `lower()` expression into `__orderable__`,
+where you can back it with an index.
 
-By default a model offers **every mapped column it has**, and `__orderable__`
+By default **every mapped column** can be ordered by, and `__orderable__`
 narrows that to the names an API may send:
 
 ```python
@@ -247,8 +248,9 @@ class User(Base):  # any mapped class
     __orderable__ = ("name", "created_at")
 ```
 
-When a field is not a plain column of the model, make it a classmethod. That is
-how a computed value, a case-folded one, or a column of another table is named.
+When a field isn't a plain column of the model, declare `__orderable__` as a
+classmethod. This covers computed values, case-folded columns, and columns
+from other tables.
 
 ```python
 class User(Base):
@@ -256,25 +258,26 @@ class User(Base):
     def __orderable__(cls) -> Mapping[str, Any]:
         return {
             "created_at": cls.created_at,
-            "name": sa.func.lower(cls.name),  # without case
-            "last_seen_at": sa.nulls_last(cls.last_seen_at),  # never seen, last
+            "name": sa.func.lower(cls.name),  # case-insensitive
+            "last_seen_at": sa.nulls_last(cls.last_seen_at),  # never seen sort last
             "orders": _order_count_of(cls),  # a correlated subquery
         }
 ```
 
-What the dict does not hold cannot be ordered by. Its keys are the list of
-orderings your API has, written next to the model.
+Fields missing from the dict can't be ordered by. Its keys are the full list
+of orderings your API supports, written next to the model.
 
 A name in the tuple with no mapped column behind it raises
-`InvalidOrderFieldError`. The mistake there is in the declaration rather than in
-the request, which is why the exception differs from the one a bad ordering
-string gives. A field wrapped in `sa.nulls_last()` or `sa.nulls_first()` keeps
-that placement under any ordering, until the ordering string names another.
+`InvalidOrderFieldError`. This error means the declaration is wrong, not the
+request, so it differs from the error for a bad ordering string. A field
+wrapped in `sa.nulls_last()` or `sa.nulls_first()` keeps that placement under
+any direction, unless the ordering string sets another.
 
 ### A field from another table
 
-Name the table and the query joins it for you. Once, however many fields name
-it, and not at all when the query already reaches it:
+Point the field at another table and the query adds the join automatically.
+The join is added once, no matter how many fields use it, and not at all when
+the query already contains it:
 
 ```python
 from sqlakit import OrderBy
@@ -294,9 +297,9 @@ db.query(User).order_by("team").page(limit=20)
 db.query(User).join(Team).where(Team.active).order_by("team").page(limit=20)
 ```
 
-Join a relationship with one row behind it. A collection multiplies the rows,
-and the page counts them wrong. For one of those, join a subquery that
-aggregates it, with the `on` it needs:
+Only join relationships that match one row. A collection multiplies the rows,
+and the page count comes out wrong. For a collection, join a subquery that
+aggregates it, with an explicit `on`:
 
 ```python
 counts = (
@@ -305,26 +308,27 @@ counts = (
     .subquery()
 )
 
-# On `Team`, because the count belongs to that side.
+# Declared on `Team`: each team has one count.
 {"members": OrderBy(counts.c.members, join=counts, on=counts.c.team_id == cls.id)}
 ```
 
-A cursor pages none of this: it reads the values back off the rows, and a row
-carries neither a joined column nor an aggregate. Take these with `page`, and
-leave `cursor_page` to the model's own columns.
+Cursor pagination doesn't work with joined fields: the cursor reads values
+back from the returned rows, and a row carries neither a joined column nor an
+aggregate. Use `page` for these, and keep `cursor_page` for the model's own
+columns.
 
 ## Pagination
 
-Both kinds need an ordering. Without one the database returns rows as it finds
-them, and the pages start repeating and skipping them. Asking for a page with no
+Both kinds require an ordering. Without one the database returns rows in no
+fixed order, and pages start repeating and skipping rows. A page with no
 `order_by` raises `UnorderedPageError`.
 
-Both also append the key that makes a row unique. Otherwise rows with equal
-ordering values would land on two pages at once, or on none.
+Both also append a unique key to the ordering. Otherwise rows with equal
+ordering values could land on two pages at once, or on none.
 
 ### Limit-offset pagination
 
-Take it when page numbers matter and the total has to be known:
+Use it when page numbers matter and you need the total:
 
 ```python
 page = db.query(User).order_by(User.name).page(limit=20, offset=40)
@@ -336,26 +340,26 @@ page.offset  # 40
 page.has_next  # whether there is another page
 ```
 
-The total costs a `SELECT count(*)` of its own over the whole selection, and the
-rows the offset skips are walked by the database anyway. The further the page
-and the larger the table, the more both of those cost.
+The total costs a separate `SELECT count(*)` over the whole selection, and the
+database still walks the rows the offset skips. Both get more expensive as the
+page number and the table grow.
 
-A list with next and previous buttons has no use for a total. Pass
-`total=False`, and the page drops the counting query: it reads one row more than
-it shows, and answers `has_next` from that.
+A list with only next and previous buttons doesn't need a total. Pass
+`total=False` to skip the counting query: the page reads one extra row and
+computes `has_next` from it.
 
 ```python
 page = db.query(User).order_by(User.name).page(limit=20, offset=40, total=False)
 
 page.items  # 20 users, in one statement
-page.total  # None, because nothing counted them
+page.total  # None, the count query was skipped
 page.has_next  # whether there was a 21st row
 ```
 
 ### Cursor pagination
 
-Take it for feeds, APIs, and anything scrolled. The cost does not grow with
-depth, and rows inserted meanwhile do not shift the window.
+Use it for feeds, APIs, and anything scrolled. The cost does not grow with
+depth, and rows inserted in the meantime do not shift the window.
 
 ```python
 page = db.query(User).order_by(User.created_at.desc()).cursor_page(limit=20)
@@ -367,8 +371,8 @@ page.has_next
 page.has_previous
 ```
 
-To read a neighbouring page, hand either cursor back. One parameter serves both
-buttons, since the direction is written into the cursor itself.
+To read a neighbouring page, pass either cursor back. One parameter serves
+both directions, because the direction is encoded in the cursor itself.
 
 ```python
 older = (
@@ -383,19 +387,20 @@ newer = (
 )
 ```
 
-Paging backwards works the same way, in the other direction. The library takes
-the rows nearest before the cursor and turns them back around, so the page
-arrives in its usual order.
+Paging backwards works the same way. The rows nearest before the cursor are
+read and reversed, so the page arrives in its usual order.
 
-Both cursors point at rows of the page they came from, so an empty page yields
-neither. Keep the cursor that brought you here.
+Both cursors point at rows of the page they came from, so an empty page has
+neither; hold on to the cursor that got you there.
 
-Order the query the same way every time. A cursor read under a different
-ordering raises `InvalidCursorError`, as does one that came from somewhere else.
+Order the query the same way every time. A cursor used with a different
+ordering raises `InvalidCursorError`, and so does a cursor from another
+source.
 
-The model's key is appended to the ordering, or rows sharing a `created_at`
-would end up on both sides of the boundary. Usually that is the primary key, but
-when the index behind the query ends on another unique column, name it:
+The model's key is appended to the ordering; otherwise rows sharing a
+`created_at` could end up on both sides of the boundary. Usually that is the
+primary key. When the index behind the query ends on another unique column,
+declare it:
 
 ```python
 class User(Base):
@@ -404,18 +409,18 @@ class User(Base):
         return (cls.public_id,)
 ```
 
-Order by the model's own columns, and by ones that are never NULL. The cursor
-reads its values back off the rows it returned, so the ordering has to hold
-columns it will find there. `sa.text("name")`, an expression such as
-`func.lower(...)`, or a column of a joined table raise
-`UncomparableOrderingError`. The column's type has nothing to do with it: a
-`str` pages as well as an `int`. A row with NULL in an ordering column raises
-`NullCursorValueError`, since a comparison against NULL matches nothing and the
-page has nowhere to start.
+Order by the model's own columns, and only by ones that are never NULL. The
+cursor reads its values back from the returned rows, so the ordering must
+consist of columns present on those rows. `sa.text("name")`, an expression
+such as `func.lower(...)`, or a column of a joined table raises
+`UncomparableOrderingError`. The column's type does not matter: a `str` pages
+as well as an `int`. A row with NULL in an ordering column raises
+`NullCursorValueError`, because a comparison against NULL matches nothing and
+the page has nowhere to start.
 
 ### Turning rows into something else
 
-`map` is on both kinds of page, and it keeps the totals and the cursors:
+`map` works on both kinds of page and keeps the totals and the cursors:
 
 ```python
 page = db.query(User).order_by(User.name).page(limit=20).map(UserResponse.from_user)
@@ -424,14 +429,15 @@ page = (
 )
 ```
 
-`map_all` hands over the whole list in one call, for work that suits doing to
-all of them at once:
+`map_all` passes the whole list in one call, for work done on all items at
+once:
 
 ```python
 page = page.map_all(lambda users: serialize_many(users))
 ```
 
-An awaited transformation does that itself and puts the items back:
+If the transformation needs an `await`, run it yourself and put the items
+back:
 
 ```python
 page = page.with_items(await serialize(page.items))
@@ -439,8 +445,8 @@ page = page.with_items(await serialize(page.items))
 
 ## Walking a whole table {#walking-a-whole-table}
 
-A job that visits every row wants neither pages nor `all()`. `chunks` reads one
-statement in batches and holds one at a time in memory:
+For a job that visits every row, you don't need pages or `all()`. `chunks`
+reads one statement in batches and holds one batch in memory at a time:
 
 ```python
 with db.transaction():
@@ -454,9 +460,9 @@ async with db.transaction():
         await send_reminder(users)
 ```
 
-The rows come off a cursor the database holds open, so the whole walk is one
-transaction, and a commit halfway through ends it. To commit each batch instead,
-page the table, where every page is a new statement:
+The rows come from a cursor the database holds open, so the whole walk is one
+transaction, and a commit halfway through ends it. To commit each batch
+instead, page the table; every page is a new statement:
 
 ```python
 cursor = None
@@ -470,9 +476,9 @@ while True:
 ```
 
 `chunks` reads through `yield_per`, and `SQLAlchemy` does not allow that
-together with a `joinedload` against a collection. Such a loader needs to unique
-and buffer the rows, which streaming does not permit, so instead of a statement
-you get `InvalidRequestError`. Load collections here with `selectinload`.
+together with a `joinedload` of a collection. Such a loader has to deduplicate
+and buffer the rows, which streaming doesn't allow, so the call raises
+`InvalidRequestError`. Load collections here with `selectinload`.
 
 ## Columns instead of instances
 
@@ -484,9 +490,9 @@ counts = (
 )
 ```
 
-One column comes back as its values, several as tuples. The result narrows
-further through `where`, `order_by`, `distinct`, `limit` and `offset`, and the
-names a model offers are taken by `order_by` here as well:
+One column comes back as plain values, several as tuples. The result can still
+be narrowed with `where`, `order_by`, `distinct`, `limit` and `offset`, and
+`order_by` accepts the model's ordering strings here as well:
 
 ```python
 db.query(User).only_columns(User.name).order_by("created_at.desc").all()
@@ -500,9 +506,10 @@ with db.transaction():
 ```
 
 The row goes through the session, so defaults, relationships and the identity
-map behave as they do for anything else added to it. Any mapped class works.
+map behave the same as for anything else added to it. Any mapped class works.
 
-`create_many` writes a list of rows in one statement and instantiates nothing:
+`create_many` writes a list of rows in one statement, without creating
+instances:
 
 ```python
 with db.transaction():
@@ -517,19 +524,19 @@ with db.transaction():
     db.query(User).where(User.is_active.is_(False)).delete()
 ```
 
-Both write in one statement and return how many rows they touched. Only the
-narrowing carries over: a query that also holds `order_by`, `limit`, `offset` or
-a join raises `BulkQueryError` rather than dropping them quietly.
+Both run one statement and return the number of affected rows. Only the
+filtering carries over: a query that also has `order_by`, `limit`, `offset` or
+a join raises `BulkQueryError` instead of silently dropping them.
 
-A write wants a block, as any query does. Inside a transaction it leaves the
-commit to the block, and in `connect()` or `autocommit()`, where there is no
-transaction, it commits for itself. With no block there is no session, so the
+A write needs a block, like any query. Inside a transaction the commit is left
+to the block; in `connect()` or `autocommit()`, where there is no transaction,
+the write is committed immediately. With no block there is no session, and the
 call raises `MissingSessionError`.
 
 ## Adding methods to a query
 
-A query you need often deserves a name and a subclass. It is built the way an
-ordinary one is:
+If you use a query often, give it a name and a subclass. You build it like an
+ordinary one:
 
 ```python
 from typing import Self
@@ -545,15 +552,15 @@ class UserQuery(Query[User]):
 UserQuery(User, db).active().order_by(User.name).page(limit=20)
 ```
 
-Your methods chain with the built-in ones in any order, since each returns the
-same class. `db.query()` always hands back a plain `Query`, so a repository
-builds the subclass itself. Putting one on a model class is covered in the
-[model layer](models.md#adding-methods-to-a-models-query).
+Your methods chain with the built-in ones in any order, because each returns
+the same class. `db.query()` always returns a plain `Query`, so a repository
+has to build the subclass itself. Putting one on a model class is covered in
+the [model layer](models.md#adding-methods-to-a-models-query).
 
-Build on `where` and the other builders rather than on `self.select`, since they
-carry the model, the filter and the database with them. When a method needs
-something the builders do not cover, `with_select` takes a finished statement
-and hands a query back:
+Build on `where` and the other builder methods rather than on `self.select`,
+because they carry the model, the filter and the database along. When a method
+needs something the builders do not cover, `with_select` takes a finished
+statement and returns a query:
 
 ```python
 class UserQuery(Query[User]):
@@ -561,16 +568,16 @@ class UserQuery(Query[User]):
         return self.with_select(self.select.suffix_with(f"TABLESAMPLE ({rows})"))
 ```
 
-Name the model in the subclass, as in `Query[User]`, and `all()`, `first()` and
-`page()` come back typed. `db.query(User)` takes the type from its argument, so
-it needs no annotation.
+Name the model in the subclass, as in `Query[User]`, and `all()`, `first()`
+and `page()` return typed results. `db.query(User)` infers the type from its
+argument, so you don't need an annotation there.
 
-An async query is the same class from `sqlakit.asyncio.orm`, subclassed the same
-way. The `await` belongs to the methods that run the statement.
+An async query is the same class from `sqlakit.asyncio.orm`, subclassed the
+same way. Only the methods that run the statement are awaited.
 
 ## Hiding rows for good {#hiding-rows-for-good}
 
-A model that hides rows, most often soft-deleted ones, says so once:
+A model that hides rows, most often soft-deleted ones, declares the rule once:
 
 ```python
 class User(Base):
@@ -581,11 +588,11 @@ class User(Base):
         return cls.deleted_at.is_(None)
 ```
 
-The filter reaches everything the query builds: `all`, `count`, `page`,
+The filter applies to everything the query builds: `all`, `count`, `page`,
 `cursor_page`, and `get`, which returns `None` for a hidden row. Bulk `update`
-and `delete` carry it too, and touch only the rows the query can see.
+and `delete` apply it too, and touch only the rows the query can see.
 
-`unfiltered()` steps around it, lifting the filter from reads and writes alike:
+`unfiltered()` removes the filter, for reads and writes alike:
 
 ```python
 db.query(User).unfiltered().all()  # hidden rows as well
@@ -593,17 +600,17 @@ db.query(User).unfiltered().get(2)  # by key, hidden or not
 db.query(User).unfiltered().update({"team": "green"})  # every matching row
 ```
 
-For rows hidden because they were deleted, take
-[`SoftDeletes`](models.md#soft-deletes) rather than this hook. It has a switch
-of its own, so `with_deleted()` lifts that one and leaves a tenant rule living
-here alone.
+For rows hidden because they were deleted, use
+[`SoftDeletes`](models.md#soft-deletes) rather than this hook. It has a
+separate switch: `with_deleted()` lifts only the soft-delete filter and leaves
+a tenant rule in this hook untouched.
 
 The filter is not applied to SQL you wrote yourself. `from_statement` and
-`from_sql` run the statement as it stands, so a template that has to hide rows
-has to say so in its own `WHERE`.
+`from_sql` run the statement as written, so a template that hides rows has to
+do it in its own `WHERE`.
 
-The same hook on a base class filters every model under it. That is how a soft
-delete or a tenant rule stays out of the call sites:
+The same hook on a base class filters every model under it, so a soft delete
+or a tenant rule stays out of the call sites:
 
 ```python
 class Base(DeclarativeBase):
@@ -616,8 +623,8 @@ class Base(DeclarativeBase):
         return cls.deleted_at.is_(None)
 ```
 
-The hook is a classmethod, called on every read rather than once at import. So
-it sees whatever the request put into the context:
+The hook is a classmethod and runs on every read, not once at import. So it
+sees whatever the current request put into the context:
 
 ```python
 class Base(DeclarativeBase):
@@ -628,7 +635,7 @@ class Base(DeclarativeBase):
         return cls.tenant_id == current_tenant.get()
 ```
 
-A model that wants both rules, its own and the base's, combines them:
+A model that needs both rules, its own and the base's, combines them:
 
 ```python
 class User(Base):
@@ -637,10 +644,10 @@ class User(Base):
         return sa.and_(super().__query_filter__(), cls.is_active.is_(True))
 ```
 
-The filter works at the level of the statement and does not touch objects
-already in the session. An instance loaded before the rule arrived, or through
-`unfiltered()`, is one the session will let you change and save. Check that
-where the writing happens rather than expecting it of the filter.
+The filter works at the statement level and does not affect objects already in
+the session. An instance loaded before the rule applied, or through
+`unfiltered()`, can still be changed and saved. If you need to prevent that,
+check it where the write happens; the filter can't.
 
 ## Your own SQL instead of the builder
 
@@ -649,15 +656,15 @@ users = db.query(User).from_statement(sa.text("SELECT * FROM users WHERE ...")).
 users = db.query(User).from_sql("users/active.sql", team="red").all()
 ```
 
-The rows still arrive as instances of the model. Adding to such a query is no
-longer possible, because the SQL decides what is selected, and a `where` or a
-`page` on top of it raises `RawStatementError`.
+The rows still come back as model instances. You can't build on top of such a
+query: the SQL decides what is selected, so a `where` or a `page` raises
+`RawStatementError`.
 
-`from_sql` takes the statement from a template and binds the values. The details
-are in [SQL templates](sql.md), along with rows that belong to no model.
+`from_sql` reads the statement from a template and binds the values. See
+[SQL templates](sql.md) for details, including rows that belong to no model.
 
-`__query_filter__` is applied in neither case, since the statement runs as
-written. A soft delete or a tenant rule has to go into the SQL itself.
+`__query_filter__` is not applied in either case; see
+[Hiding rows for good](#hiding-rows-for-good).
 
 ## Queries under `asyncio`
 
@@ -669,7 +676,7 @@ page = await db.query(User).order_by("name").cursor_page(limit=20)
 user = await db.query(User).get_one(1)
 ```
 
-The builders stay synchronous: until you ask for rows, nothing runs.
+The builder methods stay synchronous: nothing runs until you ask for rows.
 
-Next: [SQL templates](sql.md) for the queries a builder makes longer, or
+Next: [SQL templates](sql.md) for queries that are easier to write as SQL, or
 [models](models.md) for instances that save themselves.

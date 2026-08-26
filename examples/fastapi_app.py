@@ -73,7 +73,7 @@ class UserFeed(BaseModel, from_attributes=True):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # A real service migrates; creating the tables here keeps the example short.
+    # A real service would run migrations; creating the tables keeps the example short.
     async with db.transaction() as conn:
         await conn.run_sync(Model.metadata.create_all)
     yield

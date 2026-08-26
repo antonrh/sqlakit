@@ -1,7 +1,7 @@
 # Context
 
-Your code opens a block. Everything called inside it reads the same connection
-and the same session, so none of those functions has to be handed either one.
+Your code opens a block. Everything called inside it uses the same connection
+and the same session, so you don't have to pass either one around.
 
 ```python
 import sqlalchemy as sa
@@ -26,29 +26,29 @@ def get_or_create_user(email: str, name: str) -> User:
     return user
 ```
 
-Underneath it is a `ContextVar`, and everything else follows from that. A task
-started inside a block inherits the binding. Another thread does not see it. And
-two different `Database` objects never share one binding between them.
+Under the hood, the context lives in a `ContextVar`. A task started inside a
+block inherits the binding, another thread doesn't see it, and two different
+`Database` objects never share one binding.
 
-Every block works as a context manager and as a decorator, with parentheses and
-without:
+Every block works as a context manager and as a decorator, with or without
+parentheses:
 
 | | for |
 | --- | --- |
-| [`connect()`](#connect) | reads, and code that decides for itself when to commit |
-| [`transaction()`](#transaction) | work that has to land whole or not at all |
-| [`autocommit()`](#autocommit) | read paths, and statements a transaction will not have |
+| [`connect()`](#connect) | reads, and code that commits on its own |
+| [`transaction()`](#transaction) | writes that must commit or roll back as one unit |
+| [`autocommit()`](#autocommit) | read paths, and statements that cannot run inside a transaction |
 
-With no block open there is nothing to read. Reaching for one raises instead of
-opening a connection behind your back:
+Outside a block there's no connection and no session. Accessing them raises an
+error instead of silently opening a connection:
 
 ```python
 db.connection  # MissingConnectionError
 db.session  # MissingSessionError
 ```
 
-A library that opened a connection on demand would hide the moment it comes out
-of the pool and the moment it goes back.
+If connections were opened on demand, you couldn't tell when one comes out of
+the pool and when it goes back.
 
 ## connect() {#connect}
 
@@ -59,33 +59,32 @@ with db.connect() as conn:
     conn.execute(sa.text("SELECT 1"))
 ```
 
-No session is built up front. It waits for the first `db.session`, and only then
-takes its place on the same connection:
+No session is created up front. The first time you access `db.session`, one is
+created on the same connection:
 
 ```python
 with db.connect():
-    db.in_session()  # False, while nobody has asked
-    db.session  # opened right here
+    db.in_session()  # False, no session yet
+    db.session  # the session is created here
     db.in_session()  # True
 ```
 
-A block that works through `db.connection` alone therefore builds no session at
-all.
+So a block that only uses `db.connection` never creates a session.
 
-**It commits nothing by itself.** The block hands out a connection, and seeing
-the work through is yours:
+**It commits nothing by itself.** The block only provides a connection;
+committing is up to you:
 
 ```python
 with db.connect():
-    db.session.add(User(name="ada"))  # goes when the session goes
+    db.session.add(User(name="ada"))  # lost when the session closes
 
 with db.connect():
     db.session.add(User(name="ada"))
     db.session.commit()  # kept
 ```
 
-`save()` from the model layer and `create()` on a query know this: in a block
-with no transaction they commit for themselves.
+`save()` from the model layer and `create()` on a query are the exception: in
+a block with no transaction they commit on their own.
 
 ## transaction() {#transaction}
 
@@ -101,12 +100,12 @@ with db.transaction():
 def import_users(rows: list[Row]) -> None: ...
 ```
 
-`db.in_transaction()` says whether one is open.
+`db.in_transaction()` returns whether a transaction is open.
 
 ### Nesting
 
-A block inside another takes the connection already bound rather than opening a
-second one:
+A nested block reuses the connection that is already bound instead of opening
+a second one:
 
 ```python
 with db.transaction() as conn:
@@ -114,19 +113,19 @@ with db.transaction() as conn:
         assert inner is conn
 ```
 
-A second connection would sit in a transaction of its own. It would not see the
-outer block's writes, it would spend the pool twice over, and it could deadlock
-on rows the outer one holds.
+A second connection would run in its own transaction: it wouldn't see the
+outer block's writes, it would take another connection from the pool, and it
+could deadlock on rows the outer transaction holds.
 
-The outermost block owns the commit. The blocks under it mark up the code and
-cost no statements at all, so wrapping a helper in `transaction()` costs
-nothing. Each still opens a session of its own, so code you call cannot close or
-roll back the session of the block above it.
+The outermost block owns the commit. Nested blocks run no statements of their
+own, so wrapping a helper in `transaction()` costs nothing. Each nested block
+still opens its own session, so code you call can't close or roll back the
+session of the block above it.
 
 ### Letting a nested block fail on its own
 
-Without a savepoint a nested block cannot undo just its own work, and its
-failure takes the whole transaction with it. `savepoint=True` changes that:
+Without a savepoint a nested block cannot undo only its own work: if it fails,
+the whole transaction rolls back. `savepoint=True` changes that:
 
 ```python
 with db.transaction():
@@ -137,17 +136,17 @@ with db.transaction():
         raise ValidationError
 ```
 
-It is off by default, since every savepoint costs a round trip and buys nothing
-when the failure ends the whole transaction anyway. On `PostgreSQL` there is a
-second price. Past 64 subtransactions the backend's `subxid` cache overflows and
-reads start going to `pg_subtrans`, which slows the whole cluster rather than
-the one transaction.
+It's off by default: every savepoint costs a round trip, and it doesn't help
+when a failure should end the whole transaction anyway. On `PostgreSQL` there
+is a second cost. Past 64 subtransactions the backend's `subxid` cache
+overflows, reads start going to `pg_subtrans`, and that slows down the whole
+cluster, not just the one transaction.
 
-### Standing outside a transaction
+### Running outside the surrounding transaction
 
-`join_nested=False` works the other way. Put it on a block whose nested ones
-have to stand apart, and those open connections of their own. They will not see
-its writes, and their writes outlive its rollback.
+`join_nested=False` does the opposite. Set it on a block, and its nested
+blocks open connections of their own instead of joining it. They don't see
+its writes, and their writes survive its rollback.
 
 ```python
 with db.transaction(join_nested=False):
@@ -157,10 +156,10 @@ with db.transaction(join_nested=False):
     raise RuntimeError  # the audit row stays
 ```
 
-Auditing is the case for it, where the record of an attempt has to outlive the
-attempt failing. It costs a second connection from the pool and a second
-transaction that can deadlock with the first, so the flag belongs on the blocks
-that need it.
+The typical use is auditing, where the record of an attempt has to survive
+even when the attempt fails. The cost is a second connection from the pool and
+a second transaction that can deadlock with the first, so only set the flag on
+the blocks that need it.
 
 ### Committing despite a known error
 
@@ -171,13 +170,14 @@ def moderate(post_id: int) -> None:
     raise ContentBlockedError
 ```
 
-The exception still goes up, and what was written before it stays.
+The exception is still raised, and everything written before it is committed.
 
 ### Retries
 
-A retry re-runs the block, which a `with` statement cannot do. So
-`transaction(retry_on=...)` works as a decorator only. A type checker flags the
-`with` straight away, and at runtime it raises `RetryNotSupportedError`:
+A retry has to re-run the block, and a `with` statement cannot do that. So
+`transaction(retry_on=...)` works only as a decorator. If you use it with
+`with`, the type checker flags it right away, and at runtime it raises
+`RetryNotSupportedError`:
 
 ```python
 def is_conflict(exc: BaseException) -> bool:
@@ -192,35 +192,36 @@ def transfer(from_id: int, to_id: int, amount: int) -> None: ...
 ```
 
 Make the block safe to run twice. Only the block that owns the transaction
-retries: called from inside another, it runs once, since the snapshot that
-caused the conflict is fixed for the whole transaction.
+retries. Called from inside another transaction it runs once, because the
+snapshot that caused the conflict is fixed for the whole transaction.
 
 `max_retries` counts the extra attempts, so `max_retries=3` runs the block at
-most four times. Between attempts it waits `backoff(attempt)` seconds, counting
-from zero, which by default is around 0.1, 0.2 and 0.4, each with jitter, so
-that a hundred workers that collided once do not collide again together. A
-function of your own suits a longer wait, and `lambda _: 0.0` suits a test.
+most four times. Between attempts it waits `backoff(attempt)` seconds,
+counting from zero. The default is roughly 0.1, 0.2 and 0.4 seconds, each with
+jitter, so workers that collided once don't all retry at the same moment. If
+you need longer waits, pass a function of your own; in tests, `lambda _: 0.0`
+skips the waiting.
 
-### Throwing the work away
+### Rolling back at the end
 
-`rollback=True` rolls back instead of committing on the way out, and turns
-`savepoint` on, so a nested block can still fail on its own:
+`rollback=True` rolls back at the end of the block instead of committing, and
+turns `savepoint` on, so a nested block can still fail on its own:
 
 ```python
 with db.transaction(rollback=True):
-    db.query(User).create(name="ada")  # gone when the block ends
+    db.query(User).create(name="ada")  # rolled back when the block ends
 ```
 
-That is how a test runs against a real database and leaves it as it found it.
-The [testing](testing.md) page is about that.
+That's how a test runs against a real database and leaves it unchanged. The
+[testing](testing.md) page builds on this.
 
-Every argument with its default is in the
+All arguments and their defaults are listed in the
 [reference](reference.md#transaction-arguments).
 
 ## autocommit() {#autocommit}
 
-`SQLAlchemy` opens a transaction around everything, an ordinary read included.
-For one `SELECT`, `connect()` writes this to the log:
+`SQLAlchemy` opens a transaction around everything, including plain reads. For
+a single `SELECT`, `connect()` produces this log:
 
 ```sql
 BEGIN (implicit)
@@ -228,16 +229,16 @@ SELECT 1
 ROLLBACK
 ```
 
-No transaction was wanted here, and the round trips on both sides went to waste.
-`autocommit()` takes the connection in `AUTOCOMMIT`, where every statement
-commits itself:
+The transaction here is useless, and the `BEGIN` and `ROLLBACK` round trips
+are wasted. `autocommit()` uses the connection in `AUTOCOMMIT` mode, where
+every statement commits on its own:
 
 ```python
 @db.autocommit
 def get_dashboard(user_id: int) -> Dashboard: ...
 ```
 
-The log for that same `SELECT` reads:
+The same `SELECT` now logs:
 
 ```sql
 BEGIN (implicit; DBAPI should not BEGIN due to autocommit mode)
@@ -245,35 +246,33 @@ SELECT 1
 ROLLBACK using DBAPI connection.rollback(); set skip_autocommit_rollback to prevent fully
 ```
 
-The lines around the statement are still there, but they are no longer SQL.
-`SQLAlchemy` says in the parentheses that it hands the driver no `BEGIN`, and in
-place of a `ROLLBACK` it calls the driver's `rollback()` as the connection goes
-back to the pool. Dialects that can skip that call as well turn it off with one
-argument:
+The lines around the statement are still there, but no SQL is sent: the driver
+gets no `BEGIN`, and instead of a `ROLLBACK` statement `SQLAlchemy` calls the
+driver's `rollback()` as the connection goes back to the pool. On dialects
+that can skip that call as well, turn it off with one argument:
 
 ```python
 db = Database(url, engine_args={"skip_autocommit_rollback": True})
 ```
 
-### Statements a transaction will not have
+### Statements that can't run in a transaction
 
-`VACUUM`, `CREATE DATABASE` and `CREATE INDEX CONCURRENTLY` cannot run inside a
-transaction, which is where these belong:
+`VACUUM`, `CREATE DATABASE` and `CREATE INDEX CONCURRENTLY` cannot run inside
+a transaction. Run them here:
 
 ```python
 with db.autocommit() as conn:
     conn.execute(sa.text("VACUUM ANALYZE users"))
 ```
 
-Call them outside any transaction. **Inside one the block joins it** and takes
-the same connection, and the database refuses to run such a statement there. It
-fails with the database's own error, such as
-`cannot VACUUM from within a transaction`.
+Call them outside any transaction. **Inside a transaction the block joins it**
+and uses the same connection, so the statement fails with the database's own
+error, such as `cannot VACUUM from within a transaction`.
 
 ### What survives an exception
 
-Every statement is committed already, so after an exception the database keeps
-all the work that ran before it:
+Every statement is already committed, so after an exception the database keeps
+everything that ran before it:
 
 ```python
 with db.autocommit():
@@ -282,13 +281,13 @@ with db.autocommit():
     raise RuntimeError  # `ada` stays
 ```
 
-That is the point of the block, and the same reason writes belong in
+That's the intended behavior, and the reason writes belong in
 `transaction()`.
 
 ## Blocks under `asyncio` {#async}
 
-`sqlakit.asyncio` repeats all of it. The blocks are awaited, reading the context
-is not:
+`sqlakit.asyncio` has the same blocks. Opening a block is awaited, reading the
+context is not:
 
 ```python
 async with db.transaction():
@@ -302,17 +301,17 @@ db.in_transaction()  # the same
 ### Concurrent tasks
 
 A task started inside a block inherits its context, so every coroutine under
-`asyncio.gather()` lands on one session and one connection:
+`asyncio.gather()` runs on the same session and the same connection:
 
 ```python
 async with db.transaction():
     await asyncio.gather(load_users(), load_teams())  # both on one session
 ```
 
-A `SQLAlchemy` session is not built for that, and the treacherous part is that
-reads may go through without a single complaint. Let two tasks overlap on a
-write and you get `InvalidRequestError: Session is already flushing`. Give each
-task a block of its own, and each takes its own connection:
+A `SQLAlchemy` session isn't designed for concurrent use, and the dangerous
+part is that reads may work without any error. When two tasks overlap on a
+write, you get `InvalidRequestError: Session is already flushing`. Give each
+task a block of its own, and each gets its own connection:
 
 ```python
 async def load_users() -> list[User]:
@@ -326,14 +325,13 @@ await asyncio.gather(load_users(), load_teams())
 ### Background tasks
 
 `FastAPI` runs `BackgroundTasks` after the response, when the handler's block
-has already closed. Reaching for `db.session` from there raises
-`MissingSessionError`:
+is already closed. Accessing `db.session` there raises `MissingSessionError`:
 
 ```python
 @app.post("/users")
 @db.transaction
 async def create_user(background: BackgroundTasks) -> UserResponse:
-    background.add_task(notify)  # runs when the session is gone
+    background.add_task(notify)  # runs after the session is closed
     ...
 
 
