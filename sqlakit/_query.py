@@ -239,6 +239,9 @@ class BaseQuery(Generic[ModelT]):
         self._statement: Any = None
         self.filtered = True
         self.deleted = HIDDEN
+        # A page reads the same keyset ordering three times: for the statement
+        # and for the cursor at either end.
+        self._keyset_cache: tuple[list[_Ordering], str] | None = None
 
     def using(self, target: str | Any) -> Self:  # noqa: ANN401
         """Run this query on another database, named or handed over.
@@ -283,6 +286,7 @@ class BaseQuery(Generic[ModelT]):
         )
         query = self._copy()
         query._select = select  # noqa: SLF001 - a copy of this class
+        query._keyset_cache = None  # noqa: SLF001 - the ordering may differ
         return query
 
     def _copy(self) -> Self:
@@ -640,8 +644,7 @@ class BaseQuery(Generic[ModelT]):
         """
         self._reject_statement("cursor_page")
         self._require_ordering()
-        ordering = self._keyset_ordering()
-        ordering_key = _ordering_key(ordering)
+        ordering, ordering_key = self._keyset()
         backwards = cursor is not None and _is_backwards(cursor)
         if backwards:
             ordering = [
@@ -667,6 +670,13 @@ class BaseQuery(Generic[ModelT]):
         """Refuse a page the database is free to order as it likes."""
         if not self.is_ordered:
             raise UnorderedPageError
+
+    def _keyset(self) -> tuple[list[_Ordering], str]:
+        """Return the cursor's ordering and its fingerprint, worked out once."""
+        if self._keyset_cache is None:
+            ordering = self._keyset_ordering()
+            self._keyset_cache = (ordering, _ordering_key(ordering))
+        return self._keyset_cache
 
     def _keyset_ordering(self) -> list[_Ordering]:
         """Return the ordering a cursor walks: what was asked, then the key.
@@ -788,14 +798,14 @@ class BaseQuery(Generic[ModelT]):
                 not carry, such as one belonging to a joined table.
 
         """
-        ordering = self._keyset_ordering()
+        ordering, ordering_key = self._keyset()
         values = []
         for item in ordering:
             value = getattr(row, item.attribute)
             if value is None:
                 raise NullCursorValueError(item.attribute)
             values.append(value)
-        return _encode(values, backwards=backwards, ordering=_ordering_key(ordering))
+        return _encode(values, backwards=backwards, ordering=ordering_key)
 
 
 def orderable(model: type[Any]) -> Mapping[str, Any]:

@@ -210,6 +210,16 @@ def test_cursor_page_breaks_ties_by_primary_key(db: Database) -> None:
         assert seen == [1, 2, 3, 4, 5]
 
 
+def test_a_new_ordering_works_the_keyset_out_again(db: Database) -> None:
+    # A page works the ordering out once and keeps it. A query built from that
+    # one orders differently, so it must not inherit the answer.
+    with db.connect():
+        base = User.query.order_by(User.id)
+        base.cursor_page(limit=2)
+
+        assert base.order_by(User.name)._keyset()[1] != base._keyset()[1]
+
+
 def test_a_cursor_from_elsewhere_is_refused(db: Database) -> None:
     with db.connect():
         with pytest.raises(InvalidCursorError):
