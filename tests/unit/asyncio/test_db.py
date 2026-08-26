@@ -188,6 +188,68 @@ async def test_nested_block_reuses_the_connection(users_db: Database) -> None:
 
 
 @pytest.mark.anyio
+async def test_a_transaction_inside_connect_runs_on_its_connection(
+    users_db: Database, checkouts: list[object]
+) -> None:
+    async with users_db.connect() as conn:
+        async with users_db.transaction() as inner:
+            assert inner is conn
+            users_db.session.add(User(name="ada"))
+
+        assert len(checkouts) == 1
+
+    async with users_db.connect() as conn:
+        assert await names(conn) == ["ada"]
+
+
+@pytest.mark.anyio
+async def test_a_transaction_inside_connect_ends_the_session_transaction(
+    users_db: Database, checkouts: list[object]
+) -> None:
+    # The outer block's session began the transaction, so the nested block
+    # commits through it, and both blocks' writes go together.
+    async with users_db.connect() as conn:
+        users_db.session.add(User(name="ada"))
+        await users_db.session.flush()
+
+        async with users_db.transaction() as inner:
+            assert inner is conn
+            users_db.session.add(User(name="grace"))
+
+        assert len(checkouts) == 1
+
+    async with users_db.connect() as conn:
+        assert await names(conn) == ["ada", "grace"]
+
+
+@pytest.mark.anyio
+async def test_a_transaction_inside_session_factory_runs_on_its_connection(
+    users_db: Database, checkouts: list[object]
+) -> None:
+    async with users_db.session_factory():
+        async with users_db.transaction():
+            users_db.session.add(User(name="ada"))
+
+        assert len(checkouts) == 1
+
+    async with users_db.connect() as conn:
+        assert await names(conn) == ["ada"]
+
+
+@pytest.mark.anyio
+async def test_a_transaction_inside_autocommit_opens_its_own_connection(
+    users_db: Database, checkouts: list[object]
+) -> None:
+    # No transaction runs on an `AUTOCOMMIT` connection, so this one needs
+    # another connection to have one at all.
+    async with users_db.autocommit() as conn:
+        async with users_db.transaction() as inner:
+            assert inner is not conn
+
+        assert len(checkouts) == 2
+
+
+@pytest.mark.anyio
 async def test_nested_block_gets_its_own_session(users_db: Database) -> None:
     async with users_db.transaction():
         session = users_db.session

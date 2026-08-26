@@ -200,7 +200,10 @@ class Database(BaseDatabase[sa.Connection, Session]):
             return
         with self.engine.connect() as opened:
             opened.execution_options(isolation_level="AUTOCOMMIT")
-            with self._set_outer(None), self._bound(opened, commit=True) as connection:
+            with (
+                self._set_outer(None),
+                self._bound(opened, commit=True, autocommit=True) as connection,
+            ):
                 yield connection
 
     @overload
@@ -344,6 +347,7 @@ class Database(BaseDatabase[sa.Connection, Session]):
         connection: sa.Connection,
         *,
         commit: bool = False,
+        autocommit: bool = False,
     ) -> Iterator[sa.Connection]:
         """Bind ``connection`` for the block, ending the session it opened.
 
@@ -351,7 +355,7 @@ class Database(BaseDatabase[sa.Connection, Session]):
         itself with a savepoint rolls back to it, discarding what the blocks
         below committed.
         """
-        with self._bind(connection) as scope:
+        with self._bind(connection, autocommit=autocommit) as scope:
             done = False
             try:
                 yield connection
@@ -414,6 +418,21 @@ class Database(BaseDatabase[sa.Connection, Session]):
         self.dispose()
 
 
+def _owned(
+    connection: sa.Connection,
+    scope: _Scope[sa.Connection, Session],
+) -> tuple[Session | None, sa.Transaction | None]:
+    """Return what a borrowing block ends: a session's transaction, or its own.
+
+    A session that began one goes on using it, so that one ends through the
+    session. Anything else is the block's to end.
+    """
+    session = scope.session
+    if session is not None and session.in_transaction():
+        return session, None
+    return None, connection.get_transaction() or connection.begin()
+
+
 class Transaction(ContextDecorator, AbstractContextManager["sa.Connection"]):
     """What [`Database.transaction`][sqlakit.Database.transaction] returns.
 
@@ -460,6 +479,7 @@ class Transaction(ContextDecorator, AbstractContextManager["sa.Connection"]):
                 savepoint=self.savepoint,
                 rollback=self.rollback,
             )
+            owner: Session | None = None
             if outer is not None:
                 connection = outer.connection
                 # Without a savepoint the block only takes part in the
@@ -469,11 +489,16 @@ class Transaction(ContextDecorator, AbstractContextManager["sa.Connection"]):
                 # must not add a second one on the same connection.
                 session_savepoint = outer.session_savepoint and not savepoint
             else:
-                connection = stack.enter_context(self.db.engine.connect())
-                transaction = connection.begin()
+                borrowed = self.db._scope_to_borrow()  # noqa: SLF001
+                if borrowed is not None:
+                    connection = self.db._reused(borrowed)  # noqa: SLF001
+                    owner, transaction = _owned(connection, borrowed)
+                else:
+                    connection = stack.enter_context(self.db.engine.connect())
+                    owner, transaction = None, connection.begin()
                 session_savepoint = savepoint
             # Unwound in reverse: session, context, transaction, connection.
-            stack.push(self._finish(transaction))
+            stack.push(self._finish(transaction, owner))
             bound = stack.enter_context(
                 self.db._set_outer(  # noqa: SLF001
                     connection,
@@ -523,7 +548,11 @@ class Transaction(ContextDecorator, AbstractContextManager["sa.Connection"]):
 
         return close_session
 
-    def _finish(self, transaction: sa.Transaction | None) -> Callable[..., None]:
+    def _finish(
+        self,
+        transaction: sa.Transaction | None,
+        owner: Session | None = None,
+    ) -> Callable[..., None]:
         """Commit or roll back, unless this block only takes part in another."""
 
         def finish(
@@ -531,6 +560,14 @@ class Transaction(ContextDecorator, AbstractContextManager["sa.Connection"]):
             exc: BaseException | None,
             _traceback: object,
         ) -> None:
+            if owner is not None:
+                # The lending block's session holds the transaction. Ending it
+                # through the session leaves that session able to go on.
+                if self._keeps(exc) and not self.rollback:
+                    owner.commit()
+                else:
+                    owner.rollback()
+                return
             if transaction is None:
                 return
             if not transaction.is_active:

@@ -150,6 +150,8 @@ class _Scope(Generic[ConnectionT, SessionT]):
     connection: ConnectionT | None
     session: SessionT | None = None
     checkout: _Lazy[ConnectionT] | None = None
+    autocommit: bool = False
+    """Whether the connection is in ``AUTOCOMMIT``, where no transaction runs."""
 
 
 @dataclass(slots=True)
@@ -481,11 +483,24 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
             return None
         return self._scope.get(None)
 
+    def _scope_to_borrow(self) -> _Scope[ConnectionT, SessionT] | None:
+        """Return the scope whose connection a transaction runs on, if it may.
+
+        ``connect()`` and ``session_factory()`` lend theirs. ``autocommit()``
+        does not: no transaction runs on an ``AUTOCOMMIT`` connection.
+        """
+        scope = self._scope_to_reuse()
+        if scope is None or scope.autocommit:
+            return None
+        return scope
+
     @contextmanager
     def _bind(
         self,
         connection: ConnectionT | None,
         checkout: _Lazy[ConnectionT] | None = None,
+        *,
+        autocommit: bool = False,
     ) -> Iterator[_Scope[ConnectionT, SessionT]]:
         """Bind a scope holding ``connection`` to the current context.
 
@@ -493,7 +508,9 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         session is left to the caller, which knows whether it takes an
         ``await``. A lazy block passes ``checkout`` instead of a connection.
         """
-        scope = _Scope[ConnectionT, SessionT](connection, checkout=checkout)
+        scope = _Scope[ConnectionT, SessionT](
+            connection, checkout=checkout, autocommit=autocommit
+        )
         token = self._scope.set(scope)
         try:
             yield scope
