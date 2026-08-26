@@ -174,7 +174,8 @@ async with db.using(random.choice(REPLICAS)).connect():
 by turn, by region, or by whatever your deployment knows.
 
 **It does not police relationships.** A relationship between models on two
-databases does not work in SQLAlchemy, so there is nothing to permit or forbid.
+databases does not work in `SQLAlchemy`, so there is nothing to permit or
+forbid.
 
 Next: [debugging](debugging.md) for a recording that says which database ran
 what, and [testing](testing.md) for a schema and a rollback on every one.

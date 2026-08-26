@@ -138,7 +138,7 @@ with db.transaction():
 ```
 
 It is off by default, since every savepoint costs a round trip and buys nothing
-when the failure ends the whole transaction anyway. On PostgreSQL there is a
+when the failure ends the whole transaction anyway. On `PostgreSQL` there is a
 second price. Past 64 subtransactions the backend's `subxid` cache overflows and
 reads start going to `pg_subtrans`, which slows the whole cluster rather than
 the one transaction.
@@ -219,7 +219,7 @@ Every argument with its default is in the
 
 ## autocommit() {#autocommit}
 
-SQLAlchemy opens a transaction around everything, an ordinary read included.
+`SQLAlchemy` opens a transaction around everything, an ordinary read included.
 For one `SELECT`, `connect()` writes this to the log:
 
 ```sql
@@ -246,7 +246,7 @@ ROLLBACK using DBAPI connection.rollback(); set skip_autocommit_rollback to prev
 ```
 
 The lines around the statement are still there, but they are no longer SQL.
-SQLAlchemy says in the parentheses that it hands the driver no `BEGIN`, and in
+`SQLAlchemy` says in the parentheses that it hands the driver no `BEGIN`, and in
 place of a `ROLLBACK` it calls the driver's `rollback()` as the connection goes
 back to the pool. Dialects that can skip that call as well turn it off with one
 argument:
@@ -285,7 +285,7 @@ with db.autocommit():
 That is the point of the block, and the same reason writes belong in
 `transaction()`.
 
-## Blocks under asyncio {#async}
+## Blocks under `asyncio` {#async}
 
 `sqlakit.asyncio` repeats all of it. The blocks are awaited, reading the context
 is not:
@@ -309,7 +309,7 @@ async with db.transaction():
     await asyncio.gather(load_users(), load_teams())  # both on one session
 ```
 
-A SQLAlchemy session is not built for that, and the treacherous part is that
+A `SQLAlchemy` session is not built for that, and the treacherous part is that
 reads may go through without a single complaint. Let two tasks overlap on a
 write and you get `InvalidRequestError: Session is already flushing`. Give each
 task a block of its own, and each takes its own connection:
@@ -325,8 +325,8 @@ await asyncio.gather(load_users(), load_teams())
 
 ### Background tasks
 
-FastAPI runs `BackgroundTasks` after the response, when the handler's block has
-already closed. Reaching for `db.session` from there raises
+`FastAPI` runs `BackgroundTasks` after the response, when the handler's block
+has already closed. Reaching for `db.session` from there raises
 `MissingSessionError`:
 
 ```python

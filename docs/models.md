@@ -2,7 +2,7 @@
 
 The layer is optional. It puts `save()`, `delete()` and a query on the model
 itself, the Active Record way. The rest of the library does not need it, and
-plain SQLAlchemy models work with everything else in these pages. If your
+plain `SQLAlchemy` models work with everything else in these pages. If your
 application keeps saving in repositories or services, skip this one.
 
 ```python
@@ -172,7 +172,7 @@ user.update(payload.model_dump(exclude_unset=True)).save()
 
 `None` is a value here like any other, since clearing a nullable field is
 exactly how a request does it. So the dict has to hold what was *sent*, not what
-was non-empty. In pydantic that is `exclude_unset=True`.
+was non-empty. In `pydantic` that is `exclude_unset=True`.
 
 ## Relationships without a query
 
@@ -268,7 +268,7 @@ has `timestamptz` that is the type it gets. A column of your own is named with
 Worth knowing before turning it on:
 
 - **A unique index still holds the marked row.** `UNIQUE(email)` will not take a
-  new row with the same address. On PostgreSQL build the index with
+  new row with the same address. On `PostgreSQL` build the index with
   `WHERE deleted_at IS NULL`.
 - **Cascades do not fire.** No `DELETE` reaches the database, so
   `cascade="all, delete-orphan"` and `ON DELETE CASCADE` stay quiet. Mark the
@@ -345,7 +345,7 @@ class Shipment(WarehouseBase):  # the same database, nothing to say
 ## A declarative base of your own
 
 The `Model` that ships is `ModelMixin` on a plain base. When a base of yours
-carries settings, mix the mixin into it and put the settings where SQLAlchemy
+carries settings, mix the mixin into it and put the settings where `SQLAlchemy`
 reads them: `type_annotation_map` counts only on the class that starts the
 hierarchy.
 
@@ -369,8 +369,8 @@ class Model(ModelMixin, MappedAsDataclass, DeclarativeBase):
     }
 ```
 
-A model on such a base is declared the way SQLAlchemy's dataclass mapping wants,
-and `save()`, `delete()` and `query` stay where they were:
+A model on such a base is declared the way `SQLAlchemy`'s dataclass mapping
+wants, and `save()`, `delete()` and `query` stay where they were:
 
 ```python
 from datetime import UTC, datetime
@@ -398,7 +398,7 @@ print(user)  # User(id=1, name='ada', team='', created_at=datetime(...))
 ```
 
 Dataclass mapping puts requirements on the columns, and they come from
-SQLAlchemy rather than from this library:
+`SQLAlchemy` rather than from this library:
 
 - **`init=False` on a key the database fills.** Otherwise the generated
   `__init__` demands an `id` the row does not have yet.
@@ -408,7 +408,7 @@ SQLAlchemy rather than from this library:
 
 With an async database, take `sqlakit.asyncio.orm.ModelMixin`.
 
-## Models under asyncio
+## Models under `asyncio`
 
 The same layer in `sqlakit.asyncio.orm`, awaited:
 

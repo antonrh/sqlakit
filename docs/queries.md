@@ -6,7 +6,7 @@ declared.
 
 ## From the database
 
-A plain SQLAlchemy class knows nothing about this library, so the database
+A plain `SQLAlchemy` class knows nothing about this library, so the database
 builds the query over it:
 
 ```python
@@ -92,7 +92,7 @@ the mapped class itself, so `__orderable__`, `__cursor_key__` and
 If reaching a query straight off the class suits you better, there is
 [`Model.query`](models.md), which builds the very same object.
 
-In [examples](examples.md) both are written out in full, with SQLModel classes
+In [examples](examples.md) both are written out in full, with `SQLModel` classes
 and with a repository.
 
 ## Building
@@ -130,8 +130,8 @@ active.filter_by(team="red").first()
 | `create`, `create_many` | write new rows |
 | `update`, `delete` | write to every matching row |
 
-Everything else lives in one attribute: `query.select` hands back the SQLAlchemy
-`Select` that was assembled underneath.
+Everything else lives in one attribute: `query.select` hands back the
+`SQLAlchemy` `Select` that was assembled underneath.
 
 The calls that require a row name the model that had none. `get_one` and `one`
 raise `InstanceNotFoundError`, and `one` and `one_or_none` raise
@@ -147,7 +147,7 @@ except InstanceNotFoundError as error:
     raise HTTPException(404, f"{error.model} not found")
 ```
 
-Both inherit SQLAlchemy's `NoResultFound` and `MultipleResultsFound`, so an
+Both inherit `SQLAlchemy`'s `NoResultFound` and `MultipleResultsFound`, so an
 `except` you already wrote goes on working.
 
 ## One row by key
@@ -196,7 +196,7 @@ a new transaction.
 
 ## Ordering
 
-`order_by` here is the one from SQLAlchemy, so columns work as they always do:
+`order_by` here is the one from `SQLAlchemy`, so columns work as they always do:
 
 ```python
 db.query(User).order_by(User.created_at.desc(), User.id.asc())
@@ -469,10 +469,10 @@ while True:
         break
 ```
 
-`chunks` reads through `yield_per`, and SQLAlchemy does not allow that together
-with a `joinedload` against a collection. Such a loader needs to unique and
-buffer the rows, which streaming does not permit, so instead of a statement you
-get `InvalidRequestError`. Load collections here with `selectinload`.
+`chunks` reads through `yield_per`, and `SQLAlchemy` does not allow that
+together with a `joinedload` against a collection. Such a loader needs to unique
+and buffer the rows, which streaming does not permit, so instead of a statement
+you get `InvalidRequestError`. Load collections here with `selectinload`.
 
 ## Columns instead of instances
 
@@ -659,7 +659,7 @@ are in [SQL templates](sql.md), along with rows that belong to no model.
 `__query_filter__` is applied in neither case, since the statement runs as
 written. A soft delete or a tenant rule has to go into the SQL itself.
 
-## Queries under asyncio
+## Queries under `asyncio`
 
 The same layer in `sqlakit.asyncio.orm`, awaited:
 
