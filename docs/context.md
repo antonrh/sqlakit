@@ -118,6 +118,20 @@ A second connection would run in its own transaction: it wouldn't see the
 outer block's writes, it would take another connection from the pool, and it
 could deadlock on rows the outer transaction holds.
 
+It works the other way round as well. A `transaction()` inside `connect()` or
+`session_factory()` runs on the connection those blocks bound, and commits
+what is outstanding on it when it ends:
+
+```python
+with db.connect() as conn:
+    with db.transaction() as inner:
+        assert inner is conn  # one connection, one transaction on it
+```
+
+Two blocks keep a connection of their own. `transaction(join_nested=False)`
+says so outright, and a block inside `autocommit()` has to: an `AUTOCOMMIT`
+connection runs no transaction to take part in.
+
 The outermost block owns the commit. Nested blocks run no statements of their
 own, so wrapping a helper in `transaction()` costs nothing. Each nested block
 still opens its own session, so code you call can't close or roll back the
@@ -361,5 +375,27 @@ async def notify() -> None:
     async with db.transaction():  # a background task needs a block of its own
         ...
 ```
+
+## Blocks in a worker thread
+
+`FastAPI` runs a `def` endpoint in a worker thread, and the thread gets a copy
+of the context. A block opened outside it, in a middleware or an async
+dependency, is therefore visible inside, and the endpoint would run its
+statements on a connection that belongs to another thread. `SQLite` refuses
+that outright, and other drivers do it without a word.
+
+Open the block on the endpoint, so that it belongs to the thread that uses it:
+
+```python
+@app.get("/users")
+@db.transaction  # opens and closes in the worker thread
+def list_users() -> list[UserResponse]:
+    return [UserResponse.model_validate(user) for user in db.query(User).all()]
+```
+
+An `async def` endpoint has none of this to think about. It runs on the loop,
+where a block covers one request and nothing else. `Flask` is the same story
+as the endpoint above: every request already has a thread of its own, and the
+block goes on the view.
 
 Next: [queries](queries.md) for what runs inside these blocks.

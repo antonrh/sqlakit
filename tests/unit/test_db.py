@@ -28,6 +28,8 @@ from sqlakit._base import default_backoff, fix_sqlite_transactions
 
 @pytest.fixture(params=["asyncio", "trio"])
 def anyio_backend(request: pytest.FixtureRequest) -> str:
+    # Both backends: the synchronous database has no async engine to keep it
+    # on asyncio, and its context is a `ContextVar` either way.
     return request.param
 
 
@@ -385,6 +387,91 @@ def test_nested_block_reuses_the_connection(users_db: Database) -> None:
 
         with users_db.transaction() as inner:
             assert inner is conn
+
+
+def test_a_transaction_inside_connect_runs_on_its_connection(
+    users_db: Database, checkouts: list[object]
+) -> None:
+    with users_db.connect() as conn:
+        with users_db.transaction() as inner:
+            assert inner is conn
+            users_db.session.add(User(name="ada"))
+
+        assert len(checkouts) == 1
+
+    with users_db.connect() as conn:
+        assert names(conn) == ["ada"]
+
+
+def test_a_transaction_inside_connect_ends_the_session_transaction(
+    users_db: Database, checkouts: list[object]
+) -> None:
+    # The outer block's session began the transaction, so the nested block
+    # commits through it, and both blocks' writes go together.
+    with users_db.connect() as conn:
+        users_db.session.add(User(name="ada"))
+        users_db.session.flush()
+
+        with users_db.transaction() as inner:
+            assert inner is conn
+            users_db.session.add(User(name="grace"))
+
+        assert len(checkouts) == 1
+        assert (
+            users_db.session.scalar(sa.select(sa.func.count()).select_from(User)) == 2
+        )
+
+    with users_db.connect() as conn:
+        assert names(conn) == ["ada", "grace"]
+
+
+def test_a_failing_transaction_inside_connect_leaves_the_block_usable(
+    users_db: Database,
+) -> None:
+    with users_db.connect() as conn:
+        with suppress(ZeroDivisionError), users_db.transaction():
+            users_db.session.add(User(name="ada"))
+            1 / 0
+
+        assert conn.scalar(sa.select(sa.func.count()).select_from(User)) == 0
+
+
+def test_a_transaction_inside_session_factory_runs_on_its_connection(
+    users_db: Database, checkouts: list[object]
+) -> None:
+    with users_db.session_factory():
+        with users_db.transaction() as inner:
+            assert inner is users_db.connection
+            users_db.session.add(User(name="ada"))
+
+        assert len(checkouts) == 1
+
+    with users_db.connect() as conn:
+        assert names(conn) == ["ada"]
+
+
+def test_a_transaction_inside_autocommit_opens_its_own_connection(
+    users_db: Database, checkouts: list[object]
+) -> None:
+    # No transaction runs on an `AUTOCOMMIT` connection, so this one needs
+    # another connection to have one at all.
+    with users_db.autocommit() as conn:
+        with users_db.transaction() as inner:
+            assert inner is not conn
+
+        assert len(checkouts) == 2
+
+
+def test_a_transaction_under_join_nested_false_stays_apart(tmp_path: Path) -> None:
+    # Two connections of its own, so the database is a file rather than the
+    # one connection a `StaticPool` hands out.
+    db = Database(f"sqlite:///{tmp_path / 'test.db'}")
+
+    with db.transaction(join_nested=False) as conn:
+        with db.transaction() as inner:
+            assert inner is not conn
+
+    db.dispose()
 
 
 def test_nested_block_in_a_transaction_gets_its_own_session(
