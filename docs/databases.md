@@ -1,7 +1,7 @@
 # The database
 
 A `Database` holds the `SQLAlchemy` engine, its connection pool, and the
-context the blocks bind into. Creating it doesn't connect to anything yet: the
+context that blocks attach to. Creating it doesn't connect to anything yet: the
 engine is created when the first block needs it.
 
 ```python

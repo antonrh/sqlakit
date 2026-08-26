@@ -151,7 +151,7 @@ def test_rename() -> None:
 ```
 
 Run the tests with `python -m pytest`. It puts the project directory on the
-path, so `app` imports. The schema is dropped when the run ends, so you don't
+path, so the `app` package can be imported. The schema is dropped when the run ends, so you don't
 need a prepared database and there's nothing to clean up in between.
 
 ## What you have now

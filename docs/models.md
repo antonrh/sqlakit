@@ -107,8 +107,8 @@ User.query.in_team("red").order_by(User.name).page(limit=20)
 User.query.in_team("red").deactivate()  # how many rows it updated
 ```
 
-Rules you want on every model go on a base class, written through
-`self.model`:
+Rules you want on every model go on a base class; refer to the model class
+through `self.model`:
 
 ```python
 from typing import Any
@@ -244,7 +244,7 @@ It adds a `deleted_at` column, and `delete()` sets it:
 ```python
 note.delete()  # UPDATE notes SET deleted_at = now()
 note.restore()  # and back again
-note.delete(force=True)  # the row goes
+note.delete(force=True)  # actually deletes the row
 ```
 
 Reads don't see marked rows, `get()` included, so you can't reach a marked
@@ -260,7 +260,7 @@ Bulk deletion marks rows too, so both paths behave the same:
 
 ```python
 Note.query.where(Note.is_draft).delete()  # marks them
-Note.query.only_deleted().delete(force=True)  # empties the bin
+Note.query.only_deleted().delete(force=True)  # removes the marked rows for good
 ```
 
 Both paths set the column with the database's `now()`, and on databases that
@@ -340,7 +340,7 @@ class Event(WarehouseBase):
     __tablename__ = "events"
 
 
-class Shipment(WarehouseBase):  # the same database, nothing to say
+class Shipment(WarehouseBase):  # the same database, nothing to configure
     __tablename__ = "shipments"
 ```
 

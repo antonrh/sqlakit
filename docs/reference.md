@@ -5,7 +5,7 @@
 | | opens | commits | inside another block |
 | --- | --- | --- | --- |
 | `db.connect()` | a connection | no | reuses the bound connection |
-| `db.transaction()` | a connection and a transaction | on the way out | joins the transaction |
+| `db.transaction()` | a connection and a transaction | when the block ends | joins the transaction |
 | `db.autocommit()` | a connection in `AUTOCOMMIT` | every statement | joins the transaction |
 | `db.session_factory()` | a connection and a session | no | reuses the bound connection |
 
@@ -213,7 +213,7 @@ import sqlakit
 
 try:
     page = User.query.order_by(sort).page(limit=20)
-except sqlakit.UnknownOrderFieldError:  # this field, this request
+except sqlakit.UnknownOrderFieldError:  # invalid field in this request
     ...
 except sqlakit.SQLAKitError:  # anything from this library
     ...

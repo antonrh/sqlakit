@@ -115,8 +115,8 @@ total = db.sql("reports/total.sql").scalars().one()
 names = db.sql("users/names.sql").scalars().all()
 ```
 
-You call each of these once. Nothing builds on top of typed rows, so there's
-no call order to remember.
+You call `typed` or `scalars` once; they aren't chained with each other, so
+there's no call order to remember.
 
 The methods that run the query are the same ones a query has: `all`, `first`,
 `one`, `one_or_none`. They raise `SQLAlchemy`'s own `NoResultFound` and

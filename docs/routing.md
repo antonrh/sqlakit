@@ -68,7 +68,7 @@ class Placement(Router):
 
 ```python
 db.route(Placement())
-db.route(lambda model: ELSEWHERE.get(model))  # a function does as well
+db.route(lambda model: ELSEWHERE.get(model))  # a plain function also works
 ```
 
 `configure()` also accepts routers, by import path, so the policy can live in
@@ -128,8 +128,8 @@ async with db.using(shard_of(tenant)).transaction():
 sets one, such as the warehouse model above, keeps using its own database. The
 redirection ends with the block, including when the block ends by raising.
 
-Entered on its own, it only redirects and doesn't open anything, for when the
-block is opened somewhere else:
+You can also enter `db.using("replica")` on its own: it only redirects and
+doesn't open anything. Use it when the block is opened somewhere else:
 
 ```python
 with db.using("replica"):
@@ -140,13 +140,13 @@ with db.using("replica"):
 
 ```python
 User.query.using("replica").order_by("name").page(limit=20)
-User.query.using(warehouse).count()  # a database, rather than a name
+User.query.using(warehouse).count()  # a `Database` object instead of an alias
 ```
 
 One query goes to the database you named, regardless of the surrounding block.
 
-[SQL templates](sql.md) pick their database the same way, by starting from it:
-`db.sql(...)` runs on the default one, `db["warehouse"].sql(...)` on that one.
+With [SQL templates](sql.md), the database you call decides: `db.sql(...)`
+runs on the default one, `db["warehouse"].sql(...)` on the warehouse.
 Routers decide where a *model* lives, and a template is not a model, so
 templates are never routed.
 

@@ -47,8 +47,8 @@ db.connection  # MissingConnectionError
 db.session  # MissingSessionError
 ```
 
-If connections opened on demand, you couldn't tell when a connection comes out
-of the pool and when it goes back.
+If connections were opened on demand, you couldn't tell when one comes out of
+the pool and when it goes back.
 
 ## connect() {#connect}
 
@@ -64,8 +64,8 @@ created on the same connection:
 
 ```python
 with db.connect():
-    db.in_session()  # False, while nobody has asked
-    db.session  # opened right here
+    db.in_session()  # False, no session yet
+    db.session  # the session is created here
     db.in_session()  # True
 ```
 
@@ -76,7 +76,7 @@ committing is up to you:
 
 ```python
 with db.connect():
-    db.session.add(User(name="ada"))  # goes when the session goes
+    db.session.add(User(name="ada"))  # lost when the session closes
 
 with db.connect():
     db.session.add(User(name="ada"))
@@ -142,7 +142,7 @@ is a second cost. Past 64 subtransactions the backend's `subxid` cache
 overflows, reads start going to `pg_subtrans`, and that slows down the whole
 cluster, not just the one transaction.
 
-### Standing outside a transaction
+### Running outside the surrounding transaction
 
 `join_nested=False` does the opposite. Set it on a block, and its nested
 blocks open connections of their own instead of joining it. They don't see
@@ -202,14 +202,14 @@ jitter, so workers that collided once don't all retry at the same moment. If
 you need longer waits, pass a function of your own; in tests, `lambda _: 0.0`
 skips the waiting.
 
-### Throwing the work away
+### Rolling back at the end
 
 `rollback=True` rolls back at the end of the block instead of committing, and
 turns `savepoint` on, so a nested block can still fail on its own:
 
 ```python
 with db.transaction(rollback=True):
-    db.query(User).create(name="ada")  # gone when the block ends
+    db.query(User).create(name="ada")  # rolled back when the block ends
 ```
 
 That's how a test runs against a real database and leaves it unchanged. The
@@ -255,7 +255,7 @@ that can skip that call as well, turn it off with one argument:
 db = Database(url, engine_args={"skip_autocommit_rollback": True})
 ```
 
-### Statements a transaction will not have
+### Statements that can't run in a transaction
 
 `VACUUM`, `CREATE DATABASE` and `CREATE INDEX CONCURRENTLY` cannot run inside
 a transaction. Run them here:
@@ -331,7 +331,7 @@ is already closed. Accessing `db.session` there raises `MissingSessionError`:
 @app.post("/users")
 @db.transaction
 async def create_user(background: BackgroundTasks) -> UserResponse:
-    background.add_task(notify)  # runs when the session is gone
+    background.add_task(notify)  # runs after the session is closed
     ...
 
 

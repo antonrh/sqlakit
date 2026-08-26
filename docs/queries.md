@@ -1,8 +1,8 @@
 # Queries
 
 A query reads rows of one model, using the session of the open block. There
-are several ways to get one, and which you use depends only on how the model
-was declared.
+are several ways to get a query, and which one you use depends only on how
+the model was declared.
 
 ## From the database
 
@@ -70,7 +70,7 @@ class UserRepository:
         )
 
     def last_ordered_before(self, when: datetime) -> list[User]:
-        # SQL of its own, mapped back onto the model.
+        # Raw SQL, mapped back onto the model.
         return self.query.from_statement(
             sa.text("""
                 SELECT users.* FROM users
@@ -179,8 +179,8 @@ assert db.query(User).get(1) is user
 ```
 
 The map holds instances with weak references, so this caching lasts only while
-the instance is alive in your code. When you touch one row from several places,
-this saves most of the reads.
+the instance is alive in your code. When you use the same row from several
+places, most of those lookups never reach the database.
 
 An instance keeps the values it was loaded with; a write from another
 transaction doesn't update them. `refresh()` reads the current values:
@@ -207,7 +207,7 @@ It also accepts an ordering string: `name`, `name.desc` or
 `name.desc.nulls_last`. The default direction is ascending.
 
 ```python
-sort = "created_at.desc"  # a query parameter, say
+sort = "created_at.desc"  # e.g. a query parameter
 
 db.query(User).order_by(sort).page(limit=20, offset=40)
 db.query(User).order_by("team", "created_at.desc").cursor_page(limit=20)
@@ -236,8 +236,9 @@ db.query(User).order_by(["team", "name.desc"])  # or several
 db.query(User).order_by("name", ci_fields=["name"]).page(limit=20)
 ```
 
-The ordering then uses `lower(name)`, which a cursor cannot page. Use it with
-`page`, or fold the case in `__orderable__`, where it can be indexed.
+The ordering then uses `lower(name)`, which cursor pagination doesn't support.
+Use it with `page`, or put the `lower()` expression into `__orderable__`,
+where you can back it with an index.
 
 By default **every mapped column** can be ordered by, and `__orderable__`
 narrows that to the names an API may send:
@@ -257,8 +258,8 @@ class User(Base):
     def __orderable__(cls) -> Mapping[str, Any]:
         return {
             "created_at": cls.created_at,
-            "name": sa.func.lower(cls.name),  # without case
-            "last_seen_at": sa.nulls_last(cls.last_seen_at),  # never seen, last
+            "name": sa.func.lower(cls.name),  # case-insensitive
+            "last_seen_at": sa.nulls_last(cls.last_seen_at),  # never seen sort last
             "orders": _order_count_of(cls),  # a correlated subquery
         }
 ```
@@ -307,7 +308,7 @@ counts = (
     .subquery()
 )
 
-# On `Team`, because the count belongs to that side.
+# Declared on `Team`: each team has one count.
 {"members": OrderBy(counts.c.members, join=counts, on=counts.c.team_id == cls.id)}
 ```
 
@@ -351,7 +352,7 @@ computes `has_next` from it.
 page = db.query(User).order_by(User.name).page(limit=20, offset=40, total=False)
 
 page.items  # 20 users, in one statement
-page.total  # None, because nothing counted them
+page.total  # None, the count query was skipped
 page.has_next  # whether there was a 21st row
 ```
 

@@ -53,7 +53,7 @@ with db.connect():  # a connection, with no transaction of its own
 with db.transaction():  # commits at the end, rolls back on an exception
     ...
 
-with db.autocommit():  # AUTOCOMMIT, holding nothing open
+with db.autocommit():  # AUTOCOMMIT, no transaction held open
     ...
 ```
 
@@ -185,7 +185,7 @@ with db.transaction():
 
 `set_db()` binds a model to a database. Call it on a base class and every model
 under it inherits the binding. With the global `db` from the section below you
-do not need it at all: the model finds the registry by itself.
+don't need it at all: the model uses the global registry automatically.
 
 This layer is optional. Everything else works on plain `SQLAlchemy` models, so
 if saving belongs in your repositories or services, skip `sqlakit.orm`
@@ -193,8 +193,8 @@ entirely.
 
 ## Testing
 
-A test runs inside a transaction that is rolled back at the end, so the code
-under test cannot commit past it. `assert_queries` checks how many statements a
+A test runs inside a transaction that is rolled back at the end, so nothing
+the code under test writes is actually committed. `assert_queries` checks how many statements a
 block runs:
 
 ```python

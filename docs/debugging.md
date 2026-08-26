@@ -9,7 +9,7 @@ with db.recording("GET /users") as record:
 
 record.count  # 12
 record.milliseconds  # 8.4
-record.duplicates  # the ones that ran more than once, by the SQL they ran
+record.duplicates  # statements that ran more than once, grouped by SQL
 record.slowest
 print(record)  # the statements, numbered and timed
 ```
@@ -50,7 +50,7 @@ whole.
 with db.recording("GET /users") as record:
     build_report()
 
-record.log(logger, busy=50, slow=200.0)  # ERROR later on count, sooner on time
+record.log(logger, busy=50, slow=200.0)  # ERROR from 50 statements or 200ms
 record.log(logger, level=logging.INFO)  # or always INFO
 ```
 
@@ -132,8 +132,8 @@ that ran forty of them. When you want a statement formatted over several
 lines, use `pretty`:
 
 ```python
-print(record.pretty)  # every statement, over several lines each
-print(record.slowest.pretty)  # just the one that took longest
+print(record.pretty)  # every statement, formatted over several lines
+print(record.slowest.pretty)  # only the slowest statement
 ```
 
 ```sql
@@ -146,11 +146,11 @@ print(record.slowest.pretty)  # just the one that took longest
 ```
 
 Formatting requires `sqlakit[debug]`, which installs `sqlparse`. Without it
-you get the statement as it ran, on one line, and nothing raises.
+you get the statement as it ran, on one line. A missing extra isn't an error.
 
 If your application prints with [rich](https://rich.readthedocs.io), the SQL
-is coloured as well: a recording and a statement are both renderable by
-`rich`, and nothing here imports it. `echo=True` and `record.echo()` colour
+is coloured as well: a recording and a statement can both be rendered by
+`rich`, and SQLAKit itself doesn't import it. `echo=True` and `record.echo()` colour
 the output the same way when `rich` is installed, and print plainly when it is
 not.
 

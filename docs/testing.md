@@ -230,14 +230,15 @@ consequences follow:
 
 The second point breaks the suite as soon as a router appears in the project:
 reads go to `replica`, the test's rows are never committed, and every read
-comes back empty. Keep routers off in tests, as a fresh registry has none:
+comes back empty. Keep routers off in tests. A fresh registry has none, and the fixture below
+clears them after each test:
 
 ```python
 @pytest.fixture(autouse=True)
 def _db_marker() -> Iterator[None]:
     with db.transactions(rollback=True):
         yield
-    db.route()  # nothing routed, reads and writes meet on default
+    db.route()  # no routers, reads and writes both go to default
 ```
 
 A model that set its database through `__db__` keeps it: `route()` clears the
@@ -385,9 +386,9 @@ The checks work alone or combined: an exact number, an `at_most` ceiling, and
 
 ```python
 with db.assert_queries(at_most=5):
-    ...  # a ceiling, for when an exact number is brittle
+    ...  # an upper bound instead of an exact number
 with db.assert_queries(duplicates=False):
-    ...  # an N+1 test, with no number
+    ...  # no repeats allowed, catches N+1
 with db.assert_queries(3, duplicates=False):
     ...
 ```
