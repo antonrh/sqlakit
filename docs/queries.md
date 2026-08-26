@@ -34,7 +34,7 @@ with db.connect():
 ```
 
 The block binds the session the query runs on. Every example below assumes an
-open block, so we won't show it again.
+open block, so the block is left out from here on.
 
 ## In a repository
 

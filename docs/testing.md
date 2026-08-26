@@ -92,8 +92,9 @@ only inside that branch.
 Switching to an async database changes one thing: the fixtures have to be
 async, because the transaction has to open on the loop the test runs on. An
 async fixture can't be fetched through `getfixturevalue`: that call is
-synchronous and can't await anything. So the `db` marker is handled at collection time, in
-`pytest_collection_modifyitems`, which adds the fixture to the marked tests:
+synchronous and can't await anything. So the `db` marker is handled at
+collection time, in `pytest_collection_modifyitems`, which adds the fixture
+to the marked tests:
 
 ```python title="conftest.py (asyncio)"
 from collections.abc import AsyncIterator
@@ -230,8 +231,8 @@ consequences follow:
 
 The second point breaks the suite as soon as a router appears in the project:
 reads go to `replica`, the test's rows are never committed, and every read
-comes back empty. Keep routers off in tests. A fresh registry has none, and the fixture below
-clears them after each test:
+comes back empty. Keep routers off in tests. A fresh registry has none, and
+the fixture below clears them after each test:
 
 ```python
 @pytest.fixture(autouse=True)

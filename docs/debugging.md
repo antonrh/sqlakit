@@ -150,9 +150,9 @@ you get the statement as it ran, on one line. A missing extra isn't an error.
 
 If your application prints with [rich](https://rich.readthedocs.io), the SQL
 is coloured as well: a recording and a statement can both be rendered by
-`rich`, and SQLAKit itself doesn't import it. `echo=True` and `record.echo()` colour
-the output the same way when `rich` is installed, and print plainly when it is
-not.
+`rich`, and SQLAKit itself doesn't import it. `echo=True` and `record.echo()`
+colour the output the same way when `rich` is installed, and print plainly
+when it is not.
 
 ```python
 from rich import print

@@ -3,8 +3,8 @@
 SQLAKit removes the boilerplate from `SQLAlchemy` applications. It manages
 sessions and transactions for you, and adds a query builder with pagination
 built in, `SQL` templates, an optional `Active Record` layer, debugging and
-testing tools, etc. It supports both sync and async APIs and integrates
-easily with any framework.
+testing tools, etc. It supports both sync and async APIs and works with any
+framework.
 
 ```console
 $ pip install sqlakit
@@ -194,8 +194,8 @@ entirely.
 ## Testing
 
 A test runs inside a transaction that is rolled back at the end, so nothing
-the code under test writes is actually committed. `assert_queries` checks how many statements a
-block runs:
+the code under test writes is actually committed. `assert_queries` checks how
+many statements a block runs:
 
 ```python
 with db.transaction(rollback=True), db.assert_queries(2):
@@ -248,9 +248,9 @@ with db.recording(echo=True):
       WHERE teams.id = ?
 ```
 
-The N+1 is easy to spot: one query for the users and two identical ones for
-the teams. Formatting needs the `sqlakit[debug]` extra, and if the project has
-`rich`, the output is colored too.
+You can spot the N+1 right away: one query for the users and two identical
+ones for the teams. Formatting needs the `sqlakit[debug]` extra, and if the
+project has `rich`, the output is colored too.
 
 ## The registry
 

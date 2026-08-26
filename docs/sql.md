@@ -193,8 +193,8 @@ query = db.sql.from_string("SELECT id FROM users WHERE team = {{ team }}", team=
 ids = query.scalars().all()
 ```
 
-This is the only call that works without `templates=`. It's also easy to grep
-for when you want to find every place where SQL is built from strings.
+This is the only call that works without `templates=`. Grep for it when you
+want to find every place where SQL is built from strings.
 
 !!! note "Placeholders belong to the template, not to the driver"
 
