@@ -1,9 +1,13 @@
+from collections.abc import Callable
+
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.orm.exc import NoResultFound
 
 import sqlakit
+import sqlakit.asyncio.orm
+import sqlakit.orm
 from sqlakit import Database, DetachedInstanceError, UnknownFieldError
 from sqlakit.orm import ModelMixin
 
@@ -248,3 +252,17 @@ def test_set_loaded_refuses_a_field_the_model_does_not_have(
 
         with pytest.raises(UnknownFieldError):
             user.set_loaded("teem", None)
+
+
+@pytest.mark.parametrize(
+    ("sync", "asynchronous"),
+    [
+        (sqlakit.orm.ModelMixin, sqlakit.asyncio.orm.ModelMixin),
+        (sqlakit.orm.SoftDeletes, sqlakit.asyncio.orm.SoftDeletes),
+    ],
+    ids=lambda cls: cls.__name__,
+)
+def test_the_async_model_mirrors_this_one(
+    sync: type, asynchronous: type, mirrors: Callable[[type, type], None]
+) -> None:
+    mirrors(sync, asynchronous)
