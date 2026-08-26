@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 import random
 import threading
 import time
@@ -7,6 +9,7 @@ from collections.abc import Callable, Mapping
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import cache
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -93,6 +96,46 @@ ConnectionT = TypeVar("ConnectionT")
 SessionT = TypeVar("SessionT")
 
 
+class _Lazy(Generic[ConnectionT]):
+    """A connection checkout that has not happened yet.
+
+    A lazy ``session_factory()`` block binds one of these instead of a
+    connection. ``get`` and ``aget`` perform the checkout on first use, once,
+    and cache the connection.
+    """
+
+    __slots__ = ("_alock", "_lock", "connection", "open")
+
+    def __init__(self, open: Callable[[], Any]) -> None:  # noqa: A002
+        self.open = open
+        self.connection: ConnectionT | None = None
+        self._lock = threading.Lock()
+        self._alock: asyncio.Lock | None = None
+
+    def get(self) -> ConnectionT:
+        """Materialize the connection, once, and return it."""
+        with self._lock:
+            if self.connection is None:
+                self.connection = self.open()
+        return self.connection
+
+    async def aget(self) -> ConnectionT:
+        """Materialize the connection, once, awaited."""
+        if self.connection is not None:
+            return self.connection
+        # On the cell, made inside a running coroutine: a cell lives within
+        # one block on one loop, while the database outlives loops.
+        if self._alock is None:
+            self._alock = asyncio.Lock()
+        async with self._alock:
+            if self.connection is None:
+                connection = self.open()
+                if inspect.isawaitable(connection):
+                    connection = await connection
+                self.connection = connection
+        return self.connection
+
+
 @dataclass(slots=True)
 class _Scope(Generic[ConnectionT, SessionT]):
     """The connection bound to a context, and the session opened on top of it.
@@ -100,10 +143,14 @@ class _Scope(Generic[ConnectionT, SessionT]):
     The context variable holds this object, not the session, so a session
     opened later, including in a task that copies the context, still
     belongs to the block that bound the connection.
+
+    A lazy ``session_factory()`` block binds a scope with no connection and a
+    ``checkout`` instead. The connection lands here once something uses it.
     """
 
-    connection: ConnectionT
+    connection: ConnectionT | None
     session: SessionT | None = None
+    checkout: _Lazy[ConnectionT] | None = None
 
 
 @dataclass(slots=True)
@@ -196,16 +243,15 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.url.render_as_string()!r})"
 
-    @property
-    def connection(self) -> ConnectionT:
-        """The connection bound to the current context.
+    def _current_scope(self) -> _Scope[ConnectionT, SessionT]:
+        """Return the scope bound to the current context.
 
         Raises:
-            MissingConnectionError: if no connection is bound.
+            MissingConnectionError: if no block is open.
 
         """
         try:
-            return self._scope.get().connection
+            return self._scope.get()
         except LookupError:
             raise MissingConnectionError from None
 
@@ -226,7 +272,12 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         except LookupError:
             raise MissingSessionError from None
         if scope.session is None:
-            scope.session = self._create_session(scope.connection)
+            if scope.connection is None and scope.checkout is not None:
+                scope.session = self._lazy_session(scope.checkout)
+            else:
+                scope.session = self._create_session(
+                    cast("ConnectionT", scope.connection)
+                )
         return scope.session
 
     @contextmanager
@@ -386,6 +437,9 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
     def _create_session(self, connection: ConnectionT) -> SessionT:
         raise NotImplementedError  # pragma: no cover - the subclass has it
 
+    def _lazy_session(self, cell: _Lazy[ConnectionT]) -> SessionT:
+        raise NotImplementedError  # pragma: no cover - the subclass has it
+
     def _session_args_for(self, connection: ConnectionT) -> dict[str, Any]:
         """How a session joins the transaction already open on ``connection``."""
         outer = self._outer.get(None)
@@ -415,31 +469,33 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         outer = self._outer_to_join()
         return outer.connection if outer is not None else None
 
-    def _connection_to_reuse(self) -> ConnectionT | None:
-        """Return the bound connection a new block reuses, if it may.
+    def _scope_to_reuse(self) -> _Scope[ConnectionT, SessionT] | None:
+        """Return the bound scope a new block reuses, if it may.
 
         One connection per context: a block that only needs a connection takes
         the one already bound, whether a transaction, ``autocommit()`` or
-        another ``connect()`` opened it. ``join_nested=False`` opts out.
+        another ``connect()`` opened it. ``join_nested=False`` opts out. A
+        lazy scope has to be materialized before its connection is reused,
+        which the caller does, awaited or not.
         """
         outer = self._outer.get(None)
         if outer is not None and not outer.join_nested:
             return None
-        scope = self._scope.get(None)
-        return scope.connection if scope is not None else None
+        return self._scope.get(None)
 
     @contextmanager
     def _bind(
         self,
-        connection: ConnectionT,
+        connection: ConnectionT | None,
+        checkout: _Lazy[ConnectionT] | None = None,
     ) -> Iterator[_Scope[ConnectionT, SessionT]]:
         """Bind a scope holding ``connection`` to the current context.
 
         Every block gets a scope, and so a session, of its own. Ending that
         session is left to the caller, which knows whether it takes an
-        ``await``.
+        ``await``. A lazy block passes ``checkout`` instead of a connection.
         """
-        scope = _Scope[ConnectionT, SessionT](connection)
+        scope = _Scope[ConnectionT, SessionT](connection, checkout=checkout)
         token = self._scope.set(scope)
         try:
             yield scope
@@ -909,6 +965,32 @@ def url_from_config(config: DatabaseConfig) -> str | sa.URL:
     if "drivername" not in parts:
         raise MissingDatabaseUrlError
     return sa.URL.create(**parts)  # ty: ignore[invalid-argument-type]
+
+
+class _LazyBind:
+    """A session that checks its connection out on first real use.
+
+    Mixed over the session class of a lazy ``session_factory()`` block. The
+    session is created unbound, and ``get_bind`` performs the block's checkout
+    the first time the session needs a connection: on a flush or a query, not
+    on ``add()``.
+    """
+
+    _sqlakit_checkout: Callable[[], Any] | None = None
+    bind: Any
+
+    def get_bind(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        if self.bind is None and self._sqlakit_checkout is not None:
+            self.bind = self._sqlakit_checkout()
+        return super().get_bind(*args, **kwargs)  # ty: ignore[unresolved-attribute]
+
+
+@cache
+def lazy_session_class(base: type) -> type:
+    """Return ``base`` with `_LazyBind` mixed in, built once per base."""
+    if issubclass(base, _LazyBind):
+        return base
+    return type(f"Lazy{base.__name__}", (_LazyBind, base), {})
 
 
 class BaseRetryingTransaction:

@@ -7,7 +7,11 @@
 | `db.connect()` | a connection | no | reuses the bound connection |
 | `db.transaction()` | a connection and a transaction | when the block ends | joins the transaction |
 | `db.autocommit()` | a connection in `AUTOCOMMIT` | every statement | joins the transaction |
-| `db.session_factory()` | a connection and a session | no | reuses the bound connection |
+| `db.session_factory()` | a session at once, a connection on first use of the session | no | reuses the bound connection |
+
+Under `asyncio`, `db.connection` in a `session_factory()` block raises
+`MissingConnectionError` until the session has used a connection, because a
+property cannot await the checkout.
 
 ## Transaction arguments {#transaction-arguments}
 

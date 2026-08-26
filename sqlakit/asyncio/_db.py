@@ -22,14 +22,19 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import Session
+from sqlalchemy.util import await_only
 
 from sqlakit._base import (
     BaseDatabase,
     BaseRetryingTransaction,
+    _Lazy,
+    _Scope,
     default_backoff,
     fix_sqlite_transactions,
+    lazy_session_class,
 )
-from sqlakit.exceptions import TransactionRolledBackError
+from sqlakit.exceptions import MissingConnectionError, TransactionRolledBackError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
@@ -112,6 +117,37 @@ class Database(BaseDatabase[AsyncConnection, AsyncSession]):
         fix_sqlite_transactions(engine.sync_engine)
         return engine
 
+    @property
+    def connection(self) -> AsyncConnection:
+        """The connection bound to the current context.
+
+        In a [`session_factory`][sqlakit.asyncio.Database.session_factory]
+        block whose session has not used a connection yet there is nothing to
+        return, and a property cannot await the checkout, so reading this
+        raises until the session's first use.
+
+        Raises:
+            MissingConnectionError: if no connection is bound.
+
+        """
+        scope = self._current_scope()
+        if scope.connection is None:
+            cell = scope.checkout
+            if cell is not None and cell.connection is not None:
+                scope.connection = cell.connection
+            else:
+                message = (
+                    "No connection is open in this `session_factory()` block "
+                    "yet. Use `db.session`, or open a `connect()` block if "
+                    "you need the connection."
+                )
+                raise MissingConnectionError(message)
+        return scope.connection
+
+    async def _aconnection(self) -> AsyncConnection:
+        """Return the bound connection, checking it out first if lazy."""
+        return await self._areused(self._current_scope())
+
     def _create_session(self, connection: AsyncConnection) -> AsyncSession:
         if self._sessionmaker is None:
             self._sessionmaker = async_sessionmaker(**self.session_args)
@@ -120,12 +156,39 @@ class Database(BaseDatabase[AsyncConnection, AsyncSession]):
             **self._session_args_for(connection),
         )
 
+    def _lazy_session(self, cell: _Lazy[AsyncConnection]) -> AsyncSession:
+        args: dict[str, Any] = dict(self.session_args)
+        session_class = args.pop("class_", AsyncSession)
+        args["sync_session_class"] = lazy_session_class(
+            args.pop("sync_session_class", Session)
+        )
+        session = session_class(**args)
+
+        def checkout() -> sa.Connection | None:
+            # Already materialized, by a nested block: no greenlet needed.
+            connection = cell.connection
+            if connection is None:
+                connection = await_only(cell.aget())
+            return connection.sync_connection
+
+        session.sync_session._sqlakit_checkout = checkout  # noqa: SLF001
+        return session
+
+    @staticmethod
+    async def _areused(
+        scope: _Scope[AsyncConnection, AsyncSession],
+    ) -> AsyncConnection:
+        """Return the scope's connection, checking it out first if lazy."""
+        if scope.connection is None and scope.checkout is not None:
+            scope.connection = await scope.checkout.aget()
+        return cast("AsyncConnection", scope.connection)
+
     @asynccontextmanager
     async def connect(self) -> AsyncIterator[AsyncConnection]:
         """Open a connection and bind it, or reuse the one already bound."""
-        outer = self._connection_to_reuse()
-        if outer is not None:
-            async with self._bound(outer) as connection:
+        reuse = self._scope_to_reuse()
+        if reuse is not None:
+            async with self._bound(await self._areused(reuse)) as connection:
                 yield connection
             return
         async with self.engine.connect() as opened, self._bound(opened) as connection:
@@ -287,9 +350,32 @@ class Database(BaseDatabase[AsyncConnection, AsyncSession]):
 
     @asynccontextmanager
     async def session_factory(self) -> AsyncIterator[AsyncSession]:
-        """Open a new connection and a session on top of it, and bind both."""
-        async with self.connect():
-            yield self.session
+        """Open a session for the block, and bind it.
+
+        The session is created here, as ``async_sessionmaker()`` would, and
+        like one of those it takes no connection from the pool until it needs
+        one: the checkout happens on the first query or flush, not on
+        ``add()``. A block that never uses the session never touches the
+        database. Inside another block it runs on the connection already
+        bound.
+        """
+        reuse = self._scope_to_reuse()
+        if reuse is not None:
+            async with self._bound(await self._areused(reuse)):
+                yield self.session
+            return
+        # The lambda defers `self.engine` too: no engine until first use.
+        cell: _Lazy[AsyncConnection] = _Lazy(lambda: self.engine.connect())  # noqa: PLW0108
+        with self._bind(None, checkout=cell) as scope:
+            try:
+                yield self.session
+            finally:
+                try:
+                    if scope.session is not None:
+                        await scope.session.close()
+                finally:
+                    if cell.connection is not None:
+                        await cell.connection.close()
 
     @asynccontextmanager
     async def _bound(
