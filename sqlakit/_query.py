@@ -424,9 +424,9 @@ class BaseQuery(Generic[ModelT]):
     ) -> Self:
         """Order the rows, by columns or by the sort strings a request carries.
 
-        A string is `name`, `name.desc`, or `name.desc.nulls_last`. Names are looked
-        up in what the model offers, so a field nobody meant to sort by is refused
-        rather than turned into SQL:
+        A string is `name`, `name.desc`, or `name.desc.nulls_last`, and several of
+        them order by each in turn. Names are looked up in what the model offers, so
+        a field nobody meant to sort by is refused rather than turned into SQL:
 
         ```python
         User.query.order_by(request.sort).page(limit=20)
