@@ -123,8 +123,8 @@ class _Lazy(Generic[ConnectionT]):
         """Materialize the connection, once, awaited."""
         if self.connection is not None:
             return self.connection
-        # On the cell, made inside a running coroutine: a cell lives within
-        # one block on one loop, while the database outlives loops.
+        # `asyncio` because the async engine is asyncio-only, and on the cell
+        # rather than the database, which outlives any one loop.
         if self._alock is None:
             self._alock = asyncio.Lock()
         async with self._alock:

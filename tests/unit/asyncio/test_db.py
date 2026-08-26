@@ -6,6 +6,7 @@ from pathlib import Path
 import anyio
 import pytest
 import sqlalchemy as sa
+import sqlalchemy.event
 import sqlalchemy.exc
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -49,6 +50,13 @@ async def users_db(db: Database) -> Database:
     async with db.transaction() as conn:
         await conn.run_sync(Base.metadata.create_all)
     return db
+
+
+@pytest.fixture
+def checkouts(db: Database) -> list[object]:
+    taken: list[object] = []
+    sa.event.listen(db.engine.sync_engine, "checkout", lambda *args: taken.append(args))
+    return taken
 
 
 async def names(connection: AsyncConnection) -> list[str]:
@@ -471,3 +479,121 @@ async def test_connect_inside_autocommit_stays_on_the_same_connection(
         async with db.connect() as inner:
             assert inner is conn
             assert db.connection is conn
+
+
+# `session_factory()` connects on first use; the other blocks connect on entry
+
+
+@pytest.mark.anyio
+async def test_session_factory_creates_no_engine_when_unused() -> None:
+    db = Database("sqlite+aiosqlite://")
+
+    async with db.session_factory():
+        pass
+
+    assert db._engine is None
+
+
+@pytest.mark.anyio
+async def test_session_factory_checks_nothing_out_on_entry(
+    db: Database, checkouts: list[object]
+) -> None:
+    async with db.session_factory():
+        assert checkouts == []
+
+    assert checkouts == []
+
+
+@pytest.mark.anyio
+async def test_a_session_add_alone_checks_nothing_out(
+    users_db: Database, checkouts: list[object]
+) -> None:
+    async with users_db.session_factory() as session:
+        session.add(User(name="ada"))
+        assert checkouts == []
+        await session.flush()
+        assert len(checkouts) == 1
+
+
+@pytest.mark.anyio
+async def test_the_first_query_checks_out_one_connection(
+    users_db: Database, checkouts: list[object]
+) -> None:
+    async with users_db.session_factory() as session:
+        count = sa.select(sa.func.count()).select_from(User)
+        assert await session.scalar(count) == 0
+        assert len(checkouts) == 1
+        assert await session.scalar(count) == 0
+        assert len(checkouts) == 1
+
+
+@pytest.mark.anyio
+async def test_a_lazy_session_commits_what_it_wrote(users_db: Database) -> None:
+    async with users_db.session_factory() as session:
+        session.add(User(name="ada"))
+        await session.commit()
+
+    async with users_db.connect():
+        assert await users_db.session.scalar(sa.select(User.name)) == "ada"
+
+
+@pytest.mark.anyio
+async def test_the_connection_raises_until_the_session_uses_one(
+    users_db: Database,
+) -> None:
+    async with users_db.session_factory() as session:
+        with pytest.raises(MissingConnectionError, match="session_factory"):
+            _ = users_db.connection
+
+        # An empty flush is a no-op, so give the session something to write.
+        session.add(User(name="ada"))
+        await session.flush()
+
+        assert users_db.connection is not None
+
+
+@pytest.mark.anyio
+async def test_a_nested_connect_shares_the_lazy_connection(
+    users_db: Database, checkouts: list[object]
+) -> None:
+    async with users_db.session_factory() as session:
+        async with users_db.connect() as conn:
+            # The nested block checks out the connection the session reuses.
+            assert len(checkouts) == 1
+            assert await conn.scalar(sa.text("select 1")) == 1
+        await session.flush()
+        assert session.get_bind() is users_db.connection.sync_connection
+        assert len(checkouts) == 1
+
+
+@pytest.mark.anyio
+async def test_sql_runs_inside_a_lazy_block(
+    db: Database, checkouts: list[object]
+) -> None:
+    async with db.session_factory():
+        statement = sa.text("select 41 + 1")
+
+        assert await db.sql.from_statement(statement).scalars().one() == 42
+        assert len(checkouts) == 1
+
+
+@pytest.mark.anyio
+async def test_session_factory_inside_another_block_reuses_the_connection(
+    db: Database, checkouts: list[object]
+) -> None:
+    async with db.transaction() as conn:
+        async with db.session_factory() as session:
+            assert session.get_bind() is conn.sync_connection
+        assert len(checkouts) == 1
+
+
+@pytest.mark.anyio
+async def test_the_other_blocks_connect_on_entry(
+    db: Database, checkouts: list[object]
+) -> None:
+    async with db.connect():
+        assert len(checkouts) == 1
+    async with db.transaction():
+        assert len(checkouts) == 2
+    async with db.autocommit():
+        assert len(checkouts) == 3
