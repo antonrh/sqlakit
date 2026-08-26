@@ -1,6 +1,6 @@
 # The database
 
-A `Database` holds the SQLAlchemy engine, its connection pool, and the context
+A `Database` holds the `SQLAlchemy` engine, its connection pool, and the context
 the blocks bind into. On its own it connects to nothing. The engine arrives when
 the first block asks for it.
 
@@ -28,8 +28,8 @@ db = Database(
 
 A password is the reason to prefer this. Passed as its own argument it is quoted
 for you, and reads back as it went in. Put a password with special characters
-into a URL string and nothing raises. SQLAlchemy splits the string on the first
-`@`, and the rest of the password scatters into the wrong fields:
+into a URL string and nothing raises. `SQLAlchemy` splits the string on the
+first `@`, and the rest of the password scatters into the wrong fields:
 
 ```python
 import sqlalchemy as sa
@@ -144,10 +144,10 @@ db.ping()  # whether the database answers, for a health endpoint
 db.dispose()  # close every connection the pool holds, on shutdown
 ```
 
-`dispose()` belongs wherever your framework shuts things down, which for FastAPI
-is the lifespan; [Examples](examples.md) has it in place. A script that wants a
-database for the length of one run can take `Database` as a context manager,
-which disposes the engine on the way out:
+`dispose()` belongs wherever your framework shuts things down, which for
+`FastAPI` is the lifespan; [Examples](examples.md) has it in place. A script
+that wants a database for the length of one run can take `Database` as a context
+manager, which disposes the engine on the way out:
 
 ```python
 with Database(url) as db, db.transaction():

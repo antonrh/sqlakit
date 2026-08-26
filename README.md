@@ -1,6 +1,6 @@
 # SQLAKit
 
-SQLAKit takes the routine out of working with SQLAlchemy. It manages sessions
+SQLAKit takes the routine out of working with `SQLAlchemy`. It manages sessions
 and transactions for you, and adds pagination, SQL templates, Active Record, and
 tooling to debug and test your queries. The synchronous and async APIs are built
 the same way, and one decorator is all that ties it to a framework.
@@ -59,10 +59,10 @@ with db.autocommit():  # AUTOCOMMIT, holding nothing open
 
 ## SQL templates
 
-Templates are written in Jinja, so one file holds a simple query as readily as a
-report with window functions or a recursive CTE. Values are not pasted into the
-statement text: [jinja2sql](https://github.com/antonrh/jinja2sql) lifts each one
-into a parameter, so `{{ name }}` becomes `:name__1`. It needs the
+Templates are written in `Jinja`, so one file holds a simple query as readily as
+a report with window functions or a recursive CTE. Values are not pasted into
+the statement text: [jinja2sql](https://github.com/antonrh/jinja2sql) lifts each
+one into a parameter, so `{{ name }}` becomes `:name__1`. It needs the
 `sqlakit[sql]` extra.
 
 ### From a file
@@ -194,7 +194,7 @@ with db.transaction():
 every model under it inherits the binding. With the importable `db` from the
 section below there is nothing to bind: the model finds it by itself.
 
-The layer is separate and optional. Everything above works on plain SQLAlchemy
+The layer is separate and optional. Everything above works on plain `SQLAlchemy`
 models, and if saving lives in your repositories or services, `sqlakit.orm` need
 never be imported.
 
@@ -320,7 +320,7 @@ async with db.transaction():
 The builder stays synchronous throughout: `where` and `order_by` run nothing, so
 there is nothing to await.
 
-## FastAPI integration
+## `FastAPI` integration
 
 ```python
 from collections.abc import AsyncIterator
@@ -377,8 +377,9 @@ the engine is built on the first request.
 ## Documentation
 
 [Getting started](docs/getting-started.md) builds a database, a model and a test
-from an empty file. The rest is under [`docs/`](docs/): [queries](docs/queries.md),
-[SQL templates](docs/sql.md), [models](docs/models.md),
-[testing](docs/testing.md), [debugging](docs/debugging.md),
-[multiple databases](docs/routing.md) and [the reference](docs/reference.md).
-Whole programs live in [`examples/`](examples/), each one run by the test suite.
+from an empty file. The rest is under [`docs/`](docs/):
+[queries](docs/queries.md), [SQL templates](docs/sql.md),
+[models](docs/models.md), [testing](docs/testing.md),
+[debugging](docs/debugging.md), [multiple databases](docs/routing.md) and [the
+reference](docs/reference.md). Whole programs live in [`examples/`](examples/),
+each one run by the test suite.

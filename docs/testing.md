@@ -1,16 +1,16 @@
 # Testing
 
-Tests run against a real database, and which one is your call. SQLite is fast,
+Tests run against a real database, and which one is your call. `SQLite` is fast,
 needs nothing installed, and does everything this page uses, savepoints
 included. If your code depends on the dialect, its types, its constraints or its
 migrations, test on what you deploy on. Plenty of suites do both, and this page
 reads the same either way.
 
-!!! note "Why savepoints work on SQLite"
+!!! note "Why savepoints work on `SQLite`"
 
-    The SQLite driver in the standard library issues no `BEGIN` of its own,
+    The `SQLite` driver in the standard library issues no `BEGIN` of its own,
     which breaks `SAVEPOINT` and nested transactions. `Database` applies the
-    workaround from SQLAlchemy's pysqlite documentation for `sqlite+pysqlite`
+    workaround from `SQLAlchemy`'s pysqlite documentation for `sqlite+pysqlite`
     and `sqlite+aiosqlite`, and skips it under `AUTOCOMMIT`, where a real
     transaction would defeat the point.
 
@@ -132,10 +132,10 @@ async def _db_marker(_create_db: None) -> AsyncIterator[None]:
         yield
 ```
 
-That moment is where pytest reads `item.fixturenames`. A `usefixtures` marker
+That moment is where `pytest` reads `item.fixturenames`. A `usefixtures` marker
 added this late is ignored.
 
-Mark the tests as anyio, which you would be doing anyway:
+Mark the tests as `anyio`, which you would be doing anyway:
 
 ```python
 @pytest.mark.anyio
@@ -286,7 +286,7 @@ assert record.databases == ("default",)
 An application with migrations should test what it will deploy: run them once
 per session, and leave the rollback around each test as it is.
 
-Fail to pass the test's connection to Alembic and it opens one of its own, so
+Fail to pass the test's connection to `Alembic` and it opens one of its own, so
 the migration runs outside your transaction. The rollback no longer takes it
 back, and the schema outlives the run. Teach `env.py` to accept a connection
 from outside, or nothing else here is worth doing:
@@ -313,7 +313,7 @@ else:
 put into `config.attributes`, and the argument of `context.configure`.
 
 Two fixtures follow, one reading `alembic.ini` and one handing over the
-connection. Alembic resolves `script_location` from the working directory, so
+connection. `Alembic` resolves `script_location` from the working directory, so
 build the config from the project root and stay there while it works. Otherwise
 the tests pass when run from the root and fail from anywhere else.
 
@@ -343,7 +343,7 @@ def _create_db(alembic_config: alembic.config.Config) -> Iterator[None]:
         alembic.command.downgrade(alembic_config, "base")
 ```
 
-Alembic is synchronous, so on an async database the migrations go through
+`Alembic` is synchronous, so on an async database the migrations go through
 `run_sync`:
 
 ```python
@@ -365,7 +365,7 @@ async def _create_db(alembic_config: alembic.config.Config) -> AsyncIterator[Non
 ```
 
 `run_sync` hands the function the synchronous connection from underneath, the
-one Alembic wants and `env.py` then reads.
+one `Alembic` wants and `env.py` then reads.
 
 ## Counting queries
 
@@ -430,7 +430,7 @@ What it wants in place:
   Without one nothing is connected, and the code under test says so rather than
   counting zero.
 
-The block stays `with` in both cases, under asyncio as well, because recording
+The block stays `with` in both cases, under `asyncio` as well, because recording
 listens rather than runs. When you want the numbers themselves rather than an
 assertion, take `db.recording()`, the recorder this is built on.
 

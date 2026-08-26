@@ -35,7 +35,7 @@ with db.connect() as conn:
 
 ## Define a table
 
-Models stay plain SQLAlchemy classes. SQLAKit does not ask for a base of its
+Models stay plain `SQLAlchemy` classes. SQLAKit does not ask for a base of its
 own.
 
 ```python
@@ -168,7 +168,7 @@ database prepared in advance nor cleaning up in between.
   they nest.
 - [Models](models.md) if you want instances that save themselves. The layer is
   optional.
-- [Blocks under asyncio](context.md#async) if you are here for FastAPI or
-  aiohttp: the same thing from `sqlakit.asyncio`, with `await`.
-- [Examples](examples.md) for whole programs: a FastAPI service, and SQLModel
-  with and without the model layer.
+- [Blocks under asyncio](context.md#async) if you are here for `FastAPI` or
+  `aiohttp`: the same thing from `sqlakit.asyncio`, with `await`.
+- [Examples](examples.md) for whole programs: a `FastAPI` service, and
+  `SQLModel` with and without the model layer.

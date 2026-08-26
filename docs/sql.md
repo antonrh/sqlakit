@@ -11,7 +11,7 @@ the same methods a query does. It needs an extra:
 $ pip install "sqlakit[sql]"
 ```
 
-Templates are written in Jinja, and
+Templates are written in `Jinja`, and
 [jinja2sql](https://github.com/antonrh/jinja2sql) runs them. A `{{ value }}`
 reaches the SQL as `:value__1`, with the value itself travelling separately.
 
@@ -60,12 +60,12 @@ way:
 | --- | --- |
 | `db.sql(name)` or `db.sql.from_file(name)` | a template under `templates=` |
 | `db.sql.from_string(source)` | a string in the code, rendered the same way |
-| `db.sql.from_statement(statement)` | a finished SQLAlchemy statement, unrendered |
+| `db.sql.from_statement(statement)` | a finished `SQLAlchemy` statement, unrendered |
 
 `db.sql(name)` is the short form of `from_file`, and the one to reach for first.
 The other two are covered below, each in its place.
 
-For a Jinja environment of your own, pass a `Templates` object:
+For a `Jinja` environment of your own, pass a `Templates` object:
 
 ```python
 from sqlakit.sql import Templates
@@ -82,7 +82,7 @@ db = Database(
 rows = db.sql("reports/by_team.sql", since=since).all()
 ```
 
-Keyword arguments go into the template context. Rows come back as SQLAlchemy
+Keyword arguments go into the template context. Rows come back as `SQLAlchemy`
 `Row` objects, readable by name and by position.
 
 For a type of your own, call `typed`:
@@ -98,7 +98,7 @@ teams = db.sql("reports/by_team.sql", since=since).typed(TeamReport).all()
 
 Name the type of **one row**. The container is chosen by the method that runs
 the query: `all()` returns a list, `one()` a single row. Rows are checked by
-pydantic, so a model of its own, a dataclass, a `TypedDict` and an `int` all
+`pydantic`, so a model of its own, a dataclass, a `TypedDict` and an `int` all
 work, and a row of the wrong shape raises `ValidationError` right here rather
 than somewhere downstream.
 
@@ -119,7 +119,7 @@ Each of these is called once, with nothing built on top of typed rows. There is
 no call order to remember, because there is no second call.
 
 The methods that run the query are the ones a query already has: `all`, `first`,
-`one`, `one_or_none`. They raise SQLAlchemy's own `NoResultFound` and
+`one`, `one_or_none`. They raise `SQLAlchemy`'s own `NoResultFound` and
 `MultipleResultsFound`, as an ordinary result does. A query on a model raises
 `InstanceNotFoundError` instead, which names the model.
 
@@ -142,7 +142,7 @@ suggests moving the condition into the statement itself.
 
 `from_sql` works with a file, which is the common case. Everything else goes
 through `from_statement`, which takes both what the calls above returned and
-what SQLAlchemy built:
+what `SQLAlchemy` built:
 
 ```python
 User.query.from_statement(db.sql.from_string("SELECT * FROM users LIMIT 10"))
@@ -196,7 +196,7 @@ grep for when you want to know where SQL is assembled from strings.
 !!! note "Placeholders belong to the template, not to the driver"
 
     Values are named in `{{ }}` and passed by keyword, in `from_string` and in a
-    file alike. Neither SQLAlchemy's `:name` nor a driver's `?` or `%s` binds
+    file alike. Neither `SQLAlchemy`'s `:name` nor a driver's `?` or `%s` binds
     anything here: an unbound `:name` raises `StrayParameterError` while
     rendering, and `from_string` takes no positional arguments to fill a `?`
     with.
@@ -206,7 +206,7 @@ db.sql.from_string("SELECT * FROM users WHERE id = {{ id }}", id=1)  # binds 1
 db.sql.from_string("SELECT * FROM users WHERE id = :id", id=1)  # raises
 ```
 
-`from_statement` takes SQL that SQLAlchemy built, and reads it the same way:
+`from_statement` takes SQL that `SQLAlchemy` built, and reads it the same way:
 
 ```python
 statement = sa.text("SELECT * FROM users WHERE id = :user_id").bindparams(user_id=1)
@@ -216,7 +216,7 @@ totals = db.sql.from_statement(sa.select(Sale.team, sa.func.sum(Sale.amount))).a
 ```
 
 Nothing is rendered here, so the parameters belong to the statement and are
-written the way SQLAlchemy writes them. The call adds the reading and nothing
+written the way `SQLAlchemy` writes them. The call adds the reading and nothing
 else: `typed`, `scalars`, `chunks` and the rest, over a statement built
 anywhere.
 
@@ -235,8 +235,8 @@ nothing without breaking the query:
 SELECT * FROM users WHERE id IN {{ ids }}
 ```
 
-`{{ ids | inclause }}` from jinja2sql writes the values out one by one. It reads
-the same, and takes no empty list.
+`{{ ids | inclause }}` from `jinja2sql` writes the values out one by one. It
+reads the same, and takes no empty list.
 
 Identifiers cannot be bound. Quote a table or column name through `identifier`,
 and let through only the names you allowed yourself:
@@ -255,7 +255,7 @@ When the SQL has to differ between databases, branch on `dialect`:
 {% endif %}
 ```
 
-Escape a colon that belongs to the SQL itself. SQLAlchemy reads `:name` as a
+Escape a colon that belongs to the SQL itself. `SQLAlchemy` reads `:name` as a
 parameter, so a JSON literal has to be written `'{"a"\:1}'`. Left unescaped, the
 template complains while rendering and names the file, rather than failing when
 it runs.
@@ -301,7 +301,7 @@ It compiles every `.sql` template it finds under the roots you gave. A broken
 one raises `TemplateSyntaxError` naming the file and the line, and it happens at
 startup rather than the minute someone first wants that template.
 
-## Templates under asyncio
+## Templates under `asyncio`
 
 The same methods in `sqlakit.asyncio`, awaited:
 

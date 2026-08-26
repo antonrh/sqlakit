@@ -28,8 +28,8 @@ These sit under whatever you pass in `engine_args` and `session_args`.
 | | default | why |
 | --- | --- | --- |
 | `pool_pre_ping` | `True` | A connection dropped by the server, a proxy or a failover turns into a reconnect rather than an error mid-statement. |
-| `pool_recycle` | `1800` | Reopen a connection before something else closes it: MySQL's eight-hour `wait_timeout`, PgBouncer and cloud balancers all cut idle ones. |
-| `expire_on_commit` | `False` | Attributes stay readable after a commit. With expiry on, a read after a commit issues a lazy `SELECT`, which under asyncio fails with `MissingGreenlet`. |
+| `pool_recycle` | `1800` | Reopen a connection before something else closes it: `MySQL`'s eight-hour `wait_timeout`, `PgBouncer` and cloud balancers all cut idle ones. |
+| `expire_on_commit` | `False` | Attributes stay readable after a commit. With expiry on, a read after a commit issues a lazy `SELECT`, which under `asyncio` fails with `MissingGreenlet`. |
 
 `pool_size`, `max_overflow` and `isolation_level` are left alone, since they
 depend on the worker count, the database's limit and the dialect.
@@ -39,7 +39,7 @@ depend on the worker count, the database's limit and the dialect.
 `sqlakit.asyncio` mirrors `sqlakit`. Reaching the database is awaited, reading
 the context is not.
 
-| synchronous | asyncio |
+| synchronous | `asyncio` |
 | --- | --- |
 | `with db.connect():` | `async with db.connect():` |
 | `with db.transaction():` | `async with db.transaction():` |
@@ -53,7 +53,8 @@ the context is not.
 | `query.where(...)`, `query.order_by(...)` | the same, unawaited |
 | `db.connection`, `db.session`, `db.in_transaction()` | the same |
 
-SQLAlchemy's async drivers want a running asyncio loop, so trio will not do.
+`SQLAlchemy`'s async drivers want a running `asyncio` loop, so `trio` will not
+do.
 
 ## Database
 
@@ -205,7 +206,7 @@ the answers an API gives:
 | `ValueError` | something invalid arrived: an ordering field nobody offered, or a cursor that will not decode | 400 |
 | `TypeError` | the code asked for the impossible: a page with no ordering, or `get` on a narrowed query | 500 and a fix |
 | `RuntimeError` | the block is in the wrong state: no connection, no session, or a transaction already rolled back | 500 |
-| `KeyError` and SQLAlchemy's exceptions | what the name says, for code that already catches them: a missing row is a `NoResultFound` as well | |
+| `KeyError` and `SQLAlchemy`'s exceptions | what the name says, for code that already catches them: a missing row is a `NoResultFound` as well | |
 
 ```python
 import sqlakit

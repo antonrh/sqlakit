@@ -17,11 +17,11 @@ print(record)  # the statements, numbered and timed
 The listeners go on for the block and come off after it, so nothing is watching
 a database nobody is looking at. Blocks nest, each recording what runs inside
 it, and the statements of another task belong to that task. The block stays
-`with` under asyncio too, because recording listens rather than runs.
+`with` under `asyncio` too, because recording listens rather than runs.
 
 Transaction control is not counted. `BEGIN` and `COMMIT` reach a cursor on some
 drivers and not others, so counting them would make the same code mean different
-numbers on SQLite and PostgreSQL.
+numbers on `SQLite` and `PostgreSQL`.
 
 ## In a log
 
@@ -67,7 +67,7 @@ The same numbers go out as fields for a log that is read by machine:
 
 ## Every request, in development
 
-An ASGI middleware that records each request takes a few lines. Wrap it in a
+An `ASGI` middleware that records each request takes a few lines. Wrap it in a
 `settings.DEBUG` check so the profiling stays out of production:
 
 ```python
