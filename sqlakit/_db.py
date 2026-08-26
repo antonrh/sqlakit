@@ -117,8 +117,8 @@ class Database(BaseDatabase[sa.Connection, Session]):
     def connection(self) -> sa.Connection:
         """The connection bound to the current context.
 
-        In a [`session_factory`][sqlakit.Database.session_factory] block that
-        has not used its session yet, reading this performs the checkout.
+        In a [`session_factory`][sqlakit.Database.session_factory] block,
+        reading it checks the connection out.
 
         Raises:
             MissingConnectionError: if no connection is bound.
@@ -316,11 +316,9 @@ class Database(BaseDatabase[sa.Connection, Session]):
     def session_factory(self) -> Iterator[Session]:
         """Open a session for the block, and bind it.
 
-        The session is created here, as ``sessionmaker()`` would, and like one
-        of those it takes no connection from the pool until it needs one: the
-        checkout happens on the first query or flush, not on ``add()``. A
-        block that never uses the session never touches the database. Inside
-        another block it runs on the connection already bound.
+        The session arrives at once, the connection on its first query or
+        flush, as ``sessionmaker()`` does it. Inside another block it runs on
+        the connection already bound.
         """
         reuse = self._scope_to_reuse()
         if reuse is not None:

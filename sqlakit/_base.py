@@ -99,9 +99,8 @@ SessionT = TypeVar("SessionT")
 class _Lazy(Generic[ConnectionT]):
     """A connection checkout that has not happened yet.
 
-    A lazy ``session_factory()`` block binds one of these instead of a
-    connection. ``get`` and ``aget`` perform the checkout on first use, once,
-    and cache the connection.
+    A lazy ``session_factory()`` block binds one instead of a connection.
+    ``get`` and ``aget`` check out once, and cache what they opened.
     """
 
     __slots__ = ("_alock", "_lock", "connection", "open")
@@ -144,8 +143,8 @@ class _Scope(Generic[ConnectionT, SessionT]):
     opened later, including in a task that copies the context, still
     belongs to the block that bound the connection.
 
-    A lazy ``session_factory()`` block binds a scope with no connection and a
-    ``checkout`` instead. The connection lands here once something uses it.
+    A lazy ``session_factory()`` block binds a ``checkout`` and no connection.
+    The connection lands here once something uses it.
     """
 
     connection: ConnectionT | None
@@ -474,9 +473,8 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
 
         One connection per context: a block that only needs a connection takes
         the one already bound, whether a transaction, ``autocommit()`` or
-        another ``connect()`` opened it. ``join_nested=False`` opts out. A
-        lazy scope has to be materialized before its connection is reused,
-        which the caller does, awaited or not.
+        another ``connect()`` opened it. ``join_nested=False`` opts out. The
+        caller materializes a lazy scope, awaited or not.
         """
         outer = self._outer.get(None)
         if outer is not None and not outer.join_nested:
@@ -970,10 +968,9 @@ def url_from_config(config: DatabaseConfig) -> str | sa.URL:
 class _LazyBind:
     """A session that checks its connection out on first real use.
 
-    Mixed over the session class of a lazy ``session_factory()`` block. The
-    session is created unbound, and ``get_bind`` performs the block's checkout
-    the first time the session needs a connection: on a flush or a query, not
-    on ``add()``.
+    Mixed over the session class of a lazy ``session_factory()`` block, which
+    creates it unbound. ``get_bind`` checks the connection out on a flush or a
+    query, not on ``add()``.
     """
 
     _sqlakit_checkout: Callable[[], Any] | None = None

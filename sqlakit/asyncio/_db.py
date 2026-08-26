@@ -122,9 +122,8 @@ class Database(BaseDatabase[AsyncConnection, AsyncSession]):
         """The connection bound to the current context.
 
         In a [`session_factory`][sqlakit.asyncio.Database.session_factory]
-        block whose session has not used a connection yet there is nothing to
-        return, and a property cannot await the checkout, so reading this
-        raises until the session's first use.
+        block it raises until the session's first use: a property cannot await
+        the checkout.
 
         Raises:
             MissingConnectionError: if no connection is bound.
@@ -352,12 +351,9 @@ class Database(BaseDatabase[AsyncConnection, AsyncSession]):
     async def session_factory(self) -> AsyncIterator[AsyncSession]:
         """Open a session for the block, and bind it.
 
-        The session is created here, as ``async_sessionmaker()`` would, and
-        like one of those it takes no connection from the pool until it needs
-        one: the checkout happens on the first query or flush, not on
-        ``add()``. A block that never uses the session never touches the
-        database. Inside another block it runs on the connection already
-        bound.
+        The session arrives at once, the connection on its first query or
+        flush, as ``async_sessionmaker()`` does it. Inside another block it
+        runs on the connection already bound.
         """
         reuse = self._scope_to_reuse()
         if reuse is not None:
