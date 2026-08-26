@@ -84,16 +84,16 @@ pass even if nothing had reached the database.
 
 `_db_marker` runs for every test, but returns immediately when the marker is
 absent, so a test that doesn't need a database opens no connection. When no
-test is marked, no schema is built either, because `_create_db` is requested
-only inside that branch.
+test is marked, nothing builds the schema either, because only that branch
+requests `_create_db`.
 
 ## With await
 
 Switching to an async database changes one thing: the fixtures have to be
 async, because the transaction has to open on the loop the test runs on. An
 async fixture can't be fetched through `getfixturevalue`: that call is
-synchronous and can't await anything. So the `db` marker is handled at
-collection time, in `pytest_collection_modifyitems`, which adds the fixture
+synchronous and can't await anything. So the conftest handles the `db` marker
+at collection time, in `pytest_collection_modifyitems`, which adds the fixture
 to the marked tests:
 
 ```python title="conftest.py (asyncio)"
@@ -133,8 +133,8 @@ async def _db_marker(_create_db: None) -> AsyncIterator[None]:
         yield
 ```
 
-`pytest` reads `item.fixturenames` at that moment. A `usefixtures` marker added
-this late is ignored.
+`pytest` reads `item.fixturenames` at that moment. It ignores a `usefixtures`
+marker added this late.
 
 Mark your tests as `anyio`, which you'd be doing for async tests anyway:
 
@@ -171,8 +171,8 @@ def _create_db() -> Iterator[None]:
 
 ## A schema without the model layer
 
-If your metadata doesn't come from the model layer, the same
-`provisioned_tables` is available on the database:
+For metadata outside the model layer, the same `provisioned_tables` is
+available on the database:
 
 ```python
 with db.provisioned_tables(SQLModel.metadata):
@@ -182,7 +182,7 @@ with db.provisioned_tables(SQLModel.metadata):
 ## More than one database
 
 Pass the alias, and each database gets the tables of the models that point at
-it. An association table is created on the same database as the rows it joins:
+it. An association table lands on the same database as the rows it joins:
 
 ```python
 @pytest.fixture(scope="session")
@@ -270,7 +270,7 @@ with assert_queries(1, using="warehouse"):
     build_report()
 ```
 
-`db.assert_queries` watches one database; on the registry it covers them all.
+`db.assert_queries` watches one database. On the registry it covers them all.
 
 A recording tracks which database ran each statement, so a test can prove that
 nothing reached the warehouse:
@@ -291,7 +291,7 @@ it is.
 If you don't pass the test's connection to `Alembic`, it opens one of its own
 and the migration runs outside your transaction. The rollback can't undo it,
 and the schema outlives the run. So your `env.py` needs to accept a connection
-from outside; the rest of this section depends on it:
+from outside. The rest of this section depends on it:
 
 ```python title="migrations/env.py"
 from alembic import context
@@ -479,7 +479,7 @@ as it does in production. Inside it:
 - A session that rolls *itself* back, through `session_factory()` and then
   `rollback()`, ends the whole transaction. The block then raises
   `TransactionRolledBackError`, because there is nothing left to commit.
-  Production behaves the same way; a block that should fail on its own needs
+  Production behaves the same way. A block that should fail on its own needs
   `transaction(savepoint=True)`.
 
 The point of all this is that your tests behave the way production does.

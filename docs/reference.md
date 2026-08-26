@@ -23,7 +23,8 @@
 
 ## Defaults {#defaults}
 
-Whatever you pass in `engine_args` and `session_args` is merged over these.
+`SQLAKit` merges whatever you pass in `engine_args` and `session_args` over
+these.
 
 | | default | why |
 | --- | --- | --- |
@@ -31,13 +32,13 @@ Whatever you pass in `engine_args` and `session_args` is merged over these.
 | `pool_recycle` | `1800` | Reopen a connection before something else closes it: `MySQL`'s eight-hour `wait_timeout`, `PgBouncer` and cloud balancers all close idle connections. |
 | `expire_on_commit` | `False` | Attributes stay readable after a commit. With expiry on, a read after a commit issues a lazy `SELECT`, which under `asyncio` fails with `MissingGreenlet`. |
 
-`pool_size`, `max_overflow` and `isolation_level` are not set by default: they
+`SQLAKit` doesn't set `pool_size`, `max_overflow` or `isolation_level`: they
 depend on the worker count, the database's limits and the dialect.
 
 ## The async API {#async}
 
-`sqlakit.asyncio` mirrors `sqlakit`. Calls that reach the database are awaited;
-reading the context is not.
+`sqlakit.asyncio` mirrors `sqlakit`. Calls that reach the database are
+awaited. Reading the context is not.
 
 | synchronous | `asyncio` |
 | --- | --- |

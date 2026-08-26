@@ -1,6 +1,6 @@
 # SQLAKit
 
-SQLAKit removes the boilerplate from `SQLAlchemy` applications. It manages
+`SQLAKit` removes the boilerplate from `SQLAlchemy` applications. It manages
 sessions and transactions for you, and adds a query builder with pagination
 built in, `SQL` templates, an optional `Active Record` layer, debugging and
 testing tools, etc. It supports both sync and async APIs and works with any
@@ -35,7 +35,7 @@ def get_or_create_user(email: str, name: str) -> User:
     return user
 ```
 
-Both functions use the same session without passing it around. The
+Both functions use the same session, and you don't pass it between them. The
 `@db.transaction` decorator opens it, and commits when the function returns.
 
 Outside a block there is no session: `db.session` raises `MissingSessionError`
@@ -62,8 +62,8 @@ with db.autocommit():  # AUTOCOMMIT, no transaction held open
 Templates are `Jinja` files, so they can hold anything from a one-line query to
 a report with window functions or a recursive CTE.
 [jinja2sql](https://github.com/antonrh/jinja2sql) turns every `{{ name }}` into
-a bound parameter (`:name__1`), so values never end up in the SQL text and
-there is no way to inject anything. Requires the `sqlakit[sql]` extra.
+a bound parameter (`:name__1`), so values never reach the SQL text and there
+is no way to inject anything. Requires the `sqlakit[sql]` extra.
 
 ### From a file
 
@@ -95,8 +95,8 @@ db.sql("reports/by_team.sql", since=since).typed(TeamReport).all()
 `templates=` sets the directory to load templates from, and `typed()` sets the
 type each row is returned as.
 
-The template name is added to the SQL as a comment, so a slow query log shows
-right away which file a query came from.
+`SQLAKit` adds the template name to the SQL as a comment, so a slow query log
+shows the source file of each query right away.
 
 ### From a string
 
@@ -120,8 +120,8 @@ db.query(User).where(User.is_active).order_by(User.name).all()
 ### Ordering by a string
 
 `order_by` accepts a `field.direction` string, for example straight from a
-query parameter. The field name is checked against the model before any SQL is
-built, so an unknown field never reaches the database. Instead you get
+query parameter. `SQLAKit` checks the field name against the model before it
+builds any SQL, so an unknown field never reaches the database. Instead you get
 `UnknownOrderFieldError`, and its message lists the fields the model allows:
 
 ```python
@@ -143,7 +143,7 @@ page.has_next
 ### Cursor pagination
 
 `cursor_page()` continues from a cursor, so it stays fast at any depth. There
-is no total; instead you get cursors to the next and previous pages:
+is no total. Instead you get cursors to the next and previous pages:
 
 ```python
 feed = db.query(User).order_by("created_at.desc").cursor_page(limit=20)
@@ -193,8 +193,8 @@ entirely.
 
 ## Testing
 
-A test runs inside a transaction that is rolled back at the end, so nothing
-the code under test writes is actually committed. `assert_queries` checks how
+A test runs inside a transaction that rolls back at the end, so nothing the
+code under test writes is actually committed. `assert_queries` checks how
 many statements a block runs:
 
 ```python
@@ -219,7 +219,7 @@ record.milliseconds
 record.duplicates
 ```
 
-With `logger=` one line is logged at the end of the block. The log level
+With `logger=` `SQLAKit` logs one line at the end of the block. The log level
 depends on the numbers: more statements and more repeats mean a higher level.
 
 With `echo=True` the block prints each statement, formatted and with repeats
@@ -364,8 +364,8 @@ Use the `Database` from `sqlakit.asyncio` here. With the sync one the block
 closes before the async handler runs, and the handler fails with
 `MissingConnectionError`.
 
-There is nothing to open at startup: the engine is created on first use. On
-shutdown, `dispose()` closes the pool.
+There is nothing to open at startup: `SQLAKit` creates the engine on first use.
+On shutdown, `dispose()` closes the pool.
 
 ## Documentation
 
