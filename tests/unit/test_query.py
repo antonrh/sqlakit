@@ -1,6 +1,6 @@
 import base64
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from typing import Any, Self
 
@@ -28,6 +28,7 @@ from sqlakit import (
     KeyLookupError,
     MultipleInstancesFoundError,
     OrderBy,
+    PageItemsMismatchError,
     RawStatementError,
     UncomparableOrderingError,
     UnknownOrderFieldError,
@@ -810,18 +811,35 @@ def test_bulk_refuses_what_it_would_drop(db: Database) -> None:
 
 
 def test_page_mapping(db: Database) -> None:
+    def names(users: Sequence[User]) -> list[str]:
+        return [user.name for user in users]
+
     with db.connect():
         page = User.query.order_by(User.id).page(limit=2)
 
         assert page.map(lambda user: user.name).items == ["a", "b"]
-        assert page.map_all(lambda users: [len(users)]).items == [2]
-        assert page.with_items(["x"]).total == page.total
+        assert page.map_all(names).items == ["a", "b"]
+        assert page.with_items(["x", "y"]).total == page.total
 
         cursor_page = User.query.order_by(User.id).cursor_page(limit=2)
 
         assert cursor_page.map(lambda user: user.name).items == ["a", "b"]
-        assert cursor_page.map_all(lambda users: [len(users)]).items == [2]
-        assert cursor_page.with_items(["x"]).next_cursor == cursor_page.next_cursor
+        assert cursor_page.map_all(names).items == ["a", "b"]
+        assert cursor_page.with_items(["x", "y"]).next_cursor == cursor_page.next_cursor
+
+
+def test_a_transform_returns_one_item_per_row(db: Database) -> None:
+    # Totals and cursors belong to the page's rows, so the count is held to.
+    with db.connect():
+        page = User.query.order_by(User.id).page(limit=2)
+        cursor_page = User.query.order_by(User.id).cursor_page(limit=2)
+
+        with pytest.raises(PageItemsMismatchError):
+            page.map_all(lambda users: [len(users)])
+        with pytest.raises(PageItemsMismatchError):
+            page.with_items(["x"])
+        with pytest.raises(PageItemsMismatchError):
+            cursor_page.with_items(["x"])
 
 
 def test_a_model_can_name_its_own_cursor_key(db: Database) -> None:

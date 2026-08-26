@@ -38,6 +38,7 @@ from .exceptions import (
     KeyLookupError,
     MultipleInstancesFoundError,
     NullCursorValueError,
+    PageItemsMismatchError,
     RawStatementError,
     UncomparableOrderingError,
     UnknownOrderFieldError,
@@ -121,7 +122,13 @@ class Page(Generic[ModelT]):
         """Return the page carrying these rows instead, counts unchanged.
 
         What an asynchronous transform needs: `page.with_items(await serialize(...))`.
+
+        Raises:
+            PageItemsMismatchError: if there is not one item per row.
+
         """
+        if len(items) != len(self.items):
+            raise PageItemsMismatchError(len(self.items), len(items))
         return Page(
             items=items,
             total=self.total,
@@ -164,7 +171,14 @@ class CursorPage(Generic[ModelT]):
         return self.with_items(transform(self.items))
 
     def with_items(self, items: Sequence[OtherT]) -> CursorPage[OtherT]:
-        """Return the page carrying these rows instead, cursors unchanged."""
+        """Return the page carrying these rows instead, cursors unchanged.
+
+        Raises:
+            PageItemsMismatchError: if there is not one item per row.
+
+        """
+        if len(items) != len(self.items):
+            raise PageItemsMismatchError(len(self.items), len(items))
         return CursorPage(
             items=items,
             next_cursor=self.next_cursor,

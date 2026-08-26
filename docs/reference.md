@@ -269,6 +269,8 @@ except ValueError:  # any bad input, from here or elsewhere
 
 ::: sqlakit.NullCursorValueError
 
+::: sqlakit.PageItemsMismatchError
+
 ### Rows and queries
 
 ::: sqlakit.InstanceNotFoundError
