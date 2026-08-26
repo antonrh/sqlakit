@@ -191,7 +191,7 @@ with db.transaction():
 ```
 
 `set_db()` tells a model which database to work on. Put it on a base class and
-every model under it inherits the binding. With the importable `db` from the
+every model under it inherits the binding. With the global `db` from the
 section below there is nothing to bind: the model finds it by itself.
 
 The layer is separate and optional. Everything above works on plain `SQLAlchemy`
@@ -259,10 +259,10 @@ The N+1 is visible at a glance: one statement for the users and two identical
 ones for the teams. Laying it out over lines comes from the `sqlakit[debug]`
 extra, and where the project has `rich`, the output is coloured too.
 
-## The importable instance
+## The registry
 
-To avoid passing a `Database` from module to module, configure the importable
-`db` once at startup:
+To avoid passing a `Database` from module to module, configure the registry
+once at startup:
 
 ```python
 # app/main.py
@@ -286,8 +286,8 @@ def list_users() -> list[User]:
 
 ## More than one database
 
-That same importable `db` holds several databases. Describe them under aliases,
-and a block picks the one it wants:
+That same registry holds several databases. Describe them under aliases, and a
+block picks the one it wants:
 
 ```python
 from sqlakit import db
