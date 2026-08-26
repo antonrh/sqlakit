@@ -148,7 +148,9 @@ class Query(BaseQuery[ModelT]):
 
     async def first(self) -> ModelT | None:
         """Return the first matching row, or None."""
-        result = await self._rows(self.limit(1)._executable())  # noqa: SLF001
+        # A raw statement takes no limit; the first row is read off the result.
+        query = self if self._statement is not None else self.limit(1)
+        result = await self._rows(query._executable())  # noqa: SLF001
         return result.first()
 
     async def latest(self, column: Any) -> ModelT | None:  # noqa: ANN401
@@ -476,7 +478,7 @@ class ColumnQuery(Generic[RowT]):
 
         """
         rows = await self._rows()
-        return cast("RowT", rows.one())
+        return cast("RowT", one_row(rows, self.model.__name__))
 
     async def one_or_none(self) -> RowT | None:
         """Return the single matching row, or None.
@@ -486,7 +488,7 @@ class ColumnQuery(Generic[RowT]):
 
         """
         rows = await self._rows()
-        return cast("RowT | None", rows.one_or_none())
+        return cast("RowT | None", one_row_or_none(rows, self.model.__name__))
 
 
 class QueryDescriptor(Generic[QueryT]):
@@ -650,7 +652,7 @@ class SoftDeletes(BaseSoftDeletes):
     await note.restore()  # and back
     ```
 
-    Reads skip the marked rows, `get()` included. `Note.query.unfiltered()`
+    Reads skip the marked rows, `get()` included. `Note.query.with_deleted()`
     reads them, and `delete(force=True)` removes them for good.
     """
 

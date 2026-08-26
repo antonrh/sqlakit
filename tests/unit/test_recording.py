@@ -339,6 +339,14 @@ def _statement(sql: str = "SELECT 1", milliseconds: float = 1.0) -> Statement:
     return Statement(sql=sql, parameters=(), duration=milliseconds / 1000)
 
 
+def test_an_unmatched_cursor_event_is_ignored(db: Database) -> None:
+    # An after event with no matching before: recording() attached mid-statement.
+    with db.connect() as connection, db.recording() as record:
+        db._statement_ended(connection, None, "SELECT 1", (), None, _many=False)
+
+    assert record.count == 0
+
+
 def test_an_empty_recording_says_so() -> None:
     recording = Recording()
 

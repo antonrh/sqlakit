@@ -168,7 +168,9 @@ log.info("archived %d users", archived)
 ```
 
 `execute()` runs a writing template and returns the number of affected rows.
-Use it for `INSERT`, `UPDATE` and `DELETE`.
+Use it for `INSERT`, `UPDATE` and `DELETE`. Inside a transaction the write is
+part of it and the block decides. In a block with no transaction the call
+commits for itself, as ORM writes do.
 
 ## Walking a table
 

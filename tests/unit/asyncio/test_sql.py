@@ -140,6 +140,20 @@ async def test_a_template_that_writes_says_how_many_rows_it_touched(
 
 
 @pytest.mark.anyio
+async def test_a_writing_template_commits_when_no_transaction_is_open(
+    db: Database,
+) -> None:
+    # With no transaction to leave the commit to, `execute()` commits for itself.
+    async with db.connect():
+        await db.sql("notes/rename.sql", to="z", from_="a").execute()
+
+    async with db.connect():
+        notes = await db.sql("notes/by_text.sql", text="z").all()
+
+        assert notes != []
+
+
+@pytest.mark.anyio
 async def test_a_template_maps_onto_the_model(db: Database) -> None:
     async with db.connect():
         notes = await Note.query.from_sql("notes/by_text.sql", text="b").all()

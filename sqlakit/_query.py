@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -534,11 +535,15 @@ class BaseQuery(Generic[ModelT]):
     def _lookup_statement(self, ident: Any) -> sa.Select[Any] | None:  # noqa: ANN401
         """Return the select a filtered model needs, or None to look up by key.
 
-        A model that hides rows hides them from a lookup too, and the session cannot
-        answer that from the identity map: it knows the row, not whether the filter
-        still admits it.
+        A model that hides rows, through ``__query_filter__`` or a soft delete,
+        hides them from a lookup too, and the session cannot answer that from the
+        identity map: it knows the row, not whether the filter still admits it.
         """
-        if getattr(self.model, "__query_filter__", None) is None or not self.filtered:
+        unfiltered = (
+            getattr(self.model, "__query_filter__", None) is None or not self.filtered
+        )
+        column = soft_delete_column(self.model)
+        if unfiltered and (column is None or self.deleted == INCLUDED):
             return None
         mapper = sa.inspect(self.model, raiseerr=True)
         if isinstance(ident, Mapping):
@@ -622,6 +627,7 @@ class BaseQuery(Generic[ModelT]):
         self._reject_statement("cursor_page")
         self._require_ordering()
         ordering = self._keyset_ordering()
+        ordering_key = _ordering_key(ordering)
         backwards = cursor is not None and _is_backwards(cursor)
         if backwards:
             ordering = [
@@ -638,7 +644,9 @@ class BaseQuery(Generic[ModelT]):
             )
         )
         if cursor is not None:
-            select = select.where(_seek(ordering, _decode(cursor, ordering)))
+            select = select.where(
+                _seek(ordering, _decode(cursor, ordering, ordering_key))
+            )
         return select.limit(limit + 1)
 
     def _require_ordering(self) -> None:
@@ -766,13 +774,14 @@ class BaseQuery(Generic[ModelT]):
                 not carry, such as one belonging to a joined table.
 
         """
+        ordering = self._keyset_ordering()
         values = []
-        for item in self._keyset_ordering():
+        for item in ordering:
             value = getattr(row, item.attribute)
             if value is None:
                 raise NullCursorValueError(item.attribute)
             values.append(value)
-        return _encode(values, backwards=backwards)
+        return _encode(values, backwards=backwards, ordering=_ordering_key(ordering))
 
 
 def orderable(model: type[Any]) -> Mapping[str, Any]:
@@ -1012,14 +1021,26 @@ def _seek(
     return sa.or_(*terms)
 
 
-def _encode(values: Sequence[Any], *, backwards: bool = False) -> str:
+def _ordering_key(ordering: Sequence[_Ordering]) -> str:
+    """Return a short fingerprint of the ordering, for the cursor to carry.
+
+    A cursor only makes sense under the ordering that produced it, and the
+    values alone cannot tell a different one apart when the types line up.
+    """
+    spelled = "|".join(
+        f"{item.attribute}.{'desc' if item.descending else 'asc'}" for item in ordering
+    )
+    return hashlib.blake2s(spelled.encode(), digest_size=4).hexdigest()
+
+
+def _encode(values: Sequence[Any], *, backwards: bool = False, ordering: str) -> str:
     """Return the row's values, and the way to read from them, as one token.
 
     The direction rides along so that a caller has one thing to hand back
     whichever page they asked for, and cannot ask for both at once.
     """
     payload = json.dumps(
-        {"v": [_as_json(value) for value in values], "b": backwards},
+        {"v": [_as_json(value) for value in values], "b": backwards, "o": ordering},
         separators=(",", ":"),
     )
     return base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
@@ -1045,10 +1066,18 @@ def _is_backwards(cursor: str) -> bool:
 def _decode(
     cursor: str,
     ordering: Sequence[_Ordering],
+    ordering_key: str,
 ) -> list[Any]:
-    """Return the values a cursor carries, in the types its columns hold."""
-    values = _payload(cursor)["v"]
-    if len(values) != len(ordering):
+    """Return the values a cursor carries, in the types its columns hold.
+
+    Raises:
+        InvalidCursorError: if the cursor came from another ordering, or from
+            somewhere else entirely.
+
+    """
+    payload = _payload(cursor)
+    values = payload["v"]
+    if payload.get("o") != ordering_key or len(values) != len(ordering):
         raise InvalidCursorError
     try:
         return [

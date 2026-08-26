@@ -352,9 +352,10 @@ class Database(BaseDatabase[sa.Connection, Session]):
 
     def dispose(self, *, close: bool = True) -> None:
         """Dispose of the engine and its connection pool."""
-        if self._engine is not None:
-            self._engine.dispose(close=close)
-            self._engine = None
+        with self._engine_lock:
+            if self._engine is not None:
+                self._engine.dispose(close=close)
+                self._engine = None
 
     def __enter__(self) -> Self:
         return self
