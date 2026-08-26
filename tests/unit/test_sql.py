@@ -1,6 +1,6 @@
 """SQL kept in templates, and the rows it comes back with."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -13,6 +13,8 @@ from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 from typing_extensions import TypedDict  # `typing`'s needs 3.12 to validate
 
 import sqlakit
+import sqlakit.asyncio.sql
+import sqlakit.sql
 from sqlakit import (
     AsyncFilterError,
     Database,
@@ -615,3 +617,18 @@ def test_configuring_again_moves_the_templates(registry: None, tmp_path: Path) -
     sqlakit.db.configure("sqlite://", templates=tmp_path / "users")
 
     assert sqlakit.db.sql.templates.paths == (tmp_path / "users",)
+
+
+@pytest.mark.parametrize(
+    ("sync", "asynchronous"),
+    [
+        (sqlakit.sql.SQL, sqlakit.asyncio.sql.SQL),
+        (sqlakit.sql.SQLQuery, sqlakit.asyncio.sql.SQLQuery),
+        (sqlakit.sql.SQLRows, sqlakit.asyncio.sql.SQLRows),
+    ],
+    ids=lambda cls: cls.__name__,
+)
+def test_the_async_sql_mirrors_this_one(
+    sync: type, asynchronous: type, mirrors: Callable[[type, type], None]
+) -> None:
+    mirrors(sync, asynchronous)

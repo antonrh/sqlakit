@@ -19,6 +19,8 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 
+import sqlakit.asyncio.orm
+import sqlakit.orm
 from sqlakit import (
     BulkQueryError,
     Database,
@@ -1531,3 +1533,18 @@ def test_a_join_target_nobody_can_name_is_joined_rather_than_skipped() -> None:
     assert _join_identity(sa.text("whatever")) is None  # inspects to a clause
     assert _join_identity("teams") is None  # inspects to nothing at all
     assert _is_joined(select, "teams") is False
+
+
+@pytest.mark.parametrize(
+    ("sync", "asynchronous"),
+    [
+        (sqlakit.orm.Query, sqlakit.asyncio.orm.Query),
+        (sqlakit.orm.ColumnQuery, sqlakit.asyncio.orm.ColumnQuery),
+        (sqlakit.orm.QueryDescriptor, sqlakit.asyncio.orm.QueryDescriptor),
+    ],
+    ids=lambda cls: cls.__name__,
+)
+def test_the_async_query_mirrors_this_one(
+    sync: type, asynchronous: type, mirrors: Callable[[type, type], None]
+) -> None:
+    mirrors(sync, asynchronous)

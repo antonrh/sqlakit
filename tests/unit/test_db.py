@@ -1,6 +1,7 @@
 import contextvars
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from pathlib import Path
@@ -14,6 +15,8 @@ import sqlalchemy.event
 import sqlalchemy.exc
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
+import sqlakit
+import sqlakit.asyncio
 from sqlakit import (
     DEFAULT_ENGINE_ARGS,
     DEFAULT_SESSION_ARGS,
@@ -1069,3 +1072,19 @@ def test_the_other_blocks_connect_on_entry(
         assert len(checkouts) == 2
     with db.autocommit():
         assert len(checkouts) == 3
+
+
+@pytest.mark.parametrize(
+    ("sync", "asynchronous"),
+    [
+        (sqlakit.Database, sqlakit.asyncio.Database),
+        (sqlakit.Databases, sqlakit.asyncio.Databases),
+        (sqlakit.Transaction, sqlakit.asyncio.Transaction),
+        (sqlakit.RetryingTransaction, sqlakit.asyncio.RetryingTransaction),
+    ],
+    ids=lambda cls: cls.__name__,
+)
+def test_the_async_database_mirrors_this_one(
+    sync: type, asynchronous: type, mirrors: Callable[[type, type], None]
+) -> None:
+    mirrors(sync, asynchronous)
