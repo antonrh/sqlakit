@@ -10,6 +10,7 @@ from typing import cast
 import anyio
 import pytest
 import sqlalchemy as sa
+import sqlalchemy.event
 import sqlalchemy.exc
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
@@ -331,6 +332,13 @@ def users_db(db: Database) -> Database:
     with db.transaction() as conn:
         Base.metadata.create_all(conn)
     return db
+
+
+@pytest.fixture
+def checkouts(db: Database) -> list[object]:
+    taken: list[object] = []
+    sa.event.listen(db.engine, "checkout", lambda *args: taken.append(args))
+    return taken
 
 
 def names(connection: sa.Connection) -> list[str]:
@@ -871,3 +879,106 @@ def test_connect_inside_autocommit_stays_on_the_same_connection(db: Database) ->
         with db.connect() as inner:
             assert inner is conn
             assert db.connection is conn
+
+
+# `session_factory()` connects on first use; the other blocks connect on entry
+
+
+def test_session_factory_creates_no_engine_when_unused() -> None:
+    db = Database("sqlite://")
+
+    with db.session_factory():
+        pass
+
+    assert db._engine is None
+
+
+def test_session_factory_checks_nothing_out_on_entry(
+    db: Database, checkouts: list[object]
+) -> None:
+    with db.session_factory():
+        assert checkouts == []
+
+    assert checkouts == []
+
+
+def test_a_session_add_alone_checks_nothing_out(
+    users_db: Database, checkouts: list[object]
+) -> None:
+    with users_db.session_factory() as session:
+        session.add(User(name="ada"))
+        assert checkouts == []
+        session.flush()
+        assert len(checkouts) == 1
+
+
+def test_the_first_query_checks_out_one_connection(
+    users_db: Database, checkouts: list[object]
+) -> None:
+    with users_db.session_factory() as session:
+        count = sa.select(sa.func.count()).select_from(User)
+        assert session.scalar(count) == 0
+        assert len(checkouts) == 1
+        assert session.scalar(count) == 0
+        assert len(checkouts) == 1
+
+
+def test_a_lazy_session_commits_what_it_wrote(users_db: Database) -> None:
+    with users_db.session_factory() as session:
+        session.add(User(name="ada"))
+        session.commit()
+
+    with users_db.connect():
+        assert users_db.session.scalar(sa.select(User.name)) == "ada"
+
+
+def test_reading_the_connection_checks_it_out(
+    db: Database, checkouts: list[object]
+) -> None:
+    with db.session_factory():
+        assert isinstance(db.connection, sa.Connection)
+        assert len(checkouts) == 1
+
+
+def test_a_nested_connect_shares_the_lazy_connection(
+    db: Database, checkouts: list[object]
+) -> None:
+    with db.session_factory() as session:
+        with db.connect() as conn:
+            # The nested block checks out the connection the session reuses.
+            assert len(checkouts) == 1
+            assert conn.scalar(sa.text("select 1")) == 1
+        assert session.get_bind() is db.connection
+        assert len(checkouts) == 1
+
+
+def test_a_connect_after_the_session_shares_its_connection(
+    users_db: Database, checkouts: list[object]
+) -> None:
+    with users_db.session_factory() as session:
+        session.add(User(name="ada"))
+        session.flush()
+        with users_db.connect() as conn:
+            assert conn is users_db.connection
+            assert session.get_bind() is conn
+        assert len(checkouts) == 1
+
+
+def test_session_factory_inside_another_block_reuses_the_connection(
+    db: Database, checkouts: list[object]
+) -> None:
+    with db.transaction() as conn:
+        with db.session_factory() as session:
+            assert session.get_bind() is conn
+        assert len(checkouts) == 1
+
+
+def test_the_other_blocks_connect_on_entry(
+    db: Database, checkouts: list[object]
+) -> None:
+    with db.connect():
+        assert len(checkouts) == 1
+    with db.transaction():
+        assert len(checkouts) == 2
+    with db.autocommit():
+        assert len(checkouts) == 3

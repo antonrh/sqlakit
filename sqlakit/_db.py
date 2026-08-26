@@ -20,8 +20,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from ._base import (
     BaseDatabase,
     BaseRetryingTransaction,
+    _Lazy,
+    _Scope,
     default_backoff,
     fix_sqlite_transactions,
+    lazy_session_class,
 )
 from .exceptions import TransactionRolledBackError
 
@@ -110,6 +113,19 @@ class Database(BaseDatabase[sa.Connection, Session]):
         fix_sqlite_transactions(engine)
         return engine
 
+    @property
+    def connection(self) -> sa.Connection:
+        """The connection bound to the current context.
+
+        In a [`session_factory`][sqlakit.Database.session_factory] block,
+        reading it checks the connection out.
+
+        Raises:
+            MissingConnectionError: if no connection is bound.
+
+        """
+        return self._reused(self._current_scope())
+
     def _create_session(self, connection: sa.Connection) -> Session:
         if self._sessionmaker is None:
             self._sessionmaker = sessionmaker(**self.session_args)
@@ -118,12 +134,26 @@ class Database(BaseDatabase[sa.Connection, Session]):
             **self._session_args_for(connection),
         )
 
+    def _lazy_session(self, cell: _Lazy[sa.Connection]) -> Session:
+        args: dict[str, Any] = dict(self.session_args)
+        session_class = lazy_session_class(args.pop("class_", Session))
+        session = session_class(**args)
+        session._sqlakit_checkout = cell.get  # noqa: SLF001
+        return session
+
+    @staticmethod
+    def _reused(scope: _Scope[sa.Connection, Session]) -> sa.Connection:
+        """Return the scope's connection, checking it out first if lazy."""
+        if scope.connection is None and scope.checkout is not None:
+            scope.connection = scope.checkout.get()
+        return cast("sa.Connection", scope.connection)
+
     @contextmanager
     def connect(self) -> Iterator[sa.Connection]:
         """Open a connection and bind it, or reuse the one already bound."""
-        outer = self._connection_to_reuse()
-        if outer is not None:
-            with self._bound(outer) as connection:
+        reuse = self._scope_to_reuse()
+        if reuse is not None:
+            with self._bound(self._reused(reuse)) as connection:
                 yield connection
             return
         with self.engine.connect() as opened, self._bound(opened) as connection:
@@ -284,9 +314,29 @@ class Database(BaseDatabase[sa.Connection, Session]):
 
     @contextmanager
     def session_factory(self) -> Iterator[Session]:
-        """Open a new connection and a session on top of it, and bind both."""
-        with self.connect():
-            yield self.session
+        """Open a session for the block, and bind it.
+
+        The session arrives at once, the connection on its first query or
+        flush, as ``sessionmaker()`` does it. Inside another block it runs on
+        the connection already bound.
+        """
+        reuse = self._scope_to_reuse()
+        if reuse is not None:
+            with self._bound(self._reused(reuse)):
+                yield self.session
+            return
+        # The lambda defers `self.engine` too: no engine until first use.
+        cell: _Lazy[sa.Connection] = _Lazy(lambda: self.engine.connect())  # noqa: PLW0108
+        with self._bind(None, checkout=cell) as scope:
+            try:
+                yield self.session
+            finally:
+                try:
+                    if scope.session is not None:
+                        scope.session.close()
+                finally:
+                    if cell.connection is not None:
+                        cell.connection.close()
 
     @contextmanager
     def _bound(

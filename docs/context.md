@@ -38,6 +38,7 @@ parentheses:
 | [`connect()`](#connect) | reads, and code that commits on its own |
 | [`transaction()`](#transaction) | writes that must commit or roll back as one unit |
 | [`autocommit()`](#autocommit) | read paths, and statements that cannot run inside a transaction |
+| [`session_factory()`](#session-factory) | code written against a session object, connected on first use |
 
 Outside a block there's no connection and no session. Accessing them raises an
 error instead of silently opening a connection:
@@ -283,6 +284,26 @@ with db.autocommit():
 ```
 
 That's the intended behavior, and the reason writes belong in
+`transaction()`.
+
+## session_factory() {#session-factory}
+
+Binds a session for the block, and yields it:
+
+```python
+with db.session_factory() as session:
+    session.add(User(name="ada"))
+    session.commit()
+```
+
+Unlike the three blocks above, entering it takes no connection from the pool.
+The session is created at once, and the checkout happens the first time the
+session needs a connection: on a query or a flush, not on `add()`. A block
+that never uses the session never touches the database. `sessionmaker()`
+behaves the same way, so code written against it keeps its habits here.
+
+Inside another block it runs on the connection already bound, like
+`connect()`. It also commits nothing by itself: commit on the session, or use
 `transaction()`.
 
 ## Blocks under `asyncio` {#async}

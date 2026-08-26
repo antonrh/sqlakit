@@ -179,7 +179,7 @@ class SQLRows(BaseSQLQuery[RowT, "Database"]):
         """Return this block's connection, with any pending ORM writes on it."""
         if self.db.in_session():
             await self.db.session.flush()
-        return self.db.connection
+        return await self.db._aconnection()  # noqa: SLF001
 
 
 class SQLQuery(SQLRows[sa.Row[Any]]):
