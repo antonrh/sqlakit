@@ -1,4 +1,4 @@
-# Debugging
+[# Debugging
 
 `recording()` shows what queries a block ran, how long they took, and which
 ones ran more than once:
@@ -14,13 +14,13 @@ record.slowest
 print(record)  # the statements, numbered and timed
 ```
 
-The listeners are attached when the block starts and removed when it ends, so
-nothing is recorded outside the block. Blocks can nest, and each one records
+The block attaches the listeners when it starts and removes them when it ends,
+so nothing is recorded outside the block. Blocks can nest, and each one records
 only the statements that ran inside it. Statements from other tasks are not
 counted. Under `asyncio` the block is still a plain `with`, because recording
 only listens and does not run queries.
 
-Transaction control is not counted. `BEGIN` and `COMMIT` reach a cursor on
+A recording skips transaction control. `BEGIN` and `COMMIT` reach a cursor on
 some drivers and not on others, so counting them would give the same code
 different numbers on `SQLite` and `PostgreSQL`.
 
@@ -35,7 +35,7 @@ with db.recording(f"{request.method} {request.url.path}", logger=logger):
     response = await call_next(request)
 ```
 
-One line is logged when the block ends, and the log level depends on the
+`SQLAKit` logs one line when the block ends, and the log level depends on the
 numbers. INFO for a quiet block. WARNING at more than five statements, a
 slowest statement over 100ms, or any repeats. ERROR at more than twenty
 statements, a slowest statement over half a second, or more than five repeats.
@@ -54,7 +54,7 @@ record.log(logger, busy=50, slow=200.0)  # ERROR from 50 statements or 200ms
 record.log(logger, level=logging.INFO)  # or always INFO
 ```
 
-The same numbers are attached as fields, for structured logging:
+The log record carries the same numbers as fields, for structured logging:
 
 ```python
 {
@@ -150,7 +150,7 @@ you get the statement as it ran, on one line. A missing extra isn't an error.
 
 If your application prints with [rich](https://rich.readthedocs.io), the SQL
 is coloured as well: a recording and a statement can both be rendered by
-`rich`, and SQLAKit itself doesn't import it. `echo=True` and `record.echo()`
+`rich`, and `SQLAKit` itself doesn't import it. `echo=True` and `record.echo()`
 colour the output the same way when `rich` is installed, and print plainly
 when it is not.
 
@@ -160,7 +160,7 @@ from rich import print
 print(record)
 ```
 
-## Where a query came from
+## The code behind a query
 
 ```python
 with db.recording(stacks=True) as record:
@@ -169,9 +169,9 @@ with db.recording(stacks=True) as record:
 record.statements[0].stack  # the frames of your code that led to it
 ```
 
-That turns "this ran 40 times" into a line number. The stack is collected with
-`traceback.extract_stack()` on every statement, which is expensive enough to
-be off by default. Turn it on when you're chasing an N+1.
+That turns "this ran 40 times" into a line number. `SQLAKit` collects the
+stack with `traceback.extract_stack()` on every statement, which is expensive
+enough to be off by default. Turn it on when you're chasing an N+1.
 
 ## More than one database
 

@@ -96,7 +96,7 @@ writes.
 
 The return value is the alias the model lives on, or `None` if the router has
 no answer for that model. The alias must be one the registry was configured
-with; otherwise resolving it raises `UnknownDatabaseError`.
+with. Otherwise resolving it raises `UnknownDatabaseError`.
 
 Routers are called in the order given, and the first one that returns an alias
 decides. If none of them does, the model's own `__db__` applies, and failing
@@ -147,8 +147,8 @@ One query goes to the database you named, regardless of the surrounding block.
 
 With [SQL templates](sql.md), the database you call decides: `db.sql(...)`
 runs on the default one, `db["warehouse"].sql(...)` on the warehouse.
-Routers decide where a *model* lives, and a template is not a model, so
-templates are never routed.
+Routers decide where a *model* lives, and a template is not a model, so no
+router applies to a template.
 
 ## What none of this does
 
@@ -161,8 +161,8 @@ run on the connection opened by the block you are inside.
 sends every read to a replica breaks inside a transaction: the row you just
 wrote is missing from the very next read, because that read runs on another
 connection, and an uncommitted transaction is invisible from there. Here the
-block decides, so this bug cannot come from configuration. To spread reads over
-several replicas, make the choice where connections are opened:
+block decides, so no configuration can cause this bug. To spread reads over
+several replicas, make the choice where you open connections:
 
 ```python
 async with db.using(random.choice(REPLICAS)).connect():

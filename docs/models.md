@@ -107,7 +107,7 @@ User.query.in_team("red").order_by(User.name).page(limit=20)
 User.query.in_team("red").deactivate()  # how many rows it updated
 ```
 
-Rules you want on every model go on a base class; refer to the model class
+Rules you want on every model go on a base class. Refer to the model class
 through `self.model`:
 
 ```python
@@ -158,9 +158,9 @@ with db.transaction():
 ```
 
 The method is explicit for a reason. `merge()` attaches the object to the
-current session, but the row it reads is overwritten with whatever your
-instance holds, so changes that someone else committed in the meantime are
-silently lost. The simplest way to stay safe is to load and save a model
+current session, but whatever your instance holds overwrites the row it
+reads, so changes that someone else committed in the meantime are silently
+lost. The simplest way to stay safe is to load and save a model
 inside one block.
 
 ## Fields from a request
@@ -174,7 +174,7 @@ user.update(payload.model_dump(exclude_unset=True)).save()
 
 `None` counts as a value like any other, because sending `None` is exactly how
 a request clears a nullable field. So the dict has to contain what was *sent*,
-not what was non-empty; in `pydantic` that means `exclude_unset=True`.
+not what was non-empty. In `pydantic` that means `exclude_unset=True`.
 
 ## Relationships without a query
 
@@ -190,7 +190,7 @@ memory: the rows were selected in one go for a whole page, the row was created
 in this very block, or the instance outlived the block that loaded it. Once
 the session closes, loading a relationship is no longer possible.
 
-The method describes what the database already contains; it doesn't change
+The method describes what the database already contains. It doesn't change
 anything. The value isn't written on save, doesn't mark the instance as
 modified, and doesn't update the other side of the relationship. The
 alternative is `refresh(attribute_names=["esp"])`, which queries the database
@@ -220,7 +220,7 @@ with db.transaction():
 
 `refresh()` discards what the session remembers about the instance and reads
 the row from the database. An assertion after `refresh()` checks the database
-rather than the session; [testing](testing.md) relies on exactly that.
+rather than the session. [Testing](testing.md) relies on exactly that.
 
 ## Soft deletes {#soft-deletes}
 
@@ -268,12 +268,12 @@ have `timestamptz` the column uses that type. If you'd rather use a column of
 your own, set `__soft_delete__ = "removed_at"` and declare the column
 yourself, without the mixin.
 
-A few things to know before turning it on:
+A few things to know before you enable it:
 
 - **A unique index still includes marked rows.** `UNIQUE(email)` won't accept
   a new row with the same address. On `PostgreSQL`, build the index with
   `WHERE deleted_at IS NULL`.
-- **Cascades don't fire.** No `DELETE` is sent to the database, so
+- **Cascades don't fire.** No `DELETE` reaches the database, so
   `cascade="all, delete-orphan"` and `ON DELETE CASCADE` do nothing. Mark the
   children yourself.
 - **A bulk `update()` skips marked rows**, the same as reads do, and
@@ -293,12 +293,12 @@ import_models("app")  # app/billing/models.py, app/users/models/*, ...
 ```
 
 If you forget to import some of them, nothing fails loudly. Here's where the
-breakage shows up:
+breakage appears:
 
 - `alembic revision --autogenerate` compares the metadata with the database,
   and a model nobody imported looks like a table to **drop**.
 - [`provisioned_tables()`](testing.md) creates the tables the metadata
-  contains, so a test run comes up without those tables.
+  contains, so a test run starts without those tables.
 - `relationship("Team")` cannot find a class nobody has defined yet.
 
 If all your models live in one module, you don't need any of this: importing
@@ -407,7 +407,7 @@ from `SQLAlchemy`, not from this library:
 - **`init=False` on a key the database fills.** Otherwise the generated
   `__init__` requires an `id` that doesn't exist yet.
 - **Columns with a default come last**, like dataclass fields. Use
-  `default_factory` for a fresh value per row; a plain `default=utcnow()`
+  `default_factory` for a fresh value per row. A plain `default=utcnow()`
   would stamp every row with the time of import.
 
 With an async database, use `sqlakit.asyncio.orm.ModelMixin`.

@@ -9,8 +9,8 @@ of `ruff check` has no say here, because a block is an excerpt whose names are
 undefined and whose imports are missing on purpose.
 
 The prose checks are the mechanical half of the style: the turns of phrase that
-crept in often enough to be worth a rule. The rest is judgement, and lives in
-`.claude/skills/docs-review`.
+crept in often enough to be worth a rule. The rest is judgement, and belongs to
+review.
 """
 
 from __future__ import annotations
@@ -98,14 +98,23 @@ PROSE = (
     (r"\b(we|our|us|let's)\b", "the first person; the docs speak of the library"),
     (r"(?<!!)!(?!!)", "an exclamation mark"),  # `!!!` opens an admonition
     (r"^!!! \w+$", "an admonition with no title of its own"),
+    (";", "a semicolon; write two sentences"),
+    (
+        (
+            r"\b(end(s|ed)? up|spin(s|ning)? up|kick(s|ed)? off|reach(es|ed)? out"
+            r"|dive(s)? into|carr(y|ies|ied) over|hand(s|ed)? (back|over|out)"
+            r"|pass(es|ed|ing)? around|come(s)? from|came from)\b"
+        ),
+        "a phrasal verb; use the single plain verb",
+    ),
 )
 
 
 def prose(page: Path) -> list[str]:
     """Return what the prose of a page does that the style rules out.
 
-    The rules are the mechanical half of `.claude/skills/docs-review`: the
-    habits that crept in often enough to be worth catching without reading.
+    The rules are the mechanical half of the style: the habits that crept in
+    often enough to be worth catching without reading.
     """
     text = page.read_text()
     text = re.sub(
@@ -119,8 +128,10 @@ def prose(page: Path) -> list[str]:
         if line.lstrip().startswith(("|", ">")):
             continue
         where = f"{page.relative_to(DOCS.parent)}:{number}"
+        # Inline code is quoted, not spoken, so the prose rules leave it alone.
+        spoken = re.sub(r"`[^`]*`", "", line)
         for pattern, said in PROSE:
-            if re.search(pattern, line, re.IGNORECASE):
+            if re.search(pattern, spoken, re.IGNORECASE):
                 found.append(f"{where}  {said}")
         if len(line) > WIDTH and "](http" not in line and not line.startswith("|"):
             found.append(f"{where}  {len(line)} columns; the prose wraps at {WIDTH}")

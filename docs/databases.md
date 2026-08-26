@@ -1,8 +1,8 @@
 # The database
 
 A `Database` holds the `SQLAlchemy` engine, its connection pool, and the
-context that blocks attach to. Creating it doesn't connect to anything yet: the
-engine is created when the first block needs it.
+context that blocks attach to. Creating it doesn't connect to anything yet:
+`SQLAKit` creates the engine when the first block needs it.
 
 ```python
 from sqlakit import Database
@@ -26,10 +26,11 @@ db = Database(
 )
 ```
 
-The main reason to prefer this is the password. Passed as its own argument, it
-is quoted automatically and comes back exactly as it went in. A password with
-special characters inside a URL string raises no error: `SQLAlchemy` splits the
-string on the first `@`, and parts of the password end up in the wrong fields:
+The main reason to prefer this is the password. `SQLAKit` quotes a password
+passed as its own argument, so it comes back exactly as it went in. A password
+with special characters inside a URL string raises no error: `SQLAlchemy`
+splits the string on the first `@`, and parts of the password land in the
+wrong fields:
 
 ```python
 import sqlalchemy as sa
@@ -71,7 +72,7 @@ db.configure(settings.DATABASE_URL)
 ```
 
 Any module then does `from sqlakit import db` and gets the same connections.
-Reconfiguring is allowed until something connects; after that it raises
+Reconfiguring is allowed until something connects. After that it raises
 `DatabaseAlreadyConfiguredError`, and you have to call `db.dispose()` first.
 
 `configure()` accepts everything the constructor accepts, separate arguments
@@ -131,7 +132,7 @@ are in the [reference](reference.md#defaults). `pool_size`, `max_overflow` and
 `isolation_level` are not set by default: they depend on the worker count, the
 database's limits and the dialect.
 
-`templates=` sets the directory [SQL templates](sql.md) are loaded from.
+`templates=` sets the directory that holds the [SQL templates](sql.md).
 
 ## Starting and stopping
 
@@ -143,7 +144,7 @@ db.ping()  # whether the database answers, for a health endpoint
 db.dispose()  # close every connection the pool holds, on shutdown
 ```
 
-Call `dispose()` where your framework shuts down; for `FastAPI` that is the
+Call `dispose()` where your framework shuts down. For `FastAPI` that is the
 lifespan, and [examples](examples.md) shows it in place. A script that needs a
 database for a single run can use `Database` as a context manager, which
 disposes the engine at the end:

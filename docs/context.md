@@ -1,7 +1,7 @@
 # Context
 
 Your code opens a block. Everything called inside it uses the same connection
-and the same session, so you don't have to pass either one around.
+and the same session, so you don't have to pass either one between functions.
 
 ```python
 import sqlalchemy as sa
@@ -59,8 +59,8 @@ with db.connect() as conn:
     conn.execute(sa.text("SELECT 1"))
 ```
 
-No session is created up front. The first time you access `db.session`, one is
-created on the same connection:
+The block doesn't create a session up front. The first time you access
+`db.session`, it creates one on the same connection:
 
 ```python
 with db.connect():
@@ -71,8 +71,8 @@ with db.connect():
 
 So a block that only uses `db.connection` never creates a session.
 
-**It commits nothing by itself.** The block only provides a connection;
-committing is up to you:
+**It commits nothing by itself.** The block only provides a connection.
+Committing is up to you:
 
 ```python
 with db.connect():
@@ -170,7 +170,8 @@ def moderate(post_id: int) -> None:
     raise ContentBlockedError
 ```
 
-The exception is still raised, and everything written before it is committed.
+The exception still propagates, and the block commits everything written
+before it.
 
 ### Retries
 
@@ -199,7 +200,7 @@ snapshot that caused the conflict is fixed for the whole transaction.
 most four times. Between attempts it waits `backoff(attempt)` seconds,
 counting from zero. The default is roughly 0.1, 0.2 and 0.4 seconds, each with
 jitter, so workers that collided once don't all retry at the same moment. If
-you need longer waits, pass a function of your own; in tests, `lambda _: 0.0`
+you need longer waits, pass a function of your own. In tests, `lambda _: 0.0`
 skips the waiting.
 
 ### Rolling back at the end

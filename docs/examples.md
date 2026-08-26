@@ -1,8 +1,8 @@
 # Examples
 
 Complete programs, not snippets. Each one is a file in the repository under
-[`examples/`](https://github.com/antonrh/sqlakit/tree/main/examples), and each
-one is run by the test suite, so the code on this page is tested code.
+[`examples/`](https://github.com/antonrh/sqlakit/tree/main/examples), and the
+test suite runs each one, so the code on this page is tested code.
 
 | | |
 | --- | --- |
@@ -26,8 +26,8 @@ rolls back when it raises. The decorator keeps the handler's signature, so
 ## A `Flask` service {#a-flask-service}
 
 The same endpoints without `asyncio`. `db.transaction` and `db.autocommit` sit
-under the route decorator, and the errors a query raises are handled by
-`errorhandler`.
+under the route decorator, and `errorhandler` handles the errors a query
+raises.
 
 ```python title="examples/flask_app.py"
 --8<-- "examples/flask_app.py"
@@ -36,7 +36,7 @@ under the route decorator, and the errors a query raises are handled by
 ## `SQLModel`, the data mapper way {#sqlmodel-the-data-mapper-way}
 
 `SQLModel` classes are `SQLAlchemy` models, so a query works on them like any
-other. Nothing here inherits from SQLAKit: the repository holds the database
+other. Nothing here inherits from `SQLAKit`: the repository holds the database
 and builds the queries.
 
 ```python title="examples/sqlmodel_datamapper.py"
@@ -46,8 +46,8 @@ and builds the queries.
 ## `SQLModel`, the Active Record way {#sqlmodel-the-active-record-way}
 
 The same application with the [model layer](models.md): `save()`, `delete()`
-and `Model.query` on the classes themselves. `ModelMixin` is inherited second,
-after `SQLModel`. A custom query is annotated as a `ClassVar`: every class
+and `Model.query` on the classes themselves. Inherit `ModelMixin` second,
+after `SQLModel`. Annotate a custom query as a `ClassVar`: every class
 attribute of a `pydantic` model needs an annotation, and `ClassVar` marks this
 attribute as not a column.
 

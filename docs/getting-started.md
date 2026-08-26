@@ -12,8 +12,8 @@ $ pip install sqlakit
 ## Connect
 
 Create a `Database`. It doesn't connect to anything yet and doesn't create
-`app.db`. It only stores the URL; the engine and the first connection are
-created the first time you use the database.
+`app.db`. It only stores the URL. `SQLAKit` creates the engine and the first
+connection the first time you use the database.
 
 ```python
 # app/db.py
@@ -106,7 +106,7 @@ around it takes care of both.
 ## Write a test
 
 One fixture creates the tables once for the whole run. Each test then runs
-inside its own transaction, which is rolled back at the end, so data written by
+inside its own transaction, which rolls back at the end, so data written by
 one test never leaks into the next:
 
 ```python
@@ -151,14 +151,14 @@ def test_rename() -> None:
 ```
 
 Run the tests with `python -m pytest`. It puts the project directory on the
-path, so the `app` package can be imported. The schema is dropped when the run
-ends, so you don't need a prepared database and there's nothing to clean up in
-between.
+path, so the `app` package can be imported. `provisioned_tables()` drops the
+schema when the run ends, so you don't need a prepared database and there's
+nothing to clean up in between.
 
 ## What you have now
 
-- A database that any code inside a block can use, without passing a session
-  around.
+- A database that any code inside a block can use, without a session argument
+  in every function.
 - A transaction that commits at the end of the block and rolls back on an
   exception.
 - A test that writes rows and leaves the database as it found it.

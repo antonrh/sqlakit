@@ -13,7 +13,7 @@ $ pip install "sqlakit[sql]"
 
 Templates are `Jinja` files, rendered by
 [jinja2sql](https://github.com/antonrh/jinja2sql). Every `{{ value }}` becomes
-a bound parameter `:value__1`, so values never end up in the SQL text itself.
+a bound parameter `:value__1`, so values never reach the SQL text itself.
 
 ## Where templates live
 
@@ -50,12 +50,12 @@ the second.
 You address a template by its path from that root, extension included:
 `db.sql("reports/by_team.sql")` reads `BASE_DIR/reports/by_team.sql`. You can
 keep templates next to the code that uses them, or collect them all in one
-directory; the root only decides where the lookup starts.
+directory. The root only decides where the lookup starts.
 
 There are three calls, one per source of SQL, and all three read rows the
 same way:
 
-| call | where the SQL comes from |
+| call | the source of the SQL |
 | --- | --- |
 | `db.sql(name)` or `db.sql.from_file(name)` | a template under `templates=` |
 | `db.sql.from_string(source)` | a string in the code, rendered the same way |
@@ -81,7 +81,7 @@ db = Database(
 rows = db.sql("reports/by_team.sql", since=since).all()
 ```
 
-Keyword arguments go into the template context. Rows come back as `SQLAlchemy`
+Keyword arguments go into the template context. Rows arrive as `SQLAlchemy`
 `Row` objects, which you can read by name or by position.
 
 If you'd rather get rows as a type of your own, call `typed`:
@@ -95,13 +95,13 @@ class TeamReport(BaseModel):
 teams = db.sql("reports/by_team.sql", since=since).typed(TeamReport).all()
 ```
 
-Pass the type of **one row**; the container depends on the method that runs
-the query, so `all()` returns a list and `one()` a single row. Rows are
+Pass the type of **one row**. The container depends on the method that runs
+the query: `all()` returns a list and `one()` a single row. Rows are
 validated by `pydantic`, which means a `pydantic` model, a dataclass, a
 `TypedDict` and a plain `int` all work, and a row of the wrong shape raises
 `ValidationError` right away instead of somewhere downstream.
 
-A one-column row comes back as the value of that column:
+A one-column row arrives as the value of that column:
 
 ```python
 total = db.sql("reports/total.sql").typed(int).one()
@@ -115,7 +115,7 @@ total = db.sql("reports/total.sql").scalars().one()
 names = db.sql("users/names.sql").scalars().all()
 ```
 
-You call `typed` or `scalars` once; they aren't chained with each other, so
+You call `typed` or `scalars` once. They aren't chained with each other, so
 there's no call order to remember.
 
 The methods that run the query are the same ones a query has: `all`, `first`,
@@ -133,11 +133,11 @@ users = User.query.from_sql("users/active.sql", team="red").all()
 users = db.query(User).from_sql("users/active.sql", team="red").all()
 ```
 
-Both lines do the same thing; the second one works without the
+Both lines do the same thing. The second one works without the
 [model layer](models.md). The examples below use the shorter `User.query`
 form.
 
-Rows come back as instances and land in the session. You can't narrow such a
+Rows arrive as instances and land in the session. You can't narrow such a
 query from code, because the file already decides what is selected and under
 which conditions. A `where` on top of it raises `RawStatementError`, and the
 message suggests moving the condition into the statement itself.
@@ -153,10 +153,10 @@ User.query.from_statement(
 )
 ```
 
-One thing to watch out for: a model's
-[`__query_filter__`](queries.md#hiding-rows-for-good) is not applied to your
-statement. If you rely on that hook to hide soft-deleted rows or another
-tenant's rows, repeat the condition in the template's own `WHERE`.
+One caveat: `SQLAKit` does not apply a model's
+[`__query_filter__`](queries.md#hiding-rows-for-good) to your statement. If
+you rely on that hook to hide soft-deleted rows or another tenant's rows,
+repeat the condition in the template's own `WHERE`.
 
 ## Writing rows
 
@@ -196,7 +196,7 @@ ids = query.scalars().all()
 ```
 
 This is the only call that works without `templates=`. Grep for it when you
-want to find every place where SQL is built from strings.
+want to find every place that builds SQL from strings.
 
 !!! note "Placeholders belong to the template, not to the driver"
 
@@ -220,19 +220,20 @@ user = db.sql.from_statement(statement).typed(User).one()
 totals = db.sql.from_statement(sa.select(Sale.team, sa.func.sum(Sale.amount))).all()
 ```
 
-Nothing is rendered here: the parameters belong to the statement, written in
-the regular `SQLAlchemy` syntax. The call adds the reading methods (`typed`,
-`scalars`, `chunks` and the rest) on top of a statement you built anywhere.
+`SQLAKit` renders nothing here: the parameters belong to the statement,
+written in the regular `SQLAlchemy` syntax. The call adds the reading methods
+(`typed`, `scalars`, `chunks` and the rest) on top of a statement you built
+anywhere.
 
 ## Inside a template
 
-Any value is passed as a parameter, whatever its type:
+`SQLAKit` binds every value as a parameter, whatever its type:
 
 ```sql
 SELECT * FROM users WHERE team = {{ team }} AND joined_at > {{ since }}
 ```
 
-A list is passed to the database as a list, so `IN` works. An empty list
+A list reaches the database as a list, so `IN` works. An empty list
 matches nothing and doesn't break the query:
 
 ```sql
@@ -281,9 +282,9 @@ anything. You can check it in a test, or feed it to `EXPLAIN`:
 statement = db.sql("reports/by_team.sql", since=since).statement
 ```
 
-The template name is added to the SQL as a comment, so a slow query log, a
-[recording](debugging.md) and `pg_stat_statements` all show which file a query
-came from:
+`SQLAKit` adds the template name to the SQL as a comment, so a slow query log,
+a [recording](debugging.md) and `pg_stat_statements` all show the source file
+of each query:
 
 ```sql
 /* reports/by_team.sql */
@@ -295,8 +296,9 @@ GROUP BY team
 
 ## Checking the templates
 
-A template is only read when it's first used, and that's a late moment to
-find a typo. Call `check()` at startup, next to the rest of your wiring:
+`SQLAKit` only reads a template when it's first used, and that's a late
+moment to find a typo. Call `check()` at startup, next to the rest of your
+wiring:
 
 ```python
 db.sql.check()
@@ -318,14 +320,14 @@ async for batch in db.sql("exports/contacts.sql").chunks(1000):
     await write(batch)
 ```
 
-The `await` goes where the query runs; the rest is identical in both APIs.
+The `await` goes where the query runs. The rest is identical in both APIs.
 Building a query with `db.sql(...)` or `from_string`, calling `check`, and
 reading `statement` all stay synchronous, so you can pass a rendered template
 to `from_statement` in either API.
 
-Templates render synchronously. An async filter is rejected as soon as the
-`Templates` object is created, rather than putting a coroutine into your query
-in place of a value:
+Templates render synchronously. `Templates` rejects an async filter as soon
+as the object is created, rather than putting a coroutine into your query in
+place of a value:
 
 ```python
 Templates(BASE_DIR, filters={"rate": fetch_rate})  # raises AsyncFilterError
