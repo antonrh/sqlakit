@@ -337,7 +337,12 @@ def _statement(
         # `*/` in a name would end the comment early and leak into the SQL.
         sql = f"/* {label.replace('*/', '* /')} */\n{sql}"
     clause = sa.text(sql)
-    stray = set(clause._bindparams) - set(params)  # noqa: SLF001
+    named = {
+        element.key
+        for element in clause.get_children()
+        if isinstance(element, sa.BindParameter)
+    }
+    stray = named - set(params)
     if stray:
         raise StrayParameterError(sorted(stray), label)
     return clause.bindparams(*(_bound(name, value) for name, value in params.items()))
