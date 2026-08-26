@@ -1,24 +1,23 @@
 # SQL templates
 
-Some queries read better as SQL. A report with window functions, a bulk update
-with `FROM`, a recursive CTE: through the builder they get longer rather than
-clearer.
+Some queries are easier to write as plain SQL: a report with window functions,
+a bulk update with `FROM`, a recursive CTE. Pushing them through the query
+builder only makes them longer.
 
-This layer keeps that SQL in files, binds the values, and returns rows through
-the same methods a query does. It needs an extra:
+This layer lets you keep that SQL in files, binds the values for you, and
+returns rows through the same methods a query has. It needs an extra:
 
 ```console
 $ pip install "sqlakit[sql]"
 ```
 
-Templates are written in `Jinja`, and
-[jinja2sql](https://github.com/antonrh/jinja2sql) runs them. A `{{ value }}`
-reaches the SQL as `:value__1`, with the value itself travelling separately.
+Templates are `Jinja` files, rendered by
+[jinja2sql](https://github.com/antonrh/jinja2sql). Every `{{ value }}` becomes
+a bound parameter `:value__1`, so values never end up in the SQL text itself.
 
 ## Where templates live
 
-The directory of files is named when the database is built, through
-`templates=`:
+Set the template directory with `templates=` when you create the database:
 
 ```python
 from pathlib import Path
@@ -30,8 +29,7 @@ BASE_DIR = Path(__file__).parent / "sql"
 db = Database("postgresql+psycopg://localhost/app", templates=BASE_DIR)
 ```
 
-The registry takes the same thing in `configure()`, which is the only place it
-has for it:
+If you use the registry, pass the same argument to `configure()`:
 
 ```python
 from pathlib import Path
@@ -46,15 +44,16 @@ db.configure(
 )
 ```
 
-The page goes on with the first of those, and reads the same for the second.
+The rest of this page uses the first form, and everything works the same with
+the second.
 
-A template is named by its path from that root, extension included, so
-`db.sql("reports/by_team.sql")` reads `BASE_DIR/reports/by_team.sql`. Keep
-templates next to the code that uses them, or gather them in one directory: the
-root only says where looking starts.
+You address a template by its path from that root, extension included:
+`db.sql("reports/by_team.sql")` reads `BASE_DIR/reports/by_team.sql`. You can
+keep templates next to the code that uses them, or collect them all in one
+directory; the root only decides where the lookup starts.
 
-Where the SQL comes from depends on the call, and all three read rows the same
-way:
+There are three calls, one per source of SQL, and all three read rows the
+same way:
 
 | call | where the SQL comes from |
 | --- | --- |
@@ -62,10 +61,10 @@ way:
 | `db.sql.from_string(source)` | a string in the code, rendered the same way |
 | `db.sql.from_statement(statement)` | a finished `SQLAlchemy` statement, unrendered |
 
-`db.sql(name)` is the short form of `from_file`, and the one to reach for first.
-The other two are covered below, each in its place.
+`db.sql(name)` is a shorthand for `from_file`, and the one you'll use most of
+the time. The other two are covered below.
 
-For a `Jinja` environment of your own, pass a `Templates` object:
+If you need a customized `Jinja` environment, pass a `Templates` object:
 
 ```python
 from sqlakit.sql import Templates
@@ -83,9 +82,9 @@ rows = db.sql("reports/by_team.sql", since=since).all()
 ```
 
 Keyword arguments go into the template context. Rows come back as `SQLAlchemy`
-`Row` objects, readable by name and by position.
+`Row` objects, which you can read by name or by position.
 
-For a type of your own, call `typed`:
+If you'd rather get rows as a type of your own, call `typed`:
 
 ```python
 class TeamReport(BaseModel):
@@ -96,32 +95,34 @@ class TeamReport(BaseModel):
 teams = db.sql("reports/by_team.sql", since=since).typed(TeamReport).all()
 ```
 
-Name the type of **one row**. The container is chosen by the method that runs
-the query: `all()` returns a list, `one()` a single row. Rows are checked by
-`pydantic`, so a model of its own, a dataclass, a `TypedDict` and an `int` all
-work, and a row of the wrong shape raises `ValidationError` right here rather
-than somewhere downstream.
+Pass the type of **one row**; the container depends on the method that runs
+the query, so `all()` returns a list and `one()` a single row. Rows are
+validated by `pydantic`, which means a `pydantic` model, a dataclass, a
+`TypedDict` and a plain `int` all work, and a row of the wrong shape raises
+`ValidationError` right away instead of somewhere downstream.
 
-A one-column row arrives as the value of that column:
+A one-column row comes back as the value of that column:
 
 ```python
 total = db.sql("reports/total.sql").typed(int).one()
 ```
 
-`scalars` reads the first column of whatever came back, and needs no type named:
+`scalars` reads the first column of the result, and you don't have to declare
+a type:
 
 ```python
 total = db.sql("reports/total.sql").scalars().one()
 names = db.sql("users/names.sql").scalars().all()
 ```
 
-Each of these is called once, with nothing built on top of typed rows. There is
-no call order to remember, because there is no second call.
+You call each of these once. Nothing builds on top of typed rows, so there's
+no call order to remember.
 
-The methods that run the query are the ones a query already has: `all`, `first`,
+The methods that run the query are the same ones a query has: `all`, `first`,
 `one`, `one_or_none`. They raise `SQLAlchemy`'s own `NoResultFound` and
-`MultipleResultsFound`, as an ordinary result does. A query on a model raises
-`InstanceNotFoundError` instead, which names the model.
+`MultipleResultsFound`, the same way an ordinary result does. A query on a
+model raises `InstanceNotFoundError` instead, with the model's name in the
+message.
 
 ## Rows as models
 
@@ -132,17 +133,18 @@ users = User.query.from_sql("users/active.sql", team="red").all()
 users = db.query(User).from_sql("users/active.sql", team="red").all()
 ```
 
-Both lines read the same thing. The second does without the
-[model layer](models.md), and every example below shortens to it.
+Both lines do the same thing; the second one works without the
+[model layer](models.md). The examples below use the shorter `User.query`
+form.
 
-Rows come back as instances and land in the session. Narrowing such a query from
-code is no longer on the table, because the file decides the selection and the
-conditions. A `where` on top of it raises `RawStatementError`, which also
-suggests moving the condition into the statement itself.
+Rows come back as instances and land in the session. You can't narrow such a
+query from code, because the file already decides what is selected and under
+which conditions. A `where` on top of it raises `RawStatementError`, and the
+message suggests moving the condition into the statement itself.
 
-`from_sql` works with a file, which is the common case. Everything else goes
-through `from_statement`, which takes both what the calls above returned and
-what `SQLAlchemy` built:
+`from_sql` works with a file, which is the common case. For everything else
+there's `from_statement`, which accepts both what the calls above return and
+a statement built with `SQLAlchemy`:
 
 ```python
 User.query.from_statement(db.sql.from_string("SELECT * FROM users LIMIT 10"))
@@ -151,10 +153,10 @@ User.query.from_statement(
 )
 ```
 
-One thing to watch: a model's
+One thing to watch out for: a model's
 [`__query_filter__`](queries.md#hiding-rows-for-good) is not applied to your
-statement. If that hook hides soft-deleted rows or another tenant's rows, hide
-them again in the template's own `WHERE`.
+statement. If you rely on that hook to hide soft-deleted rows or another
+tenant's rows, repeat the condition in the template's own `WHERE`.
 
 ## Writing rows
 
@@ -165,8 +167,8 @@ with db.transaction():
 log.info("archived %d users", archived)
 ```
 
-`execute()` runs a writing template and returns how many rows it touched. It is
-what `INSERT`, `UPDATE` and `DELETE` want as well.
+`execute()` runs a writing template and returns the number of affected rows.
+Use it for `INSERT`, `UPDATE` and `DELETE`.
 
 ## Walking a table
 
@@ -176,30 +178,31 @@ with db.transaction():
         write(batch)
 ```
 
-This is one query read in batches. The database holds a cursor open for the
-whole walk, so do not leave the transaction. To commit each batch instead, page
-the table with [`cursor_page`](queries.md#walking-a-whole-table).
+This is one query read in batches. The database keeps a cursor open for the
+whole walk, so don't leave the transaction until you're done. If you'd rather
+commit each batch separately, page the table with
+[`cursor_page`](queries.md#walking-a-whole-table).
 
 ## SQL that is not in a file
 
-Three lines do not need a file of their own. `from_string` renders the same way,
-and keeps the source in front of you:
+A three-line query doesn't need a file of its own. `from_string` renders the
+same way, and the source stays right in your code:
 
 ```python
 query = db.sql.from_string("SELECT id FROM users WHERE team = {{ team }}", team="red")
 ids = query.scalars().all()
 ```
 
-This is the only call that works without `templates=`. It is also the one to
-grep for when you want to know where SQL is assembled from strings.
+This is the only call that works without `templates=`. It's also easy to grep
+for when you want to find every place where SQL is built from strings.
 
 !!! note "Placeholders belong to the template, not to the driver"
 
-    Values are named in `{{ }}` and passed by keyword, in `from_string` and in a
-    file alike. Neither `SQLAlchemy`'s `:name` nor a driver's `?` or `%s` binds
-    anything here: an unbound `:name` raises `StrayParameterError` while
-    rendering, and `from_string` takes no positional arguments to fill a `?`
-    with.
+    You name values in `{{ }}` and pass them by keyword, both in `from_string`
+    and in a file. Neither `SQLAlchemy`'s `:name` nor a driver's `?` or `%s`
+    binds anything here: an unbound `:name` raises `StrayParameterError`
+    during rendering, and `from_string` has no positional arguments to fill a
+    `?` with.
 
 ```python
 db.sql.from_string("SELECT * FROM users WHERE id = {{ id }}", id=1)  # binds 1
@@ -215,37 +218,36 @@ user = db.sql.from_statement(statement).typed(User).one()
 totals = db.sql.from_statement(sa.select(Sale.team, sa.func.sum(Sale.amount))).all()
 ```
 
-Nothing is rendered here, so the parameters belong to the statement and are
-written the way `SQLAlchemy` writes them. The call adds the reading and nothing
-else: `typed`, `scalars`, `chunks` and the rest, over a statement built
-anywhere.
+Nothing is rendered here: the parameters belong to the statement, written in
+the regular `SQLAlchemy` syntax. The call adds the reading methods (`typed`,
+`scalars`, `chunks` and the rest) on top of a statement you built anywhere.
 
 ## Inside a template
 
-Any value travels as a parameter, whatever its type:
+Any value is passed as a parameter, whatever its type:
 
 ```sql
 SELECT * FROM users WHERE team = {{ team }} AND joined_at > {{ since }}
 ```
 
-A list reaches the database as a list, so `IN` works. An empty one matches
-nothing without breaking the query:
+A list is passed to the database as a list, so `IN` works. An empty list
+matches nothing and doesn't break the query:
 
 ```sql
 SELECT * FROM users WHERE id IN {{ ids }}
 ```
 
-`{{ ids | inclause }}` from `jinja2sql` writes the values out one by one. It
-reads the same, and takes no empty list.
+`{{ ids | inclause }}` from `jinja2sql` expands the values one by one. It
+reads the same, but doesn't accept an empty list.
 
-Identifiers cannot be bound. Quote a table or column name through `identifier`,
-and let through only the names you allowed yourself:
+Identifiers can't be bound as parameters. Quote a table or column name with
+the `identifier` filter, and only let through names you've allowed yourself:
 
 ```sql
 SELECT * FROM users ORDER BY {{ column | identifier }}
 ```
 
-When the SQL has to differ between databases, branch on `dialect`:
+When the SQL needs to differ between databases, branch on `dialect`:
 
 ```sql
 {% if dialect == "postgresql" %}
@@ -255,13 +257,14 @@ When the SQL has to differ between databases, branch on `dialect`:
 {% endif %}
 ```
 
-Escape a colon that belongs to the SQL itself. `SQLAlchemy` reads `:name` as a
-parameter, so a JSON literal has to be written `'{"a"\:1}'`. Left unescaped, the
-template complains while rendering and names the file, rather than failing when
-it runs.
+Escape a colon that is part of the SQL itself. `SQLAlchemy` treats `:name` as
+a parameter, so you have to write a JSON literal as `'{"a"\:1}'`. An unescaped
+colon raises an error during rendering, with the file name in the message,
+instead of failing when the query runs.
 
-Some values want a type the driver will not guess: NULL, a JSON document, an
-array. Pass `sa.bindparam`, and the value goes through with its type:
+Some values need a type the driver can't guess on its own: NULL, a JSON
+document, an array. Pass `sa.bindparam`, and the value goes through with its
+type:
 
 ```python
 db.sql("events/at.sql", at=sa.bindparam("at", when, type_=sa.DateTime(timezone=True)))
@@ -269,14 +272,14 @@ db.sql("events/at.sql", at=sa.bindparam("at", when, type_=sa.DateTime(timezone=T
 
 ## Seeing the SQL
 
-`statement` hands back the finished SQL, rendered and bound, and runs nothing.
-Check it in a test, or feed it to `EXPLAIN`:
+`statement` gives you the finished SQL, rendered and bound, without running
+anything. You can check it in a test, or feed it to `EXPLAIN`:
 
 ```python
 statement = db.sql("reports/by_team.sql", since=since).statement
 ```
 
-The template's name goes into the SQL as a comment, so a slow query log, a
+The template name is added to the SQL as a comment, so a slow query log, a
 [recording](debugging.md) and `pg_stat_statements` all show which file a query
 came from:
 
@@ -290,16 +293,16 @@ GROUP BY team
 
 ## Checking the templates
 
-A template is read when something asks for it, and finding a typo at that moment
-is late. Call `check()` at startup, next to the rest of the wiring:
+A template is only read when it's first used, and that's a late moment to
+find a typo. Call `check()` at startup, next to the rest of your wiring:
 
 ```python
 db.sql.check()
 ```
 
-It compiles every `.sql` template it finds under the roots you gave. A broken
-one raises `TemplateSyntaxError` naming the file and the line, and it happens at
-startup rather than the minute someone first wants that template.
+It compiles every `.sql` template under the roots you configured. A broken one
+raises `TemplateSyntaxError` with the file and the line, so you find out at
+startup rather than the first time someone uses that template.
 
 ## Templates under `asyncio`
 
@@ -313,26 +316,27 @@ async for batch in db.sql("exports/contacts.sql").chunks(1000):
     await write(batch)
 ```
 
-The `await` goes where the query runs; the rest is identical across both APIs.
-Building a query through `db.sql(...)` and `from_string`, along with `check` and
-reading `statement`, stays synchronous, so a rendered template suits
-`from_statement` in either one.
+The `await` goes where the query runs; the rest is identical in both APIs.
+Building a query with `db.sql(...)` or `from_string`, calling `check`, and
+reading `statement` all stay synchronous, so you can pass a rendered template
+to `from_statement` in either API.
 
-Templates render synchronously. An async filter is rejected by `Templates` as it
-is built, rather than putting a coroutine into your query in place of a value:
+Templates render synchronously. An async filter is rejected as soon as the
+`Templates` object is created, rather than putting a coroutine into your query
+in place of a value:
 
 ```python
 Templates(BASE_DIR, filters={"rate": fetch_rate})  # raises AsyncFilterError
 ```
 
-If a template wants data from the network or from the database, fetch it with
+If a template needs data from the network or from the database, fetch it with
 `await` beforehand and pass the finished value in.
 
 ## Limits
 
-A template is a whole statement, so there is nothing in it to narrow. `where`,
-`order_by` and `page` are unavailable and raise `RawStatementError`. Page in the
-SQL itself, or read the rows with a query.
+A template is a whole statement, so there's nothing left to narrow. `where`,
+`order_by` and `page` aren't available and raise `RawStatementError`. Paginate
+in the SQL itself, or read the rows with a query.
 
-Next: [queries](queries.md) for the rows a builder handles better, and
-[debugging](debugging.md) for what a template costs.
+Next: [queries](queries.md) for the queries the builder handles better, and
+[debugging](debugging.md) for measuring what your templates cost.

@@ -1,9 +1,10 @@
 # SQLAKit
 
-SQLAKit takes the routine out of working with `SQLAlchemy`. It manages sessions
-and transactions for you, and adds pagination, SQL templates, Active Record, and
-tooling to debug and test your queries. The synchronous and async APIs are built
-the same way, and one decorator is all that ties it to a framework.
+SQLAKit removes the boilerplate from `SQLAlchemy` applications. It manages
+sessions and transactions for you, and adds a query builder with pagination
+built in, `SQL` templates, an optional `Active Record` layer, debugging and
+testing tools, etc. It supports both sync and async APIs and integrates
+easily with any framework.
 
 ```console
 $ pip install sqlakit
@@ -34,17 +35,16 @@ def get_or_create_user(email: str, name: str) -> User:
     return user
 ```
 
-Both functions use the same session without either one receiving it as an
-argument. The context is set by the `@db.transaction` decorator. Everything that
-reached the session inside the block goes to the database on commit.
+Both functions use the same session without passing it around. The
+`@db.transaction` decorator opens it, and commits when the function returns.
 
-Until a block is open there is no session: `db.session` raises
-`MissingSessionError` rather than connecting quietly. `db.connection` behaves
-the same way and raises `MissingConnectionError`.
+Outside a block there is no session: `db.session` raises `MissingSessionError`
+instead of silently opening a connection. `db.connection` works the same way
+and raises `MissingConnectionError`.
 
 ## Connections and transactions
 
-The blocks work as context managers and as decorators:
+All blocks work as context managers and as decorators:
 
 ```python
 with db.connect():  # a connection, with no transaction of its own
@@ -59,11 +59,11 @@ with db.autocommit():  # AUTOCOMMIT, holding nothing open
 
 ## SQL templates
 
-Templates are written in `Jinja`, so one file holds a simple query as readily as
-a report with window functions or a recursive CTE. Values are not pasted into
-the statement text: [jinja2sql](https://github.com/antonrh/jinja2sql) lifts each
-one into a parameter, so `{{ name }}` becomes `:name__1`. It needs the
-`sqlakit[sql]` extra.
+Templates are `Jinja` files, so they can hold anything from a one-line query to
+a report with window functions or a recursive CTE.
+[jinja2sql](https://github.com/antonrh/jinja2sql) turns every `{{ name }}` into
+a bound parameter (`:name__1`), so values never end up in the SQL text and
+there is no way to inject anything. Requires the `sqlakit[sql]` extra.
 
 ### From a file
 
@@ -92,15 +92,11 @@ db.sql("reports/by_team.sql", since=since).typed(TeamReport).all()
 # [TeamReport(team='red', members=2)]
 ```
 
-`templates=` says which directory to look in, and `typed()` says what type the
-rows come back as.
+`templates=` sets the directory to load templates from, and `typed()` sets the
+type each row is returned as.
 
-The value never reaches the statement text: the database gets `:since__1`, with
-the value travelling separately. There are no strings to concatenate, and
-nowhere for an injection to come from.
-
-The file's name goes into the SQL as a comment, so a slow query log shows at
-once which template is the slow one.
+The template name is added to the SQL as a comment, so a slow query log shows
+right away which file a query came from.
 
 ### From a string
 
@@ -112,10 +108,10 @@ The same templating, with no directory to configure.
 
 ## Query builder
 
-There is a query builder of its own over `select()`, so `where`, `join` and
-`order_by` work as they always do. On top of that it adds what `select` has not:
-ordering by string, limit-offset and cursor pagination, reading in batches, and
-bulk writes. It works with any mapped class, with nothing to inherit from:
+The query builder wraps `select()`, so `where`, `join` and `order_by` work as
+usual. On top of that it adds what `select` lacks: ordering by string,
+limit-offset and cursor pagination, reading in batches, and bulk writes. It
+works with any mapped class, with nothing to inherit from:
 
 ```python
 db.query(User).where(User.is_active).order_by(User.name).all()
@@ -123,11 +119,10 @@ db.query(User).where(User.is_active).order_by(User.name).all()
 
 ### Ordering by a string
 
-`order_by` takes a string of the form `field.direction`, such as the one that
-arrived as a query parameter. The name is checked against the model before any
-SQL is assembled, so a field that is not yours to order by never gets through.
-Instead of a statement you get `UnknownOrderFieldError`, and the message lists
-what this model can order by:
+`order_by` accepts a `field.direction` string, for example straight from a
+query parameter. The field name is checked against the model before any SQL is
+built, so an unknown field never reaches the database. Instead you get
+`UnknownOrderFieldError`, and its message lists the fields the model allows:
 
 ```python
 db.query(User).order_by("created_at.desc")  # or "name", "name.asc.nulls_last"
@@ -135,8 +130,7 @@ db.query(User).order_by("created_at.desc")  # or "name", "name.asc.nulls_last"
 
 ### Limit-offset pagination
 
-`page()` counts how many rows matched altogether, so a list can say "page 3 of
-12":
+`page()` also counts the total, so you can show "page 3 of 12":
 
 ```python
 page = db.query(User).order_by("name").page(limit=20, offset=40)
@@ -148,9 +142,8 @@ page.has_next
 
 ### Cursor pagination
 
-`cursor_page()` starts from the row a cursor points at, so it does not slow down
-with depth. There is no total here, and there are cursors to the neighbouring
-pages instead:
+`cursor_page()` continues from a cursor, so it stays fast at any depth. There
+is no total; instead you get cursors to the next and previous pages:
 
 ```python
 feed = db.query(User).order_by("created_at.desc").cursor_page(limit=20)
@@ -190,19 +183,19 @@ with db.transaction():
     note.delete()
 ```
 
-`set_db()` tells a model which database to work on. Put it on a base class and
-every model under it inherits the binding. With the global `db` from the
-section below there is nothing to bind: the model finds it by itself.
+`set_db()` binds a model to a database. Call it on a base class and every model
+under it inherits the binding. With the global `db` from the section below you
+do not need it at all: the model finds the registry by itself.
 
-The layer is separate and optional. Everything above works on plain `SQLAlchemy`
-models, and if saving lives in your repositories or services, `sqlakit.orm` need
-never be imported.
+This layer is optional. Everything else works on plain `SQLAlchemy` models, so
+if saving belongs in your repositories or services, skip `sqlakit.orm`
+entirely.
 
 ## Testing
 
 A test runs inside a transaction that is rolled back at the end, so the code
-under test cannot commit around it. `assert_queries` pins down how many
-statements a block costs:
+under test cannot commit past it. `assert_queries` checks how many statements a
+block runs:
 
 ```python
 with db.transaction(rollback=True), db.assert_queries(2):
@@ -211,7 +204,7 @@ with db.transaction(rollback=True), db.assert_queries(2):
 
 ## Debugging queries
 
-`recording()` says what ran, how long it took, and what ran more than once:
+`recording()` shows what ran, how long it took, and what ran more than once:
 
 ```python
 import logging
@@ -226,11 +219,11 @@ record.milliseconds
 record.duplicates
 ```
 
-With `logger=` one line goes out at the end of the block, at a level the numbers
-choose: the more statements and repeats, the louder.
+With `logger=` one line is logged at the end of the block. The log level
+depends on the numbers: more statements and more repeats mean a higher level.
 
-With `echo=True` the block prints the statements laid out over lines, and marks
-the repeats:
+With `echo=True` the block prints each statement, formatted and with repeats
+marked:
 
 ```python
 with db.recording(echo=True):
@@ -255,9 +248,9 @@ with db.recording(echo=True):
       WHERE teams.id = ?
 ```
 
-The N+1 is visible at a glance: one statement for the users and two identical
-ones for the teams. Laying it out over lines comes from the `sqlakit[debug]`
-extra, and where the project has `rich`, the output is coloured too.
+The N+1 is easy to spot: one query for the users and two identical ones for
+the teams. Formatting needs the `sqlakit[debug]` extra, and if the project has
+`rich`, the output is colored too.
 
 ## The registry
 
@@ -271,7 +264,7 @@ from sqlakit import db
 db.configure("postgresql+psycopg://localhost/app")
 ```
 
-Any module then takes it by import:
+Any other module just imports it:
 
 ```python
 # app/users.py
@@ -286,8 +279,8 @@ def list_users() -> list[User]:
 
 ## More than one database
 
-That same registry holds several databases. Describe them under aliases, and a
-block picks the one it wants:
+The registry can hold several databases. Configure them under aliases, and pick
+one per block:
 
 ```python
 from sqlakit import db
@@ -305,8 +298,8 @@ with db.using("replica").connect():
 
 ## The async API
 
-The async version is built the same way: the same classes, the same methods.
-Only the import differs:
+The async API is identical: the same classes, the same methods. Only the import
+changes:
 
 ```python
 from sqlakit.asyncio import Database
@@ -317,7 +310,7 @@ async with db.transaction():
     page = await db.query(User).order_by("name").page(limit=20)
 ```
 
-The builder stays synchronous throughout: `where` and `order_by` run nothing, so
+The builder itself stays synchronous: `where` and `order_by` run no SQL, so
 there is nothing to await.
 
 ## `FastAPI` integration
@@ -367,19 +360,19 @@ async def create_user(payload: UserCreate) -> UserResponse:
 No `Depends(get_session)`, no session factories, and no `async with` in the
 handler.
 
-The `Database` here has to come from `sqlakit.asyncio`. Take the synchronous one
-and the block closes before the handler starts, and the handler fails with
+Use the `Database` from `sqlakit.asyncio` here. With the sync one the block
+closes before the async handler runs, and the handler fails with
 `MissingConnectionError`.
 
-The lifespan needs only `dispose()`. There is nothing to open at startup, since
-the engine is built on the first request.
+There is nothing to open at startup: the engine is created on first use. On
+shutdown, `dispose()` closes the pool.
 
 ## Documentation
 
-[Getting started](docs/getting-started.md) builds a database, a model and a test
-from an empty file. The rest is under [`docs/`](docs/):
+[Getting started](docs/getting-started.md) builds a database, a model and a
+test from an empty file. The rest is under [`docs/`](docs/):
 [queries](docs/queries.md), [SQL templates](docs/sql.md),
 [models](docs/models.md), [testing](docs/testing.md),
-[debugging](docs/debugging.md), [multiple databases](docs/routing.md) and [the
-reference](docs/reference.md). Whole programs live in [`examples/`](examples/),
-each one run by the test suite.
+[debugging](docs/debugging.md), [multiple databases](docs/routing.md) and
+[the reference](docs/reference.md). Complete example apps live in
+[`examples/`](examples/), and each one is run by the test suite.

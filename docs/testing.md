@@ -1,35 +1,36 @@
 # Testing
 
-Tests run against a real database, and which one is your call. `SQLite` is fast,
-needs nothing installed, and does everything this page uses, savepoints
-included. If your code depends on the dialect, its types, its constraints or its
-migrations, test on what you deploy on. Plenty of suites do both, and this page
-reads the same either way.
+Tests run against a real database. Which one is up to you: `SQLite` is fast,
+needs nothing installed, and supports everything this page uses, savepoints
+included. If your code depends on the dialect, its types, its constraints or
+its migrations, test on the database you deploy on. Many suites do both, and
+this page works the same either way.
 
 !!! note "Why savepoints work on `SQLite`"
 
-    The `SQLite` driver in the standard library issues no `BEGIN` of its own,
-    which breaks `SAVEPOINT` and nested transactions. `Database` applies the
-    workaround from `SQLAlchemy`'s pysqlite documentation for `sqlite+pysqlite`
-    and `sqlite+aiosqlite`, and skips it under `AUTOCOMMIT`, where a real
-    transaction would defeat the point.
+    The `SQLite` driver in the standard library does not issue `BEGIN` on its
+    own, which breaks `SAVEPOINT` and nested transactions. `Database` applies
+    the workaround from `SQLAlchemy`'s pysqlite documentation for
+    `sqlite+pysqlite` and `sqlite+aiosqlite`, and skips it under `AUTOCOMMIT`,
+    where opening a transaction would defeat the purpose of the mode.
 
-A run against a database is bearable for two reasons: every test hands it back
-as it found it, and the code under test has no idea it is being tested.
+Running against a database works because of two guarantees: every test leaves
+the database as it found it, and the code under test runs the same way it does
+in production.
 
-`provisioned_tables()` and `transaction(rollback=True)` deliver both:
+`provisioned_tables()` and `transaction(rollback=True)` provide both:
 
 - **`provisioned_tables()`** creates the schema once for the whole run and drops
   it afterwards.
 - **`transaction(rollback=True)`** wraps each test in a real transaction and
   rolls it back at the end. Everything inside runs on one connection and cannot
-  commit around it, both the functions the test calls and the blocks those
+  commit past it: both the functions the test calls and the blocks those
   functions open.
 
-Nested blocks join the one they sit inside, and that happens by default, so one
-`rollback=True` is all a test needs. `join_nested=True` repeats what is already
-there, and `join_nested=False` takes the code under test off the test's
-connection, where it commits for real and the rollback can no longer reach it.
+Nested blocks join the enclosing one by default, so a single `rollback=True` is
+enough. `join_nested=True` is already the default, and `join_nested=False`
+moves the code under test off the test's connection, where it commits for real
+and the rollback cannot undo it.
 
 ## The database a test needs
 
@@ -75,25 +76,24 @@ def test_renaming_a_user() -> None:
     assert user.name == "grace"
 ```
 
-`refresh()` drops what the session remembers about the object and reads the row
-from the database. Without it the assertion checks nothing. The code under test
-ran on the same session as the test, so `user` stayed the very instance it
-changed, and a fresh query would hand back that same object. The test would pass
-even if nothing had reached the database.
+`refresh()` discards what the session cached for the object and reads the row
+from the database again. Without it your assertion checks nothing: the code
+under test ran on the same session as the test, so `user` is the same instance
+it changed, and a fresh query would return that same object. The test would
+pass even if nothing had reached the database.
 
-`_db_marker` runs for every test, but steps aside at once without the marker, so
-a test that wants no database opens no connection. When there are no marked
-tests at all, no schema is built either, since `_create_db` is asked for inside
-that branch.
+`_db_marker` runs for every test, but returns immediately when the marker is
+absent, so a test that doesn't need a database opens no connection. When no
+test is marked, no schema is built either, because `_create_db` is requested
+only inside that branch.
 
 ## With await
 
-An async database changes one thing, and only because it has to. The fixtures
-have to be async, because the transaction has to be opened on the loop the test
-runs on. And an async fixture cannot be fetched through `getfixturevalue`: the
-call is synchronous, with nothing to await it with. So the `db` marker is caught
-at collection, in `pytest_collection_modifyitems`, which is also where the
-fixture is put in place, leaving the fixture itself to do only its own work:
+Switching to an async database changes one thing: the fixtures have to be
+async, because the transaction has to open on the loop the test runs on. An
+async fixture can't be fetched through `getfixturevalue`: that call is
+synchronous and can't await anything. So the `db` marker is handled at collection time, in
+`pytest_collection_modifyitems`, which adds the fixture to the marked tests:
 
 ```python title="conftest.py (asyncio)"
 from collections.abc import AsyncIterator
@@ -132,10 +132,10 @@ async def _db_marker(_create_db: None) -> AsyncIterator[None]:
         yield
 ```
 
-That moment is where `pytest` reads `item.fixturenames`. A `usefixtures` marker
-added this late is ignored.
+`pytest` reads `item.fixturenames` at that moment. A `usefixtures` marker added
+this late is ignored.
 
-Mark the tests as `anyio`, which you would be doing anyway:
+Mark your tests as `anyio`, which you'd be doing for async tests anyway:
 
 ```python
 @pytest.mark.anyio
@@ -152,10 +152,10 @@ async def test_renaming_a_user() -> None:
 
 ## Tables missing from the schema
 
-`provisioned_tables()` creates what the metadata holds, and a model whose module
-nobody imported is not in there. The tables are missing, and the breakage looks
-like a bug in the test. An application that lays models out by feature imports
-them first:
+`provisioned_tables()` creates the tables the metadata holds. A model whose
+module was never imported is not in the metadata, so its tables are missing,
+and the failure looks like a bug in the test. If your application keeps models
+next to the features they belong to, import them all first:
 
 ```python
 from sqlakit import import_models
@@ -170,8 +170,8 @@ def _create_db() -> Iterator[None]:
 
 ## A schema without the model layer
 
-For metadata that belongs to no model, the same `provisioned_tables` sits on the
-database:
+If your metadata doesn't come from the model layer, the same
+`provisioned_tables` is available on the database:
 
 ```python
 with db.provisioned_tables(SQLModel.metadata):
@@ -180,8 +180,8 @@ with db.provisioned_tables(SQLModel.metadata):
 
 ## More than one database
 
-Name the alias, and each database gets the tables of the models that point at
-it. An association table goes where the rows it joins live:
+Pass the alias, and each database gets the tables of the models that point at
+it. An association table is created on the same database as the rows it joins:
 
 ```python
 @pytest.fixture(scope="session")
@@ -190,8 +190,8 @@ def _create_db() -> Iterator[None]:
         yield
 ```
 
-Then open a transaction on each, which `transactions()` does for every database
-in the registry:
+Then open a transaction on each one. `transactions()` does that for every
+database in the registry:
 
 ```python
 @pytest.fixture(autouse=True)
@@ -205,8 +205,8 @@ def _db_marker(request: pytest.FixtureRequest) -> Iterator[None]:
         yield
 ```
 
-A test now writes to either one through its model, and both roll back when it
-ends:
+Your test can now write to either database through its model, and both
+transactions roll back when it ends:
 
 ```python
 @pytest.mark.db
@@ -219,18 +219,18 @@ def test_a_signup_is_recorded() -> None:
 
 ### What a rollback on every database does not do
 
-Each database rolls back its own transaction, on its own connection. Two things
-follow, and both bite the first time:
+Each database rolls back its own transaction, on its own connection. Two
+consequences follow:
 
-- A test that writes to one database and reads from another sees only what is in
-  the second. There is no transaction spanning both, and no isolation level
-  changes that.
+- A test that writes to one database and reads from another sees only what the
+  second one holds. No transaction spans both, and no isolation level changes
+  that.
 - A replica alias is a second connection, and it cannot see the test's
-  uncommitted rows even when it points at the very same database.
+  uncommitted rows even when it points at the same database.
 
-The second one breaks the suite on the day a router arrives in the project.
-Reads go to `replica`, the test's rows are committed nowhere, and every read
-comes back empty. Keep routers off in tests, the way a fresh registry has none:
+The second point breaks the suite as soon as a router appears in the project:
+reads go to `replica`, the test's rows are never committed, and every read
+comes back empty. Keep routers off in tests, as a fresh registry has none:
 
 ```python
 @pytest.fixture(autouse=True)
@@ -240,9 +240,9 @@ def _db_marker() -> Iterator[None]:
     db.route()  # nothing routed, reads and writes meet on default
 ```
 
-A model that named its database through `__db__` keeps it: `route()` clears the
-policy, not the model's own choice. Check the policy itself by where a model
-lands, rather than by what it reads:
+A model that set its database through `__db__` keeps it: `route()` clears the
+routing policy, not the model's own setting. Test the policy by checking where
+a model resolves, not by reading data:
 
 ```python
 def test_reads_go_to_the_replica() -> None:
@@ -253,9 +253,9 @@ def test_reads_go_to_the_replica() -> None:
 
 ### Counting queries across both
 
-The free `assert_queries` watches every database in the registry, so a block
-that works with two is counted as one number. To watch one, name it by alias or
-hand over the database itself:
+The standalone `assert_queries` watches every database in the registry, so a
+block that touches two databases gets one combined count. To watch a single
+one, pass its alias or the database itself:
 
 ```python
 from sqlakit.testing import assert_queries
@@ -268,11 +268,10 @@ with assert_queries(1, using="warehouse"):
     build_report()
 ```
 
-`db.assert_queries` watches one database, and on the registry it covers them
-all.
+`db.assert_queries` watches one database; on the registry it covers them all.
 
-A recording says which database ran what, which is how a test proves nothing
-reached the warehouse:
+A recording tracks which database ran each statement, so a test can prove that
+nothing reached the warehouse:
 
 ```python
 with db.recording() as record:
@@ -283,13 +282,14 @@ assert record.databases == ("default",)
 
 ## Migrations instead of `create_all`
 
-An application with migrations should test what it will deploy: run them once
-per session, and leave the rollback around each test as it is.
+If your application has migrations, test the schema you'll actually deploy:
+run the migrations once per session, and keep the rollback around each test as
+it is.
 
-Fail to pass the test's connection to `Alembic` and it opens one of its own, so
-the migration runs outside your transaction. The rollback no longer takes it
-back, and the schema outlives the run. Teach `env.py` to accept a connection
-from outside, or nothing else here is worth doing:
+If you don't pass the test's connection to `Alembic`, it opens one of its own
+and the migration runs outside your transaction. The rollback can't undo it,
+and the schema outlives the run. So your `env.py` needs to accept a connection
+from outside; the rest of this section depends on it:
 
 ```python title="migrations/env.py"
 from alembic import context
@@ -309,13 +309,13 @@ else:
             context.run_migrations()
 ```
 
-`connection` is named the same on both sides: it is the key the fixtures below
-put into `config.attributes`, and the argument of `context.configure`.
+`connection` is the same name on both sides: the key the fixtures below put
+into `config.attributes`, and the argument of `context.configure`.
 
-Two fixtures follow, one reading `alembic.ini` and one handing over the
-connection. `Alembic` resolves `script_location` from the working directory, so
-build the config from the project root and stay there while it works. Otherwise
-the tests pass when run from the root and fail from anywhere else.
+Two fixtures follow: one reads `alembic.ini`, the other passes the connection.
+`Alembic` resolves `script_location` from the working directory, so build the
+config from the project root and stay there while it runs. Otherwise your tests
+pass when run from the root and fail from anywhere else.
 
 ```python
 import contextlib
@@ -343,7 +343,7 @@ def _create_db(alembic_config: alembic.config.Config) -> Iterator[None]:
         alembic.command.downgrade(alembic_config, "base")
 ```
 
-`Alembic` is synchronous, so on an async database the migrations go through
+`Alembic` is synchronous, so on an async database the migrations run through
 `run_sync`:
 
 ```python
@@ -364,13 +364,13 @@ async def _create_db(alembic_config: alembic.config.Config) -> AsyncIterator[Non
         await conn.run_sync(downgrade)
 ```
 
-`run_sync` hands the function the synchronous connection from underneath, the
-one `Alembic` wants and `env.py` then reads.
+`run_sync` passes the function the underlying synchronous connection.
+`Alembic` requires a synchronous one, and `env.py` reads it as shown above.
 
 ## Counting queries
 
 `assert_queries` is a [recorder](debugging.md) with an assertion around it. It
-counts the same way and prints the same statements on failure. It sits on the
+counts the same way and prints the same statements on failure. It lives on the
 database, next to `recording()`:
 
 ```python
@@ -380,9 +380,8 @@ def test_the_list_page_costs_two_queries() -> None:
         User.query.order_by("name").page(limit=10)
 ```
 
-The checks work on their own and together: an exact number, an `at_most`
-ceiling, and `duplicates=False` to forbid repeats, which is how an N+1 is
-caught.
+The checks work alone or combined: an exact number, an `at_most` ceiling, and
+`duplicates=False` to forbid repeats, which catches an N+1.
 
 ```python
 with db.assert_queries(at_most=5):
@@ -393,9 +392,9 @@ with db.assert_queries(3, duplicates=False):
     ...
 ```
 
-`db.assert_queries` watches the database it was called on. For several at once,
-or for the configured registry, the function of the same name in
-`sqlakit.testing` does it:
+`db.assert_queries` watches the database it was called on. To watch several at
+once, or the configured registry, use the function of the same name from
+`sqlakit.testing`:
 
 ```python
 from sqlakit.testing import assert_queries
@@ -406,8 +405,7 @@ with assert_queries(2, using="warehouse"):  # one of them, by alias
     ...
 ```
 
-On failure everything that ran is printed, with the repeats pointing at one
-another:
+On failure it prints everything that ran, with repeats cross-referenced:
 
 ```sql
 AssertionError: 4 queries, expected 2
@@ -421,24 +419,25 @@ AssertionError: 4 queries, expected 2
               ↑ same as 2, 3 — 3 times in all
 ```
 
-What it wants in place:
+It needs two things in place:
 
 - **A database to watch.** `db.assert_queries` takes the one it was called on.
-  The free function takes the whole registry, unless `using` named a single
-  database.
+  The standalone function takes the whole registry, unless `using` names a
+  single database.
 - **A test that has a database at all**, meaning the `db` marker above it.
-  Without one nothing is connected, and the code under test says so rather than
-  counting zero.
+  Without the marker nothing is connected, and the code under test raises
+  instead of counting zero.
 
-The block stays `with` in both cases, under `asyncio` as well, because recording
-listens rather than runs. When you want the numbers themselves rather than an
-assertion, take `db.recording()`, the recorder this is built on.
+The block is a plain `with` in both cases, under `asyncio` as well, because
+recording only listens and runs nothing itself. When you want the numbers
+themselves rather than an assertion, use `db.recording()`, the recorder this
+is built on.
 
 ## Reading what the code changed
 
-The code under test writes on the test's connection, so the rows are in the
-database already. The instance the test holds, though, still carries the values
-it was loaded with. Read the row again:
+The code under test writes on the test's connection, so the rows are already
+in the database. The instance your test holds, though, still carries the
+values it was loaded with. Read the row again:
 
 ```python
 @pytest.mark.db
@@ -452,8 +451,8 @@ def test_revoking_a_token(token: Token) -> None:
 
 ## Seeding data
 
-A fixture that writes is like any other: it runs inside the test's transaction
-and goes away with it.
+A fixture that writes data is like any other: it runs inside the test's
+transaction and rolls back with it.
 
 ```python
 @pytest.fixture
@@ -464,24 +463,23 @@ def team() -> Team:
 ## What the test's block changes
 
 A rolled-back block is an ordinary transaction, so the code under test behaves
-the way it does in production. And it is already inside one:
+as it does in production. Inside it:
 
 - A nested `transaction()` joins the test's transaction on the same connection
-  rather than opening its own. Its commit flushes, and what survives is up to
-  the test's block alone.
-- `autocommit()` joins as well and commits nothing inside the block, since it
-  takes the connection the test bound, and everything written rolls back with
-  the rest. It takes an `AUTOCOMMIT` connection of its own only when nothing is
-  bound.
+  instead of opening its own. Its commit only flushes, and only the test's
+  block commits or rolls back for real.
+- `autocommit()` joins as well and commits nothing inside the block: it uses
+  the connection the test bound, so everything written rolls back with the
+  rest. It opens an `AUTOCOMMIT` connection of its own only when no connection
+  is bound.
 - A nested `transaction(rollback=True)` takes a savepoint, so it undoes its own
   writes and leaves the test's alone.
 - A session that rolls *itself* back, through `session_factory()` and then
   `rollback()`, ends the whole transaction. The block then raises
-  `TransactionRolledBackError`, having nothing left to commit. That is how
-  production behaves rather than a test rig, and a block meant to fail on its
-  own wants `transaction(savepoint=True)`.
+  `TransactionRolledBackError`, because there is nothing left to commit.
+  Production behaves the same way; a block that should fail on its own needs
+  `transaction(savepoint=True)`.
 
-The point is for the tests to behave the way production does. A rig that
-forgives what production will not is only postponing the failure until release.
+The point of all this is that your tests behave the way production does.
 
-Next: [debugging](debugging.md) for watching the same queries outside a test.
+Next: [debugging](debugging.md), for watching the same queries outside a test.
