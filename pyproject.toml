@@ -3,10 +3,31 @@ name = "sqlakit"
 version = "0.1.0"
 description = "A toolkit for SQLAlchemy applications."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Anton Ruhlov", email = "antonruhlov@gmail.com" }]
+keywords = ["sqlalchemy", "database", "orm", "sql", "asyncio"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 requires-python = ">=3.11"
 dependencies = [
     "sqlalchemy[asyncio]>=2.0.43",
 ]
+
+[project.urls]
+Repository = "https://github.com/antonrh/sqlakit"
+Documentation = "https://github.com/antonrh/sqlakit"
 
 [project.optional-dependencies]
 sql = [

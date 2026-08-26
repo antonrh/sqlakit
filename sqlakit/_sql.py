@@ -334,7 +334,8 @@ def _statement(
 
     """
     if label is not None:
-        sql = f"/* {label} */\n{sql}"
+        # `*/` in a name would end the comment early and leak into the SQL.
+        sql = f"/* {label.replace('*/', '* /')} */\n{sql}"
     clause = sa.text(sql)
     stray = set(clause._bindparams) - set(params)  # noqa: SLF001
     if stray:

@@ -144,6 +144,14 @@ async def test_from_statement(db: Database) -> None:
 
         assert [user.name for user in users] == ["a", "b"]
 
+        # `first()` is a read, not a build, so a raw statement answers it too.
+        first = await User.query.from_statement(
+            sa.text("SELECT * FROM users ORDER BY id")
+        ).first()
+
+        assert first is not None
+        assert first.name == "a"
+
 
 @pytest.mark.anyio
 async def test_first_and_one_or_none(db: Database) -> None:
@@ -182,6 +190,11 @@ async def test_only_columns(db: Database) -> None:
         assert await query.only_columns(User.name).all() == list("abcde")
         assert await query.only_columns(User.id, User.name).first() == (1, "a")
         assert await query.only_columns(User.name).where(User.id == 3).one() == "c"
+
+        with pytest.raises(InstanceNotFoundError):
+            await query.only_columns(User.name).where(User.id == 99).one()
+        with pytest.raises(MultipleInstancesFoundError):
+            await User.query.only_columns(User.name).one()
 
 
 @pytest.mark.anyio

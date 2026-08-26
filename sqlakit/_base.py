@@ -343,7 +343,11 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         _context: Any,  # noqa: ANN401
         _many: bool,  # noqa: FBT001
     ) -> None:
-        started = connection.info["sqlakit_started"].pop()
+        starts = connection.info.get("sqlakit_started")
+        if not starts:
+            # Began before the listeners attached; no start time, not recorded.
+            return
+        started = starts.pop()
         recordings = self._recordings.get()
         if not recordings or statement.split(None, 1)[0].upper() in _CONTROL:
             return
@@ -811,10 +815,10 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
                 ``InvalidDatabaseConfigError``.
 
         """
-        self.route(*routers)
         if not isinstance(url, Mapping):
             self._reject_if_connected()
             super().__init__(url, engine_args, session_args, templates, **parts)
+            self.route(*routers)
             return
         if DEFAULT_ALIAS not in url:
             raise MissingDefaultDatabaseError(tuple(url))
@@ -842,6 +846,7 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
             for alias, (database_url, config) in configs.items()
             if alias != DEFAULT_ALIAS
         }
+        self.route(*routers)
 
     def _reject_if_connected(self) -> None:
         connected = self.is_configured and self._engine is not None

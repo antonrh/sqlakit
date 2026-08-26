@@ -160,10 +160,14 @@ class SQLRows(BaseSQLQuery[RowT, "Database"]):
     async def execute(self) -> int:
         """Run it for what it writes, and return how many rows it touched.
 
-        For a template that inserts, updates or deletes.
+        For a template that inserts, updates or deletes. Inside a transaction the
+        write is part of it and the block decides. In a block with no transaction
+        the call commits for itself, as ORM writes do.
         """
         connection = await self._connection()
         result = await connection.execute(self.statement)
+        if not self.db.in_transaction():
+            await connection.commit()
         return result.rowcount
 
     async def _rows(self) -> Result[Any] | ScalarResult[Any]:

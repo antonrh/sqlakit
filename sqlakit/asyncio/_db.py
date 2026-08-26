@@ -355,9 +355,10 @@ class Database(BaseDatabase[AsyncConnection, AsyncSession]):
 
     async def dispose(self, *, close: bool = True) -> None:
         """Dispose of the engine and its connection pool."""
-        if self._engine is not None:
-            await self._engine.dispose(close=close)
-            self._engine = None
+        with self._engine_lock:
+            engine, self._engine = self._engine, None
+        if engine is not None:
+            await engine.dispose(close=close)
 
     async def __aenter__(self) -> Self:
         return self

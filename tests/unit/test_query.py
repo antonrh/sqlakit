@@ -7,6 +7,7 @@ from typing import Any, Self
 import pytest
 import sqlalchemy as sa
 import sqlalchemy.event
+from dirty_equals import IsStr
 from sqlalchemy.orm import (
     DeclarativeBase,
     InstrumentedAttribute,
@@ -221,6 +222,16 @@ def test_a_cursor_from_elsewhere_is_refused(db: Database) -> None:
                 limit=2, cursor=page.next_cursor
             )
 
+        with pytest.raises(InvalidCursorError):
+            # Same arity and type, but a different ordering.
+            User.query.order_by(User.name).cursor_page(limit=2, cursor=page.next_cursor)
+
+        with pytest.raises(InvalidCursorError):
+            # The same column, ordered the other way.
+            User.query.order_by(User.id.desc()).cursor_page(
+                limit=2, cursor=page.next_cursor
+            )
+
 
 def test_cursor_page_reads_backwards(db: Database) -> None:
     with db.connect():
@@ -291,8 +302,9 @@ def test_a_cursor_carries_the_way_it_goes(db: Database) -> None:
 
     assert page.next_cursor is not None
     assert second.previous_cursor is not None
-    assert _payload(page.next_cursor) == {"v": [2], "b": False}
-    assert _payload(second.previous_cursor) == {"v": [3], "b": True}
+    ordering = IsStr(regex="[0-9a-f]{8}")
+    assert _payload(page.next_cursor) == {"v": [2], "b": False, "o": ordering}
+    assert _payload(second.previous_cursor) == {"v": [3], "b": True, "o": ordering}
 
 
 def test_a_page_whose_rows_are_gone_is_empty(db: Database) -> None:
@@ -344,6 +356,17 @@ def test_from_statement(db: Database) -> None:
         ).all()
 
         assert [user.name for user in users] == ["b", "d"]
+
+
+def test_a_statement_hands_over_its_first_row(db: Database) -> None:
+    # `first()` is a read, not a build, so a raw statement answers it too.
+    with db.connect():
+        query = User.query.from_statement(sa.text("SELECT * FROM users ORDER BY id"))
+
+        first = query.first()
+
+        assert first is not None
+        assert first.name == "a"
 
 
 def test_a_statement_cannot_be_built_on(db: Database) -> None:
@@ -513,6 +536,29 @@ def test_force_removes_the_rows(memos: Database) -> None:
 
     with memos.connect():
         assert _rows(memos) == 1  # the other tenant's row
+
+
+class Chore(Base, SoftDeletes):
+    """Soft deletes without a `__query_filter__` of its own."""
+
+    __tablename__ = "chores"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+
+def test_get_hides_a_marked_row_without_a_query_filter(db: Database) -> None:
+    with db.transaction():
+        Chore(id=1).save()
+    with db.transaction():
+        Chore.query.get_one(1).delete()
+
+    with db.transaction():
+        assert Chore.query.get(1) is None
+        assert Chore.query.with_deleted().get(1) is not None
+        assert Chore.query.only_deleted().get(1) is not None
+
+        with pytest.raises(NoResultFound):
+            Chore.query.get_one(1)
 
 
 class Team(Base):

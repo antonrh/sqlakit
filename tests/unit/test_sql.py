@@ -351,6 +351,15 @@ def test_a_template_that_writes_says_how_many_rows_it_touched(db: Database) -> N
         assert db.sql("users/active.sql", team="green").all() != []
 
 
+def test_a_writing_template_commits_when_no_transaction_is_open(db: Database) -> None:
+    # With no transaction to leave the commit to, `execute()` commits for itself.
+    with db.connect():
+        db.sql("users/rename_team.sql", to="green", from_="red").execute()
+
+    with db.connect():
+        assert db.sql("users/active.sql", team="green").all() != []
+
+
 def test_a_value_is_never_escaped_on_its_way_to_the_database(db: Database) -> None:
     # The templates are Jinja, which escapes what it renders — but a value is
     # bound rather than rendered, so it reaches the database as it was.

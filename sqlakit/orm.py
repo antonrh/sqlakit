@@ -144,7 +144,9 @@ class Query(BaseQuery[ModelT]):
 
     def first(self) -> ModelT | None:
         """Return the first matching row, or None."""
-        return self._rows(self.limit(1)._executable()).first()  # noqa: SLF001
+        # A raw statement takes no limit; the first row is read off the result.
+        query = self if self._statement is not None else self.limit(1)
+        return self._rows(query._executable()).first()  # noqa: SLF001
 
     def latest(self, column: Any) -> ModelT | None:  # noqa: ANN401
         """Return the row with the greatest value in this column, or None.
@@ -633,7 +635,7 @@ class SoftDeletes(BaseSoftDeletes):
     note.restore()  # and back
     ```
 
-    Reads skip the marked rows, `get()` included. `Note.query.unfiltered()`
+    Reads skip the marked rows, `get()` included. `Note.query.with_deleted()`
     reads them, and `delete(force=True)` removes them for good.
     """
 
