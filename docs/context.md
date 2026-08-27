@@ -322,8 +322,8 @@ Inside another block it runs on the connection already bound, like
 
 ## Blocks under `asyncio` {#async}
 
-`sqlakit.asyncio` has the same blocks. Opening a block is awaited, reading the
-context is not:
+`sqlakit.asyncio` has the same blocks, and needs the `sqlakit[asyncio]` extra.
+Opening a block is awaited, reading the context is not:
 
 ```python
 async with db.transaction():

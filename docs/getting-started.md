@@ -170,6 +170,7 @@ nothing to clean up in between.
 - [Models](models.md) if you want instances that save themselves. The layer is
   optional.
 - [Blocks under asyncio](context.md#async) if you're here for `FastAPI` or
-  `aiohttp`: the same blocks from `sqlakit.asyncio`, with `await`.
+  `aiohttp`: the same blocks from `sqlakit.asyncio`, with `await`. Install
+  `sqlakit[asyncio]` for those.
 - [Examples](examples.md): complete programs, including a `FastAPI` service and
   `SQLModel` with and without the model layer.

@@ -42,7 +42,7 @@ depend on the worker count, the database's limits and the dialect.
 ## The async API {#async}
 
 `sqlakit.asyncio` mirrors `sqlakit`. Calls that reach the database are
-awaited. Reading the context is not.
+awaited. Reading the context is not. Requires the `sqlakit[asyncio]` extra.
 
 | synchronous | `asyncio` |
 | --- | --- |

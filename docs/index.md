@@ -299,7 +299,7 @@ with db.using("replica").connect():
 ## The async API
 
 The async API is identical: the same classes, the same methods. Only the import
-changes:
+changes. It needs the `sqlakit[asyncio]` extra:
 
 ```python
 from sqlakit.asyncio import Database

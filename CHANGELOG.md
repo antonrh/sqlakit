@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The async API now needs the `sqlakit[asyncio]` extra, which brings in
+  `greenlet`. `SQLAlchemy` 2.1 stops installing `greenlet` by default and
+  keeps it in an extra of its own, so an async application has to ask for it.
+  Plain `sqlakit` no longer builds `greenlet` from source on platforms that
+  have no wheel for it either.
+
 ## 0.2.0
 
 ### Changed
