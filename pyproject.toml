@@ -22,7 +22,7 @@ classifiers = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "sqlalchemy[asyncio]>=2.0.22",
+    "sqlalchemy>=2.0.22",
 ]
 
 [project.urls]
@@ -30,6 +30,11 @@ Repository = "https://github.com/antonrh/sqlakit"
 Documentation = "https://github.com/antonrh/sqlakit"
 
 [project.optional-dependencies]
+# `greenlet`, which the async API runs on. `SQLAlchemy` installs it by itself
+# where a wheel exists, and this asks for it on the platforms where none does.
+asyncio = [
+    "sqlalchemy[asyncio]>=2.0.22",
+]
 sql = [
     "jinja2sql>=0.11.0",
 ]

@@ -1612,10 +1612,13 @@ name = "sqlakit"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [
-    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "sqlalchemy" },
 ]
 
 [package.optional-dependencies]
+asyncio = [
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
 debug = [
     { name = "sqlparse" },
 ]
@@ -1660,10 +1663,11 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "jinja2sql", marker = "extra == 'sql'", specifier = ">=0.11.0" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.22" },
+    { name = "sqlalchemy", specifier = ">=2.0.22" },
+    { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'asyncio'", specifier = ">=2.0.22" },
     { name = "sqlparse", marker = "extra == 'debug'", specifier = ">=0.6.0" },
 ]
-provides-extras = ["sql", "debug"]
+provides-extras = ["asyncio", "sql", "debug"]
 
 [package.metadata.requires-dev]
 dev = [
