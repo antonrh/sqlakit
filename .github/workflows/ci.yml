@@ -99,3 +99,41 @@ jobs:
         run: uv sync --all-extras
       - name: Run integration tests
         run: uv run pytest tests/integration
+
+  sqlalchemy:
+    name: Tests on SQLAlchemy ${{ matrix.sqlalchemy.name }}
+    runs-on: ubuntu-latest
+    # The lockfile tests one release. These are the ends of the range:
+    # the floor `pyproject.toml` promises, and what is coming next.
+    continue-on-error: ${{ matrix.sqlalchemy.upcoming || false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        sqlalchemy:
+          # Keep in step with the floor in `pyproject.toml`.
+          - name: '2.0.22'
+            install: 'uv pip install "sqlalchemy[asyncio]==2.0.22"'
+          - name: main
+            upcoming: true
+            # Through pip: `uv pip` refuses SQLAlchemy's own metadata, which
+            # declares one extra twice. The dependents pinned below 2.1 warn
+            # here and go on working.
+            install: |
+              uv pip install pip
+              uv run --no-sync python -m pip install --upgrade \
+                "sqlalchemy @ git+https://github.com/sqlalchemy/sqlalchemy"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --all-extras
+      - name: Take SQLAlchemy ${{ matrix.sqlalchemy.name }}
+        run: ${{ matrix.sqlalchemy.install }}
+      - name: Run tests
+        run: uv run --no-sync pytest --ignore=tests/integration

@@ -22,7 +22,8 @@ classifiers = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "sqlalchemy[asyncio]>=2.0.43",
+    # 2.0.22 is where `Session.get_one` arrives, which the documentation uses.
+    "sqlalchemy[asyncio]>=2.0.22",
 ]
 
 [project.urls]
@@ -79,17 +80,12 @@ docs = [
     "mkdocs>=1.6.1,<2",
     "mkdocs-material>=9.7.7",
     "mkdocstrings[python]>=1.0.6",
-    # mkdocstrings lays out long signatures with it, and leaves them on one
-    # line without it, so the built site would differ from a local build.
     "ruff>=0.16.3",
 ]
 
 [tool.pytest.ini_options]
 filterwarnings = [
     "error",
-    # Python 3.13 made `sqlite3.Connection` warn when the garbage collector
-    # finalises it instead of a `close()`. The tests build throwaway databases
-    # by the dozen and let them go, so this says nothing about the code.
     "ignore:unclosed database:ResourceWarning",
 ]
 # `pytester` runs the conftest the docs show, in a session of its own.
