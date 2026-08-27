@@ -24,6 +24,9 @@ def client() -> Iterator[TestClient]:
     async def empty_the_table() -> None:
         async with fastapi_app.db.transaction() as conn:
             await conn.execute(sa.delete(fastapi_app.User))
+        # The lifespan disposed of the engine this reopened; dispose again, or
+        # its `aiosqlite` thread outlives the test.
+        await fastapi_app.db.dispose()
 
     anyio.run(empty_the_table)
 

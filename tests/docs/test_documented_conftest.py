@@ -40,6 +40,15 @@ class User(Model):
 """
 
 
+DISPOSE = """
+
+@pytest.fixture(scope="session", autouse=True)
+async def _dispose() -> AsyncIterator[None]:
+    yield
+    await db.dispose()
+"""
+
+
 def _block(title: str) -> str:
     """Return the code of the block the page gives that title."""
     pattern = rf'```python title="{re.escape(title)}"\n(.*?)```'
@@ -94,7 +103,10 @@ def test_the_documented_async_conftest_isolates_each_test(
     pytester: pytest.Pytester,
 ) -> None:
     _project(pytester, asyncio=True)
-    pytester.makeconftest(_block("conftest.py (asyncio)"))
+    # The documented conftest, and a teardown of this harness's own: the
+    # sub-session runs in this process, and an `aiosqlite` engine holds a
+    # thread until something disposes of it.
+    pytester.makeconftest(_block("conftest.py (asyncio)") + DISPOSE)
     pytester.makepyfile(
         test_users="""
         import pytest
