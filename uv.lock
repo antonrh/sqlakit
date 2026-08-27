@@ -1660,7 +1660,7 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "jinja2sql", marker = "extra == 'sql'", specifier = ">=0.11.0" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.43" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.22" },
     { name = "sqlparse", marker = "extra == 'debug'", specifier = ">=0.6.0" },
 ]
 provides-extras = ["sql", "debug"]
