@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1
+
+### Documentation
+
+- The README shows Active Record after the registry, on the registry's own
+  `db`, and says that `SQLModel` classes work with or without the model layer.
+
 ## 0.3.0
 
 ### Changed
