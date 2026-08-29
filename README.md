@@ -153,44 +153,6 @@ feed.next_cursor
 feed.previous_cursor
 ```
 
-## Active Record
-
-An instance saves and deletes itself, and the query is available on the class:
-
-```python
-from sqlalchemy.orm import Mapped, mapped_column
-
-from sqlakit import Database
-from sqlakit.orm import Model
-
-db = Database("postgresql+psycopg://localhost/app")
-
-
-class Note(Model):
-    __tablename__ = "notes"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    text: Mapped[str]
-
-
-Note.set_db(db)
-
-with db.transaction():
-    note = Note(text="ada")
-    note.save()
-
-    Note.query.where(Note.text == "ada").all()
-    note.delete()
-```
-
-`set_db()` binds a model to a database. Call it on a base class and every model
-under it inherits the binding. With the global `db` from the section below you
-don't need it at all: the model uses the global registry automatically.
-
-This layer is optional. Everything else works on plain `SQLAlchemy` models, so
-if saving belongs in your repositories or services, skip `sqlakit.orm`
-entirely.
-
 ## Testing
 
 A test runs inside a transaction that rolls back at the end, so nothing the
@@ -295,6 +257,42 @@ db.configure(
 with db.using("replica").connect():
     list_users()  # the models read the replica
 ```
+
+## Active Record
+
+An instance saves and deletes itself, and the query is available on the class.
+A model on the registry needs no wiring of its own:
+
+```python
+from sqlalchemy.orm import Mapped, mapped_column
+
+from sqlakit import db
+from sqlakit.orm import Model
+
+
+class Note(Model):
+    __tablename__ = "notes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    text: Mapped[str]
+
+
+with db.transaction():
+    note = Note(text="ada").save()
+
+    Note.query.where(Note.text == "ada").all()
+    note.delete()
+```
+
+A model that belongs on another database in the registry names its alias with
+`__db__ = "warehouse"`. With a `Database` of your own, `set_db()` binds the
+model to it. Either goes on a base class, and every model under it inherits
+the binding.
+
+This layer is optional. Everything else works on plain `SQLAlchemy` models, so
+if saving belongs in your repositories or services, skip `sqlakit.orm`
+entirely. `SQLModel` classes are `SQLAlchemy` models, and work either way: the
+[examples](examples/) show both.
 
 ## The async API
 

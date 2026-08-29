@@ -30,8 +30,6 @@ Repository = "https://github.com/antonrh/sqlakit"
 Documentation = "https://github.com/antonrh/sqlakit"
 
 [project.optional-dependencies]
-# `greenlet`, which the async API runs on. `SQLAlchemy` installs it by itself
-# where a wheel exists, and this asks for it on the platforms where none does.
 asyncio = [
     "sqlalchemy[asyncio]>=2.0.22",
 ]
