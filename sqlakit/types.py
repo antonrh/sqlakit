@@ -1,16 +1,30 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+    from pathlib import Path
 
     import sqlalchemy as sa
     from sqlalchemy.engine import Connection, Engine
     from sqlalchemy.orm import Query, Session
     from sqlalchemy.pool import Pool
 
-__all__ = ["DatabaseConfig", "EngineArgs", "SessionArgs", "UrlParts"]
+    from ._sql import Templates
+
+__all__ = [
+    "DatabaseConfig",
+    "EngineArgs",
+    "SessionArgs",
+    "TemplatesLike",
+    "UrlParts",
+]
+
+# Quoted, so importing this module never reaches `Templates` and the
+# `jinja2sql` behind it.
+TemplatesLike: TypeAlias = "str | Path | Sequence[str | Path] | Templates"
+"""Where a database's SQL templates are: a path, several, or the object."""
 
 
 class EngineArgs(TypedDict, total=False):

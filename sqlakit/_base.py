@@ -49,16 +49,18 @@ from .exceptions import (
 if TYPE_CHECKING:
     import logging
     from collections.abc import Iterator, Sequence
-    from pathlib import Path
 
     from sqlalchemy.engine import Engine
 
-    from ._sql import Templates
-    from .types import DatabaseConfig, EngineArgs, SessionArgs, UrlParts
+    from .types import (
+        DatabaseConfig,
+        EngineArgs,
+        SessionArgs,
+        TemplatesLike,
+        UrlParts,
+    )
 
     RouterFunction = Callable[[type[Any]], str | None]
-    TemplatesLike = str | Path | Sequence[str | Path] | Templates
-    """Where a database's SQL templates are: a path, several, or the object."""
 
 __all__ = [
     "DEFAULT_ALIAS",

@@ -198,6 +198,8 @@ The same classes, awaited.
 
 ::: sqlakit.SessionArgs
 
+::: sqlakit.TemplatesLike
+
 ::: sqlakit.DatabaseConfig
 
 ::: sqlakit.UrlParts
