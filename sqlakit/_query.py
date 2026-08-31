@@ -10,6 +10,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
+    Literal,
     NamedTuple,
     Protocol,
     Self,
@@ -35,6 +36,7 @@ from .exceptions import (
     BulkQueryError,
     InstanceNotFoundError,
     InvalidCursorError,
+    InvalidNullsError,
     InvalidOrderFieldError,
     KeyLookupError,
     MultipleInstancesFoundError,
@@ -58,6 +60,7 @@ __all__ = [
     "BaseQuery",
     "CaseInsensitive",
     "CursorPage",
+    "NullsPlacement",
     "OrderBy",
     "Page",
     "one_row",
@@ -126,6 +129,44 @@ def _compile_case_insensitive(
     if collation is None:
         return compiler.process(sa.func.lower(element.element), **kw)
     return compiler.process(sa.collate(element.element, collation), **kw)
+
+
+class NullsPlacement(sa.ColumnElement[Any]):
+    """An ordering clause that says where the rows with no value go.
+
+    `MySQL` and `MariaDB` have no `NULLS FIRST` or `NULLS LAST`, so there the
+    clause comes out as the two the standard is short for: whether the value is
+    null, and then the ordering itself.
+    """
+
+    inherit_cache = True
+
+    def __init__(self, clause: Any, *, last: bool) -> None:  # noqa: ANN401
+        self.clause = clause
+        self.last = last
+        self.type = sa.Boolean()
+
+
+@compiles(NullsPlacement)
+def _compile_nulls(
+    element: NullsPlacement,
+    compiler: Any,  # noqa: ANN401
+    **kw: Any,  # noqa: ANN401
+) -> str:
+    placed = sa.nulls_last if element.last else sa.nulls_first
+    return compiler.process(placed(element.clause), **kw)
+
+
+@compiles(NullsPlacement, "mysql")
+def _compile_nulls_for_mysql(
+    element: NullsPlacement,
+    compiler: Any,  # noqa: ANN401
+    **kw: Any,  # noqa: ANN401
+) -> str:
+    column, _ = _direction(element.clause)
+    empty = column.is_(None)
+    first = compiler.process(empty.asc() if element.last else empty.desc(), **kw)
+    return f"{first}, {compiler.process(element.clause, **kw)}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -471,6 +512,7 @@ class BaseQuery(Generic[ModelT]):
         self,
         *criteria: Any,  # noqa: ANN401
         ignore_case: bool | Sequence[str] = False,
+        nulls: Literal["first", "last"] | None = None,
     ) -> Self:
         """Order the rows, by columns or by the sort strings a request carries.
 
@@ -503,14 +545,26 @@ class BaseQuery(Generic[ModelT]):
         A model sorts by its own mapped columns. `orderable` says how to offer
         others, including fields that are not columns at all.
 
+        ``nulls`` says where the rows with no value go, `first` or `last`. It
+        fills in only what neither the sort string nor the model said, which the
+        database would otherwise answer for itself, differently by dialect and
+        by direction.
+
         Raises:
             UnknownOrderFieldError: if a string names a field the model does not
                 offer.
+            InvalidNullsError: if ``nulls`` is neither `first` nor `last`.
 
         """
         self._reject_statement("order_by")
         return self.with_select(
-            ordered(self._select, self._orderable(), criteria, ignore_case=ignore_case)
+            ordered(
+                self._select,
+                self._orderable(),
+                criteria,
+                ignore_case=ignore_case,
+                nulls=nulls,
+            )
         )
 
     def _directed(self, column: Any, *, descending: bool) -> Any:  # noqa: ANN401
@@ -897,16 +951,20 @@ def ordered(
     criteria: Iterable[Any],
     *,
     ignore_case: bool | Sequence[str] = False,
+    nulls: str | None = None,
 ) -> sa.Select[Any]:
     """Return the statement ordered by these criteria, joining what they need.
 
     Raises:
         UnknownOrderFieldError: if a name is not one of the fields.
+        InvalidNullsError: if ``nulls`` is neither "first" nor "last".
 
     """
     named = list(_flatten(criteria))
     if not named:
         return select
+    if nulls not in (None, "first", "last"):
+        raise InvalidNullsError(nulls)
     folded = (
         ignore_case
         if isinstance(ignore_case, bool)
@@ -915,7 +973,7 @@ def ordered(
     clauses = []
     for criterion in named:
         clause, join = _ordering_for(criterion, fields, ignore_case=folded)
-        clauses.append(clause)
+        clauses.append(_with_nulls(clause, nulls))
         if join is not None:
             target, onclause = join
             if not _is_joined(select, target):
@@ -986,6 +1044,8 @@ def _direction(clause: Any) -> tuple[sa.ColumnElement[Any], bool]:  # noqa: ANN4
     """
     descending = False
     element = clause
+    while isinstance(element, NullsPlacement):
+        element = element.clause
     while isinstance(element, sa.UnaryExpression):
         if element.modifier is operators.desc_op:
             descending = True
@@ -1023,10 +1083,25 @@ def _sort_clause(column: Any, *, descending: bool, nulls: str | None) -> Any:  #
     clause = sa.desc(column) if descending else sa.asc(column)
     nulls = nulls or wrapped
     if nulls == "nulls_first":
-        return clause.nulls_first()
+        return NullsPlacement(clause, last=False)
     if nulls == "nulls_last":
-        return clause.nulls_last()
+        return NullsPlacement(clause, last=True)
     return clause
+
+
+def _with_nulls(clause: Any, nulls: str | None) -> Any:  # noqa: ANN401
+    """Return the clause with the nulls it was told to put where it asked for none.
+
+    A sort string and a field the model declared each say where their nulls go.
+    This fills in only what neither of them said, which the database would
+    otherwise answer for itself, differently by dialect and by direction.
+    """
+    if nulls is None:
+        return clause
+    _, already = _split_nulls(clause)
+    if already is not None:
+        return clause
+    return NullsPlacement(clause, last=nulls == "last")
 
 
 def _flatten(criteria: Iterable[Any]) -> Iterator[Any]:
@@ -1093,6 +1168,8 @@ def _case_insensitive(column: Any) -> Any:  # noqa: ANN401
 
 def _split_nulls(column: Any) -> tuple[Any, str | None]:  # noqa: ANN401
     """Separate a column from the nulls modifier wrapped around it."""
+    if isinstance(column, NullsPlacement):
+        return column.clause, "nulls_last" if column.last else "nulls_first"
     if isinstance(column, sa.UnaryExpression):
         if column.modifier is operators.nulls_last_op:
             return column.element, "nulls_last"

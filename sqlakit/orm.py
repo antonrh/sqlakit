@@ -6,6 +6,7 @@ from typing import (
     Any,
     ClassVar,
     Generic,
+    Literal,
     Self,
     TypeVar,
     cast,
@@ -421,6 +422,7 @@ class ColumnQuery(Generic[RowT]):
         self,
         *criteria: Any,  # noqa: ANN401
         ignore_case: bool | Sequence[str] = False,
+        nulls: Literal["first", "last"] | None = None,
     ) -> Self:
         """Order the rows, by columns or by the names the model offers."""
         return self.with_select(
@@ -429,6 +431,7 @@ class ColumnQuery(Generic[RowT]):
                 orderable(self.model),
                 criteria,
                 ignore_case=ignore_case,
+                nulls=nulls,
             )
         )
 

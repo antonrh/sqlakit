@@ -14,6 +14,7 @@ __all__ = [
     "InstanceNotFoundError",
     "InvalidCursorError",
     "InvalidDatabaseConfigError",
+    "InvalidNullsError",
     "InvalidOrderFieldError",
     "MissingConnectionError",
     "MissingDatabaseUrlError",
@@ -385,6 +386,18 @@ class InvalidOrderFieldError(SQLAKitError, TypeError):
             f"column of it. Name a column, or return a mapping from a "
             f"classmethod for fields that are not columns."
         )
+
+
+class InvalidNullsError(SQLAKitError, ValueError):
+    """Raised when ``order_by`` is told to put the nulls somewhere else.
+
+    ``nulls`` says where the rows with no value go, and SQL has two answers to
+    that.
+    """
+
+    def __init__(self, nulls: object) -> None:
+        self.nulls = nulls
+        super().__init__(f"`nulls` is `first` or `last`, not `{nulls!r}`.")
 
 
 class KeyLookupError(SQLAKitError, TypeError):

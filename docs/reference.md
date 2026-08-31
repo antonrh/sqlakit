@@ -272,6 +272,8 @@ except ValueError:  # any bad input, from here or elsewhere
 
 ::: sqlakit.InvalidOrderFieldError
 
+::: sqlakit.InvalidNullsError
+
 ::: sqlakit.UncomparableOrderingError
 
 ::: sqlakit.InvalidCursorError
