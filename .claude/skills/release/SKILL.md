@@ -43,6 +43,7 @@ reading anything. If it can stop working, that is a minor.
 
 ```console
 $ uv version 0.4.0           # writes pyproject.toml and uv.lock
+                             # then write the CHANGELOG.md entry
 $ git commit -a -m "Release 0.4.0"
 $ git push
 $ git tag 0.4.0 && git push origin 0.4.0
@@ -52,16 +53,17 @@ The tag has no `v`, matching every tag before it. The workflow refuses a tag
 that does not match the version in `pyproject.toml`, so a mistyped one fails
 before anything is published.
 
-## The notes are the changelog
+## The changelog
 
-There is no `CHANGELOG.md`, on purpose. The GitHub release notes hold that
-history, and duplicating them in the repository means keeping two of them in
-step. Write the notes on the release itself.
+`CHANGELOG.md` holds the history, newest version first, and the entry goes in
+before the tag. A version has the date it was released and the headings it
+needs, `Added`, `Changed`, `Fixed`, `Removed`, in that order and none of them
+empty.
 
-Write them for someone deciding whether to upgrade, in the voice the
-documentation uses. Group them by what a reader cares about, a bullet a change,
-and link each to the pull request it came from, the way the generated list
-does:
+The GitHub release notes carry the same text, so write it once and paste it.
+Write it for someone deciding whether to upgrade, in the voice the
+documentation uses. On the release, link each change to the pull request it
+came from, the way the generated list does:
 
 ```markdown
 ## Breaking
