@@ -1253,6 +1253,43 @@ def test_order_by_takes_a_list_of_fields(reports: Database) -> None:
         assert [r.id for r in by_list] == [r.id for r in by_args] == [1, 3, 2]
 
 
+class Account(Base):
+    __tablename__ = "accounts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_name: Mapped[str] = mapped_column(default="")
+    username: Mapped[str] = mapped_column(default="")
+    created_at: Mapped[str] = mapped_column(default="")
+
+
+def _ordering(*criteria: Any, **options: Any) -> str:
+    statement = str(Account.query.order_by(*criteria, **options).select)
+    return statement.replace("\n", " ").split("ORDER BY")[1].strip()
+
+
+@pytest.mark.parametrize(
+    "asked",
+    ["created_at", "createdAt", "CreatedAt", "CREATED_AT"],
+)
+def test_order_by_finds_a_field_whichever_case_it_is_asked_in(asked: str) -> None:
+    assert _ordering(f"{asked}.desc") == "accounts.created_at DESC"
+
+
+def test_order_by_takes_the_field_named_exactly(reports: Database) -> None:
+    assert _ordering("username") == "accounts.username ASC"
+    assert _ordering("user_name") == "accounts.user_name ASC"
+
+
+def test_order_by_refuses_a_name_that_could_be_two_fields() -> None:
+    with pytest.raises(UnknownOrderFieldError, match="userName"):
+        Account.query.order_by("userName")
+
+
+def test_ignore_case_names_the_field_in_any_case(reports: Database) -> None:
+    assert _ordering("createdAt", ignore_case=["created_at"]).startswith("lower(")
+    assert _ordering("created_at", ignore_case=["createdAt"]).startswith("lower(")
+
+
 def test_ignore_case_compares_without_regard_to_case(reports: Database) -> None:
     with reports.transaction():
         cased = Report.query.order_by("name").all()
