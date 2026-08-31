@@ -374,3 +374,5 @@ test from an empty file. The rest is under [`docs/`](docs/):
 [debugging](docs/debugging.md), [multiple databases](docs/routing.md) and
 [the reference](docs/reference.md). Complete example apps live in
 [`examples/`](examples/), and each one is run by the test suite.
+
+What changed in each version is in the [changelog](CHANGELOG.md).
