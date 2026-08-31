@@ -125,8 +125,15 @@ async with db.using(shard_of(tenant)).transaction():
 ```
 
 `using()` only affects models without a `__db__` of their own. A model that
-sets one, such as the warehouse model above, keeps using its own database. The
-redirection ends with the block, including when the block ends by raising.
+sets one, such as the warehouse model above, keeps using its own database, and
+still needs a block open on it. Naming a database is not opening one:
+
+```python
+with db.using("replica").transaction():
+    Report(name="quarterly").save()  # MissingSessionError: the warehouse has no block
+```
+
+The redirection ends with the block, including when the block ends by raising.
 
 You can also enter `db.using("replica")` on its own: it only redirects and
 doesn't open anything. Use it when the block is opened somewhere else:
@@ -135,6 +142,52 @@ doesn't open anything. Use it when the block is opened somewhere else:
 with db.using("replica"):
     ...
 ```
+
+## A registry of the model's own
+
+Everything above uses `sqlakit.db`, the registry an application imports. A set
+of models can have its own instead, which nothing else in the process shares.
+`__dbs__` is where a model looks an alias up:
+
+```python
+from sqlalchemy.orm import DeclarativeBase
+
+from sqlakit import Database, Databases
+from sqlakit.orm import ModelMixin
+
+
+class Base(ModelMixin, DeclarativeBase):
+    __dbs__ = Databases()
+```
+
+`register_db` fills it from databases you built yourself, a shard that only
+exists once the application runs among them:
+
+```python
+Base.register_db(Database(DB1_URL), alias="db1")
+Base.register_db(Database(DB2_URL), alias="db2")
+
+with Base.dbs.using("db2").transaction():
+    User(name="ada").save()
+```
+
+The first call builds the registry, so the `__dbs__ = Databases()` line above
+only matters when you configure it from settings as well. `Base.dbs` reaches
+it, and a model under `Base` registers into the same one.
+
+The rules are the ones above: `__db__`, then the routers, then the open
+`using()` block. `using()` moves a model left on the default alias, which is
+what makes the switch work.
+
+`register` does the same on a registry directly, for a shard added while the
+application runs:
+
+```python
+db.register("shard-7", Database(SHARD_URL))
+```
+
+The alias has to be free, and cannot be `default`, which the registry itself
+is.
 
 ## Which database is this query on?
 

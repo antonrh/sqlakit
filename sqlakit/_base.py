@@ -35,9 +35,11 @@ from ._recording import (
 from ._routing import Router, as_router
 from .exceptions import (
     DEFAULT_ALIAS,
+    AliasInUseError,
     ConflictingDatabaseUrlError,
     DatabaseAlreadyConfiguredError,
     DatabaseNotConfiguredError,
+    DefaultAliasError,
     MissingConnectionError,
     MissingDatabaseUrlError,
     MissingDefaultDatabaseError,
@@ -692,6 +694,31 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
 
     def __contains__(self, alias: str) -> bool:
         return alias == DEFAULT_ALIAS or alias in self._aliased
+
+    def register(self, alias: str, db: DatabaseT) -> None:
+        """Put a database already built under an alias.
+
+        `configure` takes settings and builds the databases. This takes one you
+        built yourself, for a shard that only exists once the application is
+        running, or for a registry that never reads settings at all:
+
+        ```python
+        db.register("shard-7", Database(SHARD_URL))
+        ```
+
+        The alias has to be free. Replacing one under a name already in use
+        would leave the code that holds the old database talking to it.
+
+        Raises:
+            AliasInUseError: if another database holds that alias.
+            DefaultAliasError: if the alias is `default`, which this registry is.
+
+        """
+        if alias == DEFAULT_ALIAS:
+            raise DefaultAliasError
+        if alias in self._aliased:
+            raise AliasInUseError(alias)
+        self._aliased[alias] = self._named(alias, db)
 
     @contextmanager
     def recording(
