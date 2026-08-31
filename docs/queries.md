@@ -255,6 +255,17 @@ Name the collation you created, once, before any query runs:
 sqlakit.CASE_INSENSITIVE_COLLATIONS["postgresql"] = "und-ci-ai"
 ```
 
+Naming it is not only about the index. `lower()` folds the case and leaves the
+accents, so `résumé` and `resume` stay apart, while a collation like
+`und-ci-ai` folds both. The two order differently, and only the collation reads
+an index built on the column.
+
+That matters most when the column already carries a case-insensitive collation
+from the schema. Ordering by it is already case-insensitive, so `ignore_case`
+has nothing to add, and calling it without naming the collation replaces what
+the schema does with `lower()`. Name the same collation the column has, or
+leave `ignore_case` off.
+
 A collation decides the whole order, the alphabet and the accents along with
 the case. This one is asked for only by `ignore_case`. To sort by another,
 name it on the column in `__orderable__`: `cls.name.collate("de-DE")`.

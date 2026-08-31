@@ -154,6 +154,22 @@ def test_a_page_and_a_cursor_walk_the_same_rows(db: Database) -> None:
         assert seen == ["e5", "e4", "e3", "e2", "e1"]
 
 
+def test_ignore_case_orders_without_regard_to_case(db: Database) -> None:
+    with db.transaction():
+        for index, name in enumerate(["B", "a", "C", "b"], 1):
+            Event.query.get_one(index).name = name
+
+    with db.connect():
+        ordered = (
+            Event.query.where(Event.id <= 4)
+            .order_by("name", ignore_case=True)
+            .order_by("id")
+            .all()
+        )
+
+        assert [event.name for event in ordered] == ["a", "B", "b", "C"]
+
+
 def test_chunks_walk_the_whole_table(db: Database) -> None:
     with db.connect():
         batches = [

@@ -10,7 +10,7 @@ import sqlalchemy as sa
 import sqlalchemy.exc
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from sqlakit import Database
+from sqlakit import CASE_INSENSITIVE_COLLATIONS, Database
 from sqlakit.asyncio.orm import ModelMixin as AsyncModelMixin
 from sqlakit.orm import ModelMixin, SoftDeletes
 
@@ -74,6 +74,45 @@ def test_a_cursor_carries_an_aware_datetime_back(events: Database) -> None:
                 break
 
         assert seen == ["e5", "e4", "e3", "e2", "e1"]
+
+
+@pytest.fixture
+def collated(events: Database) -> Iterator[Database]:
+    """A `name` that carries a collation ignoring both case and accents."""
+    with events.transaction() as conn:
+        conn.exec_driver_sql(
+            """CREATE COLLATION "und-ci-ai"
+               (provider = icu, locale = 'und-u-ks-level1', deterministic = false)"""
+        )
+        conn.exec_driver_sql(
+            'ALTER TABLE events ALTER COLUMN name TYPE text COLLATE "und-ci-ai"'
+        )
+    CASE_INSENSITIVE_COLLATIONS["postgresql"] = "und-ci-ai"
+    yield events
+    del CASE_INSENSITIVE_COLLATIONS["postgresql"]
+    with events.transaction() as conn:
+        # The collation cannot go while the column still refers to it.
+        conn.exec_driver_sql(
+            'ALTER TABLE events ALTER COLUMN name TYPE text COLLATE "default"'
+        )
+        conn.exec_driver_sql('DROP COLLATION IF EXISTS "und-ci-ai"')
+
+
+def test_a_named_collation_is_what_ignore_case_orders_by(collated: Database) -> None:
+    with collated.transaction():
+        for index, name in enumerate(["resume", "Résumé", "RESUME", "apple"], 1):
+            Event.query.get_one(index).name = name
+
+    with collated.connect():
+        query = (
+            Event.query.where(Event.id <= 4)
+            .order_by("name", ignore_case=True)
+            .order_by("id")
+        )
+
+        assert 'COLLATE "und-ci-ai"' in str(query.select.compile(collated.engine))
+        # The collation ignores the accents too, so the three tie and `id` breaks it.
+        assert [event.id for event in query.all()] == [4, 1, 2, 3]
 
 
 def test_a_soft_delete_is_stamped_by_the_database(events: Database) -> None:
