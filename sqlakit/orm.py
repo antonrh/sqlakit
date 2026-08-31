@@ -420,11 +420,16 @@ class ColumnQuery(Generic[RowT]):
     def order_by(
         self,
         *criteria: Any,  # noqa: ANN401
-        ci_fields: Sequence[str] = (),
+        ignore_case: bool | Sequence[str] = False,
     ) -> Self:
         """Order the rows, by columns or by the names the model offers."""
         return self.with_select(
-            ordered(self._select, orderable(self.model), criteria, ci_fields)
+            ordered(
+                self._select,
+                orderable(self.model),
+                criteria,
+                ignore_case=ignore_case,
+            )
         )
 
     def distinct(self) -> Self:

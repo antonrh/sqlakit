@@ -231,15 +231,36 @@ db.query(User).order_by(sort)  # a string, or None when the client sent nothing
 db.query(User).order_by(["team", "name.desc"])  # or several
 ```
 
-`ci_fields` lists the fields that are compared case-insensitively:
+`ignore_case` compares text without regard to case:
 
 ```python
-db.query(User).order_by("name", ci_fields=["name"]).page(limit=20)
+db.query(User).order_by("name", ignore_case=True).page(limit=20)
 ```
 
-The ordering then uses `lower(name)`, which cursor pagination doesn't support.
-Use it with `page`, or put the `lower()` expression into `__orderable__`,
-where you can back it with an index.
+Pass the names instead of `True` when the sort arrived as a list and only some
+of it is compared that way:
+
+```python
+db.query(User).order_by(sort, ignore_case=["name"]).page(limit=20)
+```
+
+How that is compared is the database's to decide. `SQLite` orders by
+`name COLLATE NOCASE`, and a database with no collation named for it orders by
+`lower(name)`. The dialect is read when the query runs, not when it is built,
+so the same model works on `SQLite` under test and on the server it ships to.
+
+Name the collation you created, once, before any query runs:
+
+```python
+sqlakit.CASE_INSENSITIVE_COLLATIONS["postgresql"] = "und-ci-ai"
+```
+
+A collation decides the whole order, the alphabet and the accents along with
+the case. This one is asked for only by `ignore_case`. To sort by another,
+name it on the column in `__orderable__`: `cls.name.collate("de-DE")`.
+
+Cursor pagination doesn't support either form, so use `ignore_case` with
+`page`.
 
 By default you can order by **every mapped column**, and `__orderable__`
 narrows that to the names an API may send:

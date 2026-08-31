@@ -85,6 +85,8 @@ supported.
 
 ::: sqlakit.DEFAULT_ALIAS
 
+::: sqlakit.CASE_INSENSITIVE_COLLATIONS
+
 ## Transaction
 
 ::: sqlakit.Transaction

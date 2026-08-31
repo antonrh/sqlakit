@@ -1253,29 +1253,44 @@ def test_order_by_takes_a_list_of_fields(reports: Database) -> None:
         assert [r.id for r in by_list] == [r.id for r in by_args] == [1, 3, 2]
 
 
-def test_ci_fields_compare_without_regard_to_case(reports: Database) -> None:
+def test_ignore_case_compares_without_regard_to_case(reports: Database) -> None:
     with reports.transaction():
         cased = Report.query.order_by("name").all()
-        folded = Report.query.order_by("name", ci_fields=["name"]).all()
+        folded = Report.query.order_by("name", ignore_case=True).all()
 
         assert [r.name for r in cased] == ["B", "a", "c"]
         assert [r.name for r in folded] == ["a", "B", "c"]
 
 
-def test_ci_fields_leave_a_column_that_is_not_text_alone(reports: Database) -> None:
+def test_ignore_case_takes_the_fields_it_applies_to(reports: Database) -> None:
+    sort = ["label", "name"]  # as a request sends it
+    statement = str(Report.query.order_by(sort, ignore_case=["name"]).select)
+
+    assert "lower(reports.name)" in statement
+    assert "lower(reports.title)" not in statement
+
+
+def test_ignore_case_leaves_a_column_that_is_not_text_alone(reports: Database) -> None:
     with reports.transaction():
-        ordered = Report.query.order_by("score.desc", ci_fields=["score"]).all()
+        ordered = Report.query.order_by("score.desc", ignore_case=True).all()
 
         assert [r.id for r in ordered] == [1, 3, 2]
 
 
-def test_ci_fields_keep_where_a_field_puts_its_nulls(reports: Database) -> None:
+def test_ignore_case_keeps_where_a_field_puts_its_nulls(reports: Database) -> None:
     with reports.transaction():
-        last = Report.query.order_by("label", ci_fields=["label"]).all()
-        first = Report.query.order_by("headline", ci_fields=["headline"]).all()
+        last = Report.query.order_by("label", ignore_case=True).all()
+        first = Report.query.order_by("headline", ignore_case=True).all()
 
         assert [r.id for r in last] == [3, 1, 2]
         assert [r.id for r in first] == [2, 3, 1]
+
+
+def test_ignore_case_asks_the_dialect_how(reports: Database) -> None:
+    query = Report.query.order_by("name", ignore_case=True)
+
+    assert 'reports.name COLLATE "NOCASE"' in str(query.select.compile(reports.engine))
+    assert "lower(reports.name)" in str(query.select)
 
 
 # without the model layer
