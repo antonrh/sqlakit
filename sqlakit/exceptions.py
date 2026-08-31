@@ -5,11 +5,13 @@ from sqlalchemy.orm import exc as sa_exc
 DEFAULT_ALIAS = "default"
 
 __all__ = [
+    "AliasInUseError",
     "AsyncFilterError",
     "BulkQueryError",
     "ConflictingDatabaseUrlError",
     "DatabaseAlreadyConfiguredError",
     "DatabaseNotConfiguredError",
+    "DefaultAliasError",
     "DetachedInstanceError",
     "InstanceNotFoundError",
     "InvalidCursorError",
@@ -105,6 +107,27 @@ class DatabaseAlreadyConfiguredError(SQLAKitError, RuntimeError):
         ),
     ) -> None:
         super().__init__(message)
+
+
+class AliasInUseError(SQLAKitError, ValueError):
+    """Raised when registering a database under an alias another one holds."""
+
+    def __init__(self, alias: str) -> None:
+        self.alias = alias
+        super().__init__(
+            f"`{alias}` is already registered. Dispose of that database before "
+            "registering another under the same name."
+        )
+
+
+class DefaultAliasError(SQLAKitError, ValueError):
+    """Raised when registering a database as the default one."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            f"`{DEFAULT_ALIAS}` is the registry itself. Configure it with "
+            "`configure()`, and register the others under their own names."
+        )
 
 
 class UnknownDatabaseError(SQLAKitError, KeyError):

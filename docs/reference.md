@@ -252,6 +252,10 @@ except ValueError:  # any bad input, from here or elsewhere
 
 ::: sqlakit.UnknownDatabaseError
 
+::: sqlakit.AliasInUseError
+
+::: sqlakit.DefaultAliasError
+
 ::: sqlakit.MissingDefaultDatabaseError
 
 ::: sqlakit.InvalidDatabaseConfigError

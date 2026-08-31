@@ -1,7 +1,7 @@
 """Which database a model uses, and who decides."""
 
 from collections.abc import Iterator
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 import sqlalchemy as sa
@@ -11,7 +11,9 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 import sqlakit
 from sqlakit import (
     DEFAULT_ALIAS,
+    AliasInUseError,
     Database,
+    DefaultAliasError,
     MissingDefaultDatabaseError,
     MissingSessionError,
     Router,
@@ -364,3 +366,111 @@ def test_a_router_that_names_a_database_nobody_configured(databases: None) -> No
         _ = User.db
 
     sqlakit.db.route()
+
+
+def test_the_routers_are_cleared_by_route_with_nothing(databases: None) -> None:
+    sqlakit.db.route(lambda _model: "warehouse")
+    sqlakit.db.route()
+
+    assert User.db is sqlakit.db["default"]
+
+
+def test_the_inner_block_decides_while_it_is_open(databases: None) -> None:
+    with sqlakit.db.using("replica"):
+        with sqlakit.db.using("warehouse"):
+            assert User.db is sqlakit.db["warehouse"]
+
+        assert User.db is sqlakit.db["replica"]
+
+
+def test_a_model_that_lives_elsewhere_still_needs_a_block(databases: None) -> None:
+    # `using` chooses a database, it does not open one.
+    with sqlakit.db.using("replica").transaction(), pytest.raises(MissingSessionError):
+        Event(id=1, what="nowhere to write it").save()
+
+
+def test_a_router_wins_over_the_block(databases: None) -> None:
+    sqlakit.db.route(lambda model: "warehouse" if model is User else None)
+
+    with sqlakit.db.using("replica"):
+        assert User.db is sqlakit.db["warehouse"]
+
+    sqlakit.db.route()
+
+
+def test_a_template_is_not_a_model_so_no_router_reaches_it(databases: None) -> None:
+    sqlakit.db.route(lambda _model: "warehouse")
+    _write("replica", "on the replica")
+
+    with sqlakit.db["replica"].connect():
+        rows = sqlakit.db["replica"].sql.from_string("SELECT name FROM users").scalars()
+
+        assert rows.all() == ["on the replica"]
+
+    sqlakit.db.route()
+
+
+# a registry of the model's own
+
+
+@pytest.fixture
+def own() -> Iterator[type[ModelMixin]]:
+    class OwnBase(ModelMixin, DeclarativeBase):
+        pass
+
+    class Note(OwnBase):
+        __tablename__ = "notes"
+
+        id: Mapped[int] = mapped_column(primary_key=True)
+        text: Mapped[str]
+
+    OwnBase.register_db(Database("sqlite://"), alias="db1")
+    OwnBase.register_db(Database("sqlite://"), alias="db2")
+    for alias in ("db1", "db2"):
+        with OwnBase.dbs[alias].transaction() as conn:
+            OwnBase.metadata.create_all(conn)
+    yield Note
+    OwnBase.dbs.dispose()
+
+
+def test_register_db_leaves_the_importable_registry_alone(own: type[Any]) -> None:
+    assert own.dbs is not sqlakit.db
+    assert own.dbs.aliases == (DEFAULT_ALIAS, "db1", "db2")
+
+
+def test_a_registered_alias_takes_the_writes_and_the_reads(own: type[Any]) -> None:
+    with own.dbs.using("db1").transaction():
+        own(id=1, text="written to db1").save()
+    with own.dbs.using("db2").transaction():
+        own(id=1, text="written to db2").save()
+
+    with own.dbs.using("db1").connect():
+        assert [note.text for note in own.query.all()] == ["written to db1"]
+    with own.dbs.using("db2").connect():
+        assert [note.text for note in own.query.all()] == ["written to db2"]
+
+
+def test_a_registered_alias_answers_a_query_that_names_it(own: type[Any]) -> None:
+    with own.dbs.using("db2").transaction():
+        own(id=1, text="written to db2").save()
+
+    with own.dbs["db2"].connect():
+        assert [note.text for note in own.query.using("db2").all()] == [
+            "written to db2"
+        ]
+
+
+def test_an_alias_another_database_holds(own: type[Any]) -> None:
+    with pytest.raises(AliasInUseError, match="db2"):
+        own.register_db(Database("sqlite://"), alias="db2")
+
+
+def test_the_default_alias_is_the_registry_itself(own: type[Any]) -> None:
+    with pytest.raises(DefaultAliasError, match=DEFAULT_ALIAS):
+        own.register_db(Database("sqlite://"), alias=DEFAULT_ALIAS)
+
+
+def test_a_model_under_one_registers_into_the_same_registry(own: type[Any]) -> None:
+    own.register_db(Database("sqlite://"), alias="db3")
+
+    assert own.dbs.aliases == (DEFAULT_ALIAS, "db1", "db2", "db3")

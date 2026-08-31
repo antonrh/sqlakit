@@ -37,7 +37,9 @@ __all__ = [
     "BaseModel",
     "BaseSoftDeletes",
     "DatabaseDescriptor",
+    "DatabaseRegistry",
     "DatabaseSource",
+    "RegistryDescriptor",
     "db_for",
     "resolve_alias",
     "soft_delete_column",
@@ -66,6 +68,19 @@ class DatabaseDescriptor(Generic[DatabaseT]):
         return cast("DatabaseT", db_for(owner))
 
 
+class DatabaseRegistry(DatabaseSource, Protocol):
+    """A source that also takes a database under an alias it does not have."""
+
+    def register(self, alias: str, db: Any) -> None: ...  # noqa: ANN401
+
+
+class RegistryDescriptor:
+    """Reads ``__dbs__``, on the class as well as on an instance."""
+
+    def __get__(self, instance: object | None, owner: type[Any]) -> Any:  # noqa: ANN401
+        return owner.__dbs__
+
+
 class BaseModel(Generic[DatabaseT]):
     """What the sync and async models share: everything that is not IO.
 
@@ -87,6 +102,7 @@ class BaseModel(Generic[DatabaseT]):
     # Unannotated on purpose: an annotation here reads as a field to
     # pydantic, and SQLModel models would refuse to build.
     db = DatabaseDescriptor[DatabaseT]()
+    dbs = RegistryDescriptor()
 
     @classmethod
     def set_db(cls, db: str | DatabaseT) -> None:
@@ -102,6 +118,37 @@ class BaseModel(Generic[DatabaseT]):
         ```
         """
         cls.__db__ = db
+
+    @classmethod
+    def register_db(cls, db: DatabaseT, *, alias: str) -> None:
+        """Give this model a database under an alias, and the ones under it too.
+
+        The registry it goes in belongs to this class, so nothing global is
+        configured and two sets of models can each have their own `shard`:
+
+        ```python
+        Base.register_db(Database(DB1_URL), alias="db1")
+        Base.register_db(Database(DB2_URL), alias="db2")
+
+        with Base.dbs.using("db2").transaction():
+            User(name="ada").save()
+        ```
+
+        Which database a model resolves to is still `__db__`, the routers and
+        the open `using()` block, in that order. A model left on the default
+        alias follows `using()`, which is what makes the switch above work.
+
+        Raises:
+            AliasInUseError: if another database holds that alias.
+            DefaultAliasError: if the alias is `default`.
+
+        """
+        if _owns_no_registry(cls):
+            # A registry of its own: registering into the importable one would
+            # configure it for every model in the process. A class under one
+            # that already has its own registers into that one.
+            cls.__dbs__ = type(cls.__dbs__)()
+        cast("DatabaseRegistry", cls.__dbs__).register(alias, db)
 
     def update(self, values: Mapping[str, Any]) -> Self:
         """Set these fields on this instance, and return it.
@@ -185,6 +232,16 @@ class BaseModel(Generic[DatabaseT]):
             raise DetachedInstanceError(type(self).__name__)
         if state.transient:
             self.db.session.add(self)
+
+
+def _owns_no_registry(model: type[Any]) -> bool:
+    """Whether this model still looks its aliases up in the importable registry."""
+    declared = next(
+        (klass for klass in model.__mro__ if "__dbs__" in klass.__dict__), None
+    )
+    return (
+        declared is None or declared.__module__.split(".")[0] == __name__.split(".")[0]
+    )
 
 
 def db_for(model: type[Any]) -> BaseDatabase[Any, Any]:
