@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.1
+
+### Added
+
+- `Model.register_db(db, alias=...)` puts a database under an alias in a
+  registry belonging to that class, so a set of models can have several
+  databases without configuring the importable registry. `Model.dbs` reaches
+  it, and a model under that class registers into the same one.
+- `Databases.register(alias, db)` does the same on a registry directly, for a
+  shard that only exists once the application runs. The alias has to be free,
+  `AliasInUseError` otherwise, and cannot be `default`, `DefaultAliasError`.
+
+### Documentation
+
+- `__dbs__`, where a model looks an alias up, is written down, along with the
+  registry of its own that `register_db` builds.
+- `using()` says that a model living somewhere else still needs a block open on
+  its own database. The page said both halves, two sections apart.
+
 ## 0.5.0
 
 ### Changed
