@@ -26,6 +26,7 @@ from sqlakit import (
     Database,
     InstanceNotFoundError,
     InvalidCursorError,
+    InvalidNullsError,
     InvalidOrderFieldError,
     KeyLookupError,
     MultipleInstancesFoundError,
@@ -1288,6 +1289,52 @@ def test_order_by_refuses_a_name_that_could_be_two_fields() -> None:
 def test_ignore_case_names_the_field_in_any_case(reports: Database) -> None:
     assert _ordering("createdAt", ignore_case=["created_at"]).startswith("lower(")
     assert _ordering("created_at", ignore_case=["createdAt"]).startswith("lower(")
+
+
+def test_nulls_says_where_the_empty_values_go(reports: Database) -> None:
+    with reports.transaction():
+        # `id` is not one of the fields this model offers by name.
+        first = Report.query.order_by("score", nulls="first").order_by(Report.id).all()
+        last = Report.query.order_by("score", nulls="last").order_by(Report.id).all()
+
+        assert [report.id for report in first] == [2, 1, 3]
+        assert [report.id for report in last] == [1, 3, 2]
+
+
+def test_a_sort_string_keeps_the_nulls_it_names(reports: Database) -> None:
+    statement = str(
+        Report.query.order_by("score.desc.nulls_first", nulls="last").select
+    )
+
+    assert "NULLS FIRST" in statement
+
+
+def test_a_declared_field_keeps_the_nulls_it_has(reports: Database) -> None:
+    # `headline` is `sa.nulls_first(title)` in `__orderable__`.
+    statement = str(Report.query.order_by("headline", nulls="last").select)
+
+    assert "NULLS FIRST" in statement
+
+
+def test_nulls_reaches_a_column_as_well(reports: Database) -> None:
+    statement = str(Report.query.order_by(Report.score.desc(), nulls="last").select)
+
+    assert "NULLS LAST" in statement
+
+
+def test_nulls_takes_only_first_or_last(reports: Database) -> None:
+    with pytest.raises(InvalidNullsError, match="first"):
+        Report.query.order_by("score", nulls="middle")  # ty: ignore[invalid-argument-type]
+
+
+def test_nulls_asks_the_dialect_how_to_say_it(reports: Database) -> None:
+    from sqlalchemy.dialects import mysql, postgresql
+
+    query = Report.query.order_by("score", nulls="last")
+
+    # `MySQL` has no NULLS LAST, so the clause becomes the two it stands for.
+    assert "NULLS LAST" in str(query.select.compile(dialect=postgresql.dialect()))
+    assert "IS NULL ASC" in str(query.select.compile(dialect=mysql.dialect()))
 
 
 def test_ignore_case_compares_without_regard_to_case(reports: Database) -> None:

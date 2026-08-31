@@ -42,6 +42,7 @@ class Event(Base, SoftDeletes):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(sa.String(50))
     at: Mapped[datetime]
+    score: Mapped[int | None] = mapped_column(default=None)
 
 
 class AsyncBase(AsyncModelMixin, DeclarativeBase):
@@ -152,6 +153,19 @@ def test_a_page_and_a_cursor_walk_the_same_rows(db: Database) -> None:
                 break
 
         assert seen == ["e5", "e4", "e3", "e2", "e1"]
+
+
+def test_nulls_go_where_they_are_told(db: Database) -> None:
+    with db.transaction():
+        for index in (1, 3, 5):
+            Event.query.get_one(index).score = index
+
+    with db.connect():
+        last = Event.query.order_by("score", nulls="last").order_by(Event.id).all()
+        first = Event.query.order_by("score", nulls="first").order_by(Event.id).all()
+
+        assert [event.id for event in last] == [1, 3, 5, 2, 4]
+        assert [event.id for event in first] == [2, 4, 1, 3, 5]
 
 
 def test_ignore_case_orders_without_regard_to_case(db: Database) -> None:

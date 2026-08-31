@@ -236,6 +236,32 @@ The name is matched whichever case convention it arrives in, so an API sending
 to translate. A model offering both spellings is matched exactly, and a name
 that could mean either is refused.
 
+`nulls` says where the rows with no value go:
+
+```python
+db.query(User).order_by(sort, nulls="last").page(limit=20)
+```
+
+Without it the database answers, and the answer differs by dialect and by
+direction. The same table, ordered by a column whose second row is `NULL`:
+
+| | `ASC` | `DESC` |
+| --- | --- | --- |
+| `SQLite`, `MySQL` | `NULL` first | `NULL` last |
+| `PostgreSQL` | `NULL` last | `NULL` first |
+
+So a sort that reads one way in a test on `SQLite` reads the other way in
+production, and the empty rows change ends whenever a client reverses the
+direction.
+
+`nulls` fills in only what nothing else said. A sort string that names its own
+(`sent_at.desc.nulls_first`) keeps it, and so does a field the model declared
+as `sa.nulls_first(...)`.
+
+`MySQL` and `MariaDB` have no `NULLS FIRST` or `NULLS LAST`. There the clause
+comes out as the two the standard is short for, `v IS NULL ASC, v ASC`, so the
+rows land in the same places as everywhere else.
+
 `ignore_case` compares text without regard to case:
 
 ```python
