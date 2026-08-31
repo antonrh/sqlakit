@@ -19,6 +19,7 @@ from typing import (
 
 import sqlalchemy as sa
 from sqlalchemy import exc as sa_exc
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import (
     InstrumentedAttribute,
     contains_eager,
@@ -53,7 +54,9 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.selectable import ForUpdateParameter
 
 __all__ = [
+    "CASE_INSENSITIVE_COLLATIONS",
     "BaseQuery",
+    "CaseInsensitive",
     "CursorPage",
     "OrderBy",
     "Page",
@@ -62,6 +65,21 @@ __all__ = [
     "orderable",
     "ordered",
 ]
+
+CASE_INSENSITIVE_COLLATIONS: dict[str, str] = {"sqlite": "NOCASE"}
+"""The collation `ignore_case` orders by, per dialect.
+
+A dialect with no entry orders by `lower(...)`, which every database has.
+Name the collation you created, once, before any query runs:
+
+```python
+sqlakit.CASE_INSENSITIVE_COLLATIONS["postgresql"] = "und-ci-ai"
+```
+
+A collation decides the whole order, the alphabet and the accents along with
+the case. This one is asked for only by `ignore_case`. To sort by another,
+name it on the column: `User.name.collate("de-DE")`.
+"""
 
 HIDDEN = "hidden"
 """The rows a soft delete marked are left out, as a read does by default."""
@@ -76,6 +94,33 @@ ModelT = TypeVar("ModelT")
 OtherT = TypeVar("OtherT")
 RowT = TypeVar("RowT")
 RowT_co = TypeVar("RowT_co", covariant=True)
+
+
+class CaseInsensitive(sa.ColumnElement[Any]):
+    """A column compared without regard to case, however the dialect does it.
+
+    The dialect is the one the query runs on, not the one it was built against,
+    so a model ordered this way works on `SQLite` under test and on the server
+    it ships to.
+    """
+
+    inherit_cache = True
+
+    def __init__(self, element: sa.ColumnElement[Any]) -> None:
+        self.element = element
+        self.type = element.type
+
+
+@compiles(CaseInsensitive)
+def _compile_case_insensitive(
+    element: CaseInsensitive,
+    compiler: Any,  # noqa: ANN401
+    **kw: Any,  # noqa: ANN401
+) -> str:
+    collation = CASE_INSENSITIVE_COLLATIONS.get(compiler.dialect.name)
+    if collation is None:
+        return compiler.process(sa.func.lower(element.element), **kw)
+    return compiler.process(sa.collate(element.element, collation), **kw)
 
 
 @dataclass(frozen=True, slots=True)
@@ -420,7 +465,7 @@ class BaseQuery(Generic[ModelT]):
     def order_by(
         self,
         *criteria: Any,  # noqa: ANN401
-        ci_fields: Sequence[str] = (),
+        ignore_case: bool | Sequence[str] = False,
     ) -> Self:
         """Order the rows, by columns or by the sort strings a request carries.
 
@@ -437,9 +482,18 @@ class BaseQuery(Generic[ModelT]):
         A `None` is skipped and a list is taken apart, so a request that names no
         sort, or several, passes straight through.
 
-        ``ci_fields`` names the fields to compare without regard to case. It sorts by
-        `lower(...)`, which a cursor cannot page: use it with `page`, or fold the case
-        in ``__orderable__`` and index it.
+        ``ignore_case`` compares text without regard to case: `True` for every
+        field of this call, or the names of the ones it applies to, for a sort
+        that arrived as a list:
+
+        ```python
+        User.query.order_by("name", ignore_case=True)
+        User.query.order_by(request.sort, ignore_case=["name"])
+        ```
+
+        Which SQL that becomes is the dialect's to decide, and
+        `CASE_INSENSITIVE_COLLATIONS` names the collation. A cursor cannot page
+        it: use it with `page`.
 
         A model sorts by its own mapped columns. `orderable` says how to offer
         others, including fields that are not columns at all.
@@ -451,7 +505,7 @@ class BaseQuery(Generic[ModelT]):
         """
         self._reject_statement("order_by")
         return self.with_select(
-            ordered(self._select, self._orderable(), criteria, ci_fields)
+            ordered(self._select, self._orderable(), criteria, ignore_case=ignore_case)
         )
 
     def _directed(self, column: Any, *, descending: bool) -> Any:  # noqa: ANN401
@@ -836,7 +890,8 @@ def ordered(
     select: sa.Select[Any],
     fields: Mapping[str, Any],
     criteria: Iterable[Any],
-    ci_fields: Sequence[str] = (),
+    *,
+    ignore_case: bool | Sequence[str] = False,
 ) -> sa.Select[Any]:
     """Return the statement ordered by these criteria, joining what they need.
 
@@ -847,10 +902,9 @@ def ordered(
     named = list(_flatten(criteria))
     if not named:
         return select
-    ci = set(ci_fields)
     clauses = []
     for criterion in named:
-        clause, join = _ordering_for(criterion, fields, ci)
+        clause, join = _ordering_for(criterion, fields, ignore_case=ignore_case)
         clauses.append(clause)
         if join is not None:
             target, onclause = join
@@ -862,7 +916,8 @@ def ordered(
 def _ordering_for(
     criterion: Any,  # noqa: ANN401
     fields: Mapping[str, Any],
-    ci: set[str],
+    *,
+    ignore_case: bool | Sequence[str],
 ) -> tuple[Any, Any]:
     """Return the clause a criterion stands for, and the table it needs."""
     if isinstance(criterion, OrderBy):
@@ -877,7 +932,7 @@ def _ordering_for(
         column, join = field.expression, (field.join, field.on)
     else:
         column, join = field, None
-    if name in ci:
+    if ignore_case is True or (ignore_case and name in ignore_case):
         column = _case_insensitive(column)
     return _sort_clause(column, descending=descending, nulls=nulls), join
 
@@ -990,11 +1045,11 @@ def _selectable_of(target: Any) -> Any:  # noqa: ANN401
 
 
 def _case_insensitive(column: Any) -> Any:  # noqa: ANN401
-    """Return the column folded to one case, if it holds text at all."""
+    """Return the column compared without regard to case, if it holds text."""
     inner, nulls = _split_nulls(column)
     if not isinstance(getattr(inner, "type", None), sa.String):
         return column
-    folded = sa.func.lower(inner)
+    folded = CaseInsensitive(inner)
     if nulls == "nulls_last":
         return sa.nulls_last(folded)
     if nulls == "nulls_first":

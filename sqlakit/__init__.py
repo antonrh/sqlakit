@@ -1,7 +1,7 @@
 from ._base import DEFAULT_ENGINE_ARGS, DEFAULT_SESSION_ARGS
 from ._db import Database, RetryingTransaction, Transaction
 from ._discovery import import_models, import_string
-from ._query import CursorPage, OrderBy, Page
+from ._query import CASE_INSENSITIVE_COLLATIONS, CursorPage, OrderBy, Page
 from ._recording import Recording, Statement
 from ._registry import Databases, db
 from ._routing import Router
@@ -43,6 +43,7 @@ from .exceptions import (
 from .types import DatabaseConfig, EngineArgs, QueryStats, SessionArgs, UrlParts
 
 __all__ = [
+    "CASE_INSENSITIVE_COLLATIONS",
     "DEFAULT_ALIAS",
     "DEFAULT_ENGINE_ARGS",
     "DEFAULT_SESSION_ARGS",
