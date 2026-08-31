@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.5.0
+
+### Changed
+
+- `order_by` now matches a field name whichever case convention it arrives in,
+  so an API sending `userName` orders by the `user_name` the model declares. A
+  model that offers both spellings is matched exactly, and a name that could
+  mean either is refused.
+- A name in `ignore_case` that the model does not offer now raises
+  `UnknownOrderFieldError`. It used to be ignored, which left the column
+  comparing with regard to case and said nothing.
+
+### Added
+
+- `order_by` takes `nulls`, `first` or `last`, saying where the rows with no
+  value go. Without it the database decides, and `PostgreSQL` is the mirror of
+  `SQLite` and `MySQL`. It fills in only what neither the sort string nor the
+  model said.
+- `TemplatesLike` is a public type, in `sqlakit.types` beside `EngineArgs` and
+  `SessionArgs`. It names what `Database(templates=...)` takes.
+- `InvalidNullsError`, raised when `nulls` is neither `first` nor `last`.
+
+### Fixed
+
+- Ordering with `nulls_first` or `nulls_last` no longer raises a syntax error
+  on `MySQL` and `MariaDB`, which have neither. The placement is compiled for
+  the dialect that runs the query, so all of them put the rows in the same
+  places.
+
 Every released version, and what changed in it. The same text is on the
 [releases page](https://github.com/antonrh/sqlakit/releases).
 
