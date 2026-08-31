@@ -231,6 +231,11 @@ db.query(User).order_by(sort)  # a string, or None when the client sent nothing
 db.query(User).order_by(["team", "name.desc"])  # or several
 ```
 
+The name is matched whichever case convention it arrives in, so an API sending
+`userName` orders by the `user_name` the model declares, and you have nothing
+to translate. A model offering both spellings is matched exactly, and a name
+that could mean either is refused.
+
 `ignore_case` compares text without regard to case:
 
 ```python

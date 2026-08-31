@@ -902,9 +902,14 @@ def ordered(
     named = list(_flatten(criteria))
     if not named:
         return select
+    folded = (
+        ignore_case
+        if isinstance(ignore_case, bool)
+        else {_field_named(one, fields) for one in ignore_case}
+    )
     clauses = []
     for criterion in named:
-        clause, join = _ordering_for(criterion, fields, ignore_case=ignore_case)
+        clause, join = _ordering_for(criterion, fields, ignore_case=folded)
         clauses.append(clause)
         if join is not None:
             target, onclause = join
@@ -917,24 +922,48 @@ def _ordering_for(
     criterion: Any,  # noqa: ANN401
     fields: Mapping[str, Any],
     *,
-    ignore_case: bool | Sequence[str],
+    ignore_case: bool | set[str],
 ) -> tuple[Any, Any]:
     """Return the clause a criterion stands for, and the table it needs."""
     if isinstance(criterion, OrderBy):
         return criterion.expression, (criterion.join, criterion.on)
     if not isinstance(criterion, str):
         return criterion, None
-    name, descending, nulls = _parse_sort_field(criterion)
-    if name not in fields:
-        raise UnknownOrderFieldError(name, list(fields))
+    asked, descending, nulls = _parse_sort_field(criterion)
+    name = _field_named(asked, fields)
     field = fields[name]
     if isinstance(field, OrderBy):
         column, join = field.expression, (field.join, field.on)
     else:
         column, join = field, None
-    if ignore_case is True or (ignore_case and name in ignore_case):
+    if ignore_case is True or (ignore_case is not False and name in ignore_case):
         column = _case_insensitive(column)
     return _sort_clause(column, descending=descending, nulls=nulls), join
+
+
+def _field_named(asked: str, fields: Mapping[str, Any]) -> str:
+    """Return the field a request means, whichever case convention it uses.
+
+    An API sends `userName` for a `user_name` the model declares. The spelling
+    is a matter of convention on either side, so it is not what tells a field
+    from one nobody offers.
+
+    Raises:
+        UnknownOrderFieldError: if no field, or more than one, answers to it.
+
+    """
+    if asked in fields:
+        return asked
+    folded = _fold_name(asked)
+    matches = [name for name in fields if _fold_name(name) == folded]
+    if len(matches) != 1:
+        raise UnknownOrderFieldError(asked, list(fields))
+    return matches[0]
+
+
+def _fold_name(name: str) -> str:
+    """Return a name with the case and the separators taken out of it."""
+    return name.replace("_", "").replace("-", "").lower()
 
 
 def _chain(loader: Any, keys: Sequence[Any]) -> Any:  # noqa: ANN401
