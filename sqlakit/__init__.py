@@ -40,7 +40,14 @@ from .exceptions import (
     UnknownOrderFieldError,
     UnorderedPageError,
 )
-from .types import DatabaseConfig, EngineArgs, QueryStats, SessionArgs, UrlParts
+from .types import (
+    DatabaseConfig,
+    EngineArgs,
+    QueryStats,
+    SessionArgs,
+    TemplatesLike,
+    UrlParts,
+)
 
 __all__ = [
     "CASE_INSENSITIVE_COLLATIONS",
@@ -85,6 +92,7 @@ __all__ = [
     "Statement",
     "StrayParameterError",
     "TemplateNotFoundError",
+    "TemplatesLike",
     "Transaction",
     "TransactionRolledBackError",
     "UncomparableOrderingError",
