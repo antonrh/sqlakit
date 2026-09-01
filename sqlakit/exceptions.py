@@ -9,6 +9,7 @@ __all__ = [
     "AsyncFilterError",
     "BulkQueryError",
     "ConflictingDatabaseUrlError",
+    "ConflictingJoinError",
     "DatabaseAlreadyConfiguredError",
     "DatabaseNotConfiguredError",
     "DefaultAliasError",
@@ -423,6 +424,18 @@ class InvalidOrderFieldError(SQLAKitError, TypeError):
             f"`{model}.__orderable__` names `{field}`, which is not a mapped "
             f"column of it. Name a column, or return a mapping from a "
             f"classmethod for fields that are not columns."
+        )
+
+
+class ConflictingJoinError(SQLAKitError, TypeError):
+    """Raised when two ordering fields join one table on different conditions."""
+
+    def __init__(self, table: str) -> None:
+        self.table = table
+        super().__init__(
+            f"Two ordering fields join `{table}` on different conditions, and a "
+            f"statement joins it once. Alias it with `sqlalchemy.orm.aliased` so "
+            f"that each field joins an alias of its own."
         )
 
 

@@ -280,6 +280,8 @@ except ValueError:  # any bad input, from here or elsewhere
 
 ::: sqlakit.UnknownOrderFieldError
 
+::: sqlakit.ConflictingJoinError
+
 ::: sqlakit.InvalidOrderFieldError
 
 ::: sqlakit.InvalidNullsError

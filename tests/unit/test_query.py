@@ -23,6 +23,7 @@ import sqlakit.asyncio.orm
 import sqlakit.orm
 from sqlakit import (
     BulkQueryError,
+    ConflictingJoinError,
     Database,
     InstanceNotFoundError,
     InvalidCursorError,
@@ -1437,6 +1438,41 @@ def test_an_inner_join_drops_them(teams: Database) -> None:
         rows = Guest.query.order_by("team_only").all()
 
         assert [guest.name for guest in rows] == ["ada"]
+
+
+def test_two_fields_joining_one_table_differently_are_refused(
+    teams: Database,
+) -> None:
+    class Split(Query[Any]):
+        def _orderable(self) -> dict[str, Any]:
+            return {
+                "red": OrderBy(
+                    Team.name,
+                    join=Team,
+                    on=sa.and_(Team.id == Guest.team_id, Team.name == "red"),
+                ),
+                "blue": OrderBy(
+                    Team.name,
+                    join=Team,
+                    on=sa.and_(Team.id == Guest.team_id, Team.name == "blue"),
+                ),
+            }
+
+    with pytest.raises(ConflictingJoinError, match="teams"):
+        Split(Guest, teams).order_by("red", "blue")
+
+
+def test_an_alias_gives_each_field_its_own_join(teams: Database) -> None:
+    red, blue = aliased(Team), aliased(Team)
+
+    class Split(Query[Any]):
+        def _orderable(self) -> dict[str, Any]:
+            return {
+                "red": OrderBy(red.name, join=red, on=red.id == Guest.team_id),
+                "blue": OrderBy(blue.name, join=blue, on=blue.id == Guest.team_id),
+            }
+
+    assert str(Split(Guest, teams).order_by("red", "blue").select).count("JOIN") == 2
 
 
 def test_ignore_case_compares_without_regard_to_case(reports: Database) -> None:
