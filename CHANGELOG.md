@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.3
+
+### Changed
+
+- A plain column of another table in `__orderable__` is joined through a
+  relationship of the model that reaches that table, condition and all. It was
+  joined on the foreign key between the tables, which a view carrying no key
+  does not have, and which cannot carry a discriminator. The key is still used
+  when no relationship reaches the table.
+
+### Documentation
+
+- The reference says that `autoflush` stays at `SQLAlchemy`'s `True`, what a
+  block that alternates changes and queries pays for it, and what turning it
+  off costs.
+- The models page says when `save()` is needed: a new instance needs it, a row
+  the block read does not, and in a loop that changes rows it is a write per
+  row.
+
 ## 0.7.2
 
 ### Fixed
