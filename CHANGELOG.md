@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.4
+
+### Documentation
+
+- The testing page uses one conftest shape for the synchronous and the
+  `asyncio` sides, which differ only in `with` against `async with`. The
+  fixtures are named for what they give, `_db_schema` and `_db_transaction`,
+  and one copy of the old `_db_marker` had lost its marker check, so it opened
+  a transaction for every test in the suite.
+
 ## 0.7.3
 
 ### Changed
