@@ -420,6 +420,26 @@ page.total  # None, the count query was skipped
 page.has_next  # whether there was a 21st row
 ```
 
+A type checker knows which of the two you asked for. `page(limit=20)` returns a
+`Page[User]`, whose `total` is an `int`, and `page(total=False)` returns a
+`Page[User, None]`, so code that reads `total` is asked about it only where
+there is one:
+
+```python
+def render(page: Page[User]) -> str:
+    return f"{len(page.items)} of {page.total}"  # an int, no check needed
+```
+
+`UncountedPage[User]` is the other one, named for what a signature means by it:
+
+```python
+from sqlakit import UncountedPage
+
+
+def feed(page: UncountedPage[User]) -> list[User]:
+    return list(page.items)  # `page.total` is None, and the type says so
+```
+
 ### Cursor pagination
 
 Use it for feeds, APIs, and anything scrolled. The cost does not grow with

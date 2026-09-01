@@ -190,7 +190,19 @@ class Query(BaseQuery[ModelT]):
         """Check whether any row matches."""
         return bool(self.db.session.scalar(self._exists_statement()))
 
-    def page(self, *, limit: int, offset: int = 0, total: bool = True) -> Page[ModelT]:
+    @overload
+    def page(
+        self, *, limit: int, offset: int = 0, total: Literal[True] = True
+    ) -> Page[ModelT]: ...
+
+    @overload
+    def page(
+        self, *, limit: int, offset: int = 0, total: Literal[False]
+    ) -> Page[ModelT, None]: ...
+
+    def page(
+        self, *, limit: int, offset: int = 0, total: bool = True
+    ) -> Page[ModelT] | Page[ModelT, None]:
         """Read one page of rows, with the total.
 
         The model's key is appended to the ordering, so a row that ties with another

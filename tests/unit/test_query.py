@@ -34,6 +34,7 @@ from sqlakit import (
     PageItemsMismatchError,
     RawStatementError,
     UncomparableOrderingError,
+    UncountedPage,
     UnknownOrderFieldError,
     UnorderedPageError,
 )
@@ -1335,6 +1336,28 @@ def test_nulls_asks_the_dialect_how_to_say_it(reports: Database) -> None:
     # `MySQL` has no NULLS LAST, so the clause becomes the two it stands for.
     assert "NULLS LAST" in str(query.select.compile(dialect=postgresql.dialect()))
     assert "IS NULL ASC" in str(query.select.compile(dialect=mysql.dialect()))
+
+
+def test_an_uncounted_page_is_named_for_what_it_is(db: Database) -> None:
+    with db.connect():
+        # The annotation is the assertion: a counted page does not fit here.
+        page: UncountedPage[User] = User.query.order_by(User.id).page(
+            limit=2, total=False
+        )
+
+        assert page.total is None
+        assert page.has_next is True
+
+
+def test_a_counted_page_carries_an_int(db: Database) -> None:
+    with db.connect():
+        page = User.query.order_by(User.id).page(limit=2)
+
+        # The annotation is the assertion: `total` is an `int` here, and a type
+        # checker refuses the same line for a page read without counting.
+        counted: int = page.total
+
+        assert counted == 5
 
 
 def test_ignore_case_compares_without_regard_to_case(reports: Database) -> None:

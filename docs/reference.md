@@ -132,6 +132,8 @@ plain declarative base.
 
 ::: sqlakit.Page
 
+::: sqlakit.UncountedPage
+
 ::: sqlakit.CursorPage
 
 ::: sqlakit.OrderBy
