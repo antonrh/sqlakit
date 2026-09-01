@@ -40,17 +40,43 @@ own.
 
 ## Saving
 
-Inside a transaction `save()` flushes, so what you wrote is visible to the
-queries that follow, and the transaction decides whether it commits. In a
-block with no transaction, which means `connect()` or `autocommit()`, `save()`
-commits by itself.
+A new instance needs `save()`. Without it the block ends without writing it,
+transaction or not. Appending one to a relationship this block loaded is the
+exception: the instance goes in with the row it was added to.
 
 ```python
 with db.transaction():
-    User(name="ada").save()  # flushed; the transaction commits it
+    User(name="ada").save()
+```
 
+A row this block read is in the session already, so both of these write it:
+
+```python
+with db.transaction():
+    user = User.query.get_one(1)
+    user.name = "grace"  # the commit writes it
+
+    other = User.query.get_one(2)
+    other.name = "hopper"
+    other.save()  # written here instead
+```
+
+The statements are the same either way. `save()` decides when, which matters
+for a query later in the same block: it sees the change if the change was
+written first.
+
+The one place the timing costs anything is a loop that changes rows, where it
+is a write per row rather than one for all of them, eleven statements against
+two over ten rows. On a row nothing changed `save()` sends nothing, so a loop
+that only reads costs the same with it or without.
+
+What happens at the end is the block's to decide. Inside `transaction()`,
+`save()` flushes and the transaction commits. Inside `connect()` or
+`autocommit()` there is no transaction to wait for, so `save()` commits:
+
+```python
 with db.connect():
-    User(name="grace").save()  # committed here, with no transaction to wait for
+    User(name="hopper").save()  # committed here
 ```
 
 ## Queries on a model
