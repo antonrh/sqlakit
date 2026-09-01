@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.1
+
+### Fixed
+
+- Two ordering fields that join one table on different conditions raise
+  `ConflictingJoinError`. A statement joins a table once, so the second
+  condition was dropped and the field ordered by the first one's rows. Give
+  each field an alias, and each gets a join of its own.
+
 ## 0.7.0
 
 ### Changed
