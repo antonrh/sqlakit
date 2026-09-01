@@ -663,3 +663,141 @@ def sqlakit_metadata():
     )
 
     project.runpytest_subprocess().assert_outcomes(passed=2)
+
+
+def test_a_fixture_of_the_test_s_own_writes_inside_the_transaction(
+    project: pytest.Pytester,
+) -> None:
+    """The transaction opens before the fixtures the test asked for."""
+    project.makepyfile(
+        test_order="""
+        import pytest
+
+        from app import User
+
+
+        @pytest.fixture
+        def a_user():
+            User(name="from a fixture").save()
+
+
+        @pytest.mark.db
+        @pytest.mark.usefixtures("a_user")
+        def test_the_row_is_visible():
+            assert User.query.where(User.name == "from a fixture").one_or_none()
+
+
+        @pytest.mark.db
+        def test_the_row_rolled_back():
+            assert User.query.where(User.name == "from a fixture").one_or_none() is None
+        """
+    )
+
+    project.runpytest_subprocess().assert_outcomes(passed=2)
+
+
+def test_the_order_holds_without_the_model_layer(project: pytest.Pytester) -> None:
+    """A project on plain mapped classes writes through `db.session`."""
+    (project.path / "app.py").write_text(
+        """
+import sqlalchemy as sa
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from sqlakit import Database, EngineArgs
+
+ARGS: EngineArgs = {"poolclass": sa.StaticPool}
+db = Database("sqlite://", engine_args=ARGS)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str]
+"""
+    )
+    (project.path / "conftest.py").write_text(
+        """
+import pytest
+
+from app import Base, db
+
+
+@pytest.fixture(scope="session")
+def sqlakit_db():
+    return db
+
+
+@pytest.fixture(scope="session")
+def sqlakit_metadata():
+    return Base.metadata
+"""
+    )
+    project.makepyfile(
+        test_plain_order="""
+        import pytest
+
+        from app import User, db
+
+
+        @pytest.fixture
+        def a_user():
+            db.session.add(User(name="from a fixture"))
+            db.session.flush()
+
+
+        @pytest.fixture(autouse=True)
+        def another_user():
+            db.session.add(User(name="autouse"))
+            db.session.flush()
+
+
+        @pytest.mark.db
+        def test_both_are_visible(a_user):
+            assert db.query(User).count() == 2
+
+
+        @pytest.mark.db
+        def test_only_the_autouse_one_is_back(another_user):
+            assert [u.name for u in db.query(User).all()] == ["autouse"]
+        """
+    )
+
+    project.runpytest_subprocess().assert_outcomes(passed=2)
+
+
+def test_a_class_may_seed_rows_of_its_own(project: pytest.Pytester) -> None:
+    project.makepyfile(
+        test_class_seed="""
+        import pytest
+
+        from app import User, db
+
+        pytestmark = pytest.mark.db
+
+
+        class TestSeeded:
+            @pytest.fixture(scope="class", autouse=True)
+            def _seeded(self, sqlakit_schema):
+                with db.transaction(rollback=True):
+                    User(name="ada").save()
+                    yield
+
+            def test_sees_the_class_rows(self):
+                assert User.query.count() == 1
+                User(name="mine").save()
+
+            def test_keeps_them(self):
+                assert [u.name for u in User.query.all()] == ["ada"]
+
+
+        def test_the_class_rows_are_gone():
+            assert User.query.count() == 0
+        """
+    )
+
+    project.runpytest_subprocess().assert_outcomes(passed=3)

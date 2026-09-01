@@ -85,7 +85,23 @@ def pytest_collection_modifyitems(
         if item.get_closest_marker(MARKER) is None:
             continue
         awaited = inspect.iscoroutinefunction(item.function)
-        item.fixturenames.append(ASYNC_FIXTURE if awaited else SYNC_FIXTURE)
+        name = ASYNC_FIXTURE if awaited else SYNC_FIXTURE
+        item.fixturenames.insert(_before_the_test_s_own(item), name)
+
+
+def _before_the_test_s_own(item: pytest.Function) -> int:
+    """Return where the transaction goes among the fixtures of a test.
+
+    `fixturenames` is the order they set up in. A fixture of the test's own
+    that writes has to run inside the transaction, and one of a wider scope,
+    the schema or a module that seeds itself, has to run outside it.
+    """
+    known = item._fixtureinfo.name2fixturedefs  # noqa: SLF001
+    for index, name in enumerate(item.fixturenames):
+        defined = known.get(name)
+        if defined and defined[-1].scope == "function":
+            return index
+    return len(item.fixturenames)
 
 
 @pytest.fixture(scope="session")
