@@ -474,3 +474,21 @@ def test_a_model_under_one_registers_into_the_same_registry(own: type[Any]) -> N
     own.register_db(Database("sqlite://"), alias="db3")
 
     assert own.dbs.aliases == (DEFAULT_ALIAS, "db1", "db2", "db3")
+
+
+def test_register_db_with_no_alias_points_the_model_at_it() -> None:
+    class OneBase(ModelMixin, DeclarativeBase):
+        pass
+
+    class Note(OneBase):
+        __tablename__ = "one_notes"
+
+        id: Mapped[int] = mapped_column(primary_key=True)
+
+    one = Database("sqlite://")
+    OneBase.register_db(one)
+
+    assert Note.db is one
+    assert OneBase.dbs is sqlakit.db  # no registry of its own was built
+
+    one.dispose()

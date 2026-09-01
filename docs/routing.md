@@ -168,7 +168,8 @@ db.register("shard-7", Database(SHARD_URL))
 ```
 
 The alias has to be free, and cannot be `default`, which the registry itself
-is.
+is. Without an alias, `register_db` points the model at that database, the same
+as `set_db`.
 
 ## Which database is this query on?
 
