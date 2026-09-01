@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.8.0
+
+### Added
+
+- A `pytest` plugin, installed with the library and turned on with
+  `sqlakit = true`. It registers the `db` marker, creates the schema once for
+  the session, and runs every marked test in a transaction that rolls back.
+  Tests without the marker connect to nothing.
+- `@pytest.mark.db(using=...)` names the databases a test opens, by alias or by
+  database. Without it a test opens every one, which for most projects is the
+  one they have.
+- Five fixtures a project overrides: `sqlakit_base`, the base its models
+  inherit, which is also where the database comes from; `sqlakit_db`, the
+  database itself; `sqlakit_schema`, how the schema is created, for a suite
+  running migrations against a server of its own; `sqlakit_seed`, the rows
+  every test starts from; and `sqlakit_metadata`, for a project with no model
+  layer.
+
+### Documentation
+
+- The testing page opens with the plugin, and keeps the hand-written conftest
+  after it. It says what `autoflush` costs, when `save()` is needed, and how to
+  start a server with `pytest-docker`.
+
 ## 0.7.4
 
 ### Documentation
