@@ -70,6 +70,7 @@ __all__ = [
     "one_row",
     "one_row_or_none",
     "orderable",
+    "orderable_columns",
     "ordered",
 ]
 
@@ -936,6 +937,29 @@ class BaseQuery(Generic[ModelT]):
         return _encode(values, backwards=backwards, ordering=ordering_key)
 
 
+def orderable_columns(model: type[Any]) -> Mapping[str, Any]:
+    """Return every mapped column of a model, by name.
+
+    What a model orders by when it declares no ``__orderable__``, and what an
+    ``__orderable__`` that adds to the columns rather than replacing them starts
+    from:
+
+    ```python
+    @classmethod
+    def __orderable__(cls) -> Mapping[str, Any]:
+        return {
+            **orderable_columns(cls),
+            "team": OrderBy(Team.name, join=cls.team),
+        }
+    ```
+
+    Calling `orderable` there instead recurses: it reads the very
+    ``__orderable__`` that is running.
+    """
+    mapper = sa.inspect(model, raiseerr=True)
+    return {attr.key: getattr(model, attr.key) for attr in mapper.column_attrs}
+
+
 def orderable(model: type[Any]) -> Mapping[str, Any]:
     """Return the fields a model can be ordered by name.
 
@@ -945,8 +969,7 @@ def orderable(model: type[Any]) -> Mapping[str, Any]:
     """
     fields = getattr(model, "__orderable__", None)
     if fields is None:
-        mapper = sa.inspect(model, raiseerr=True)
-        return {attr.key: getattr(model, attr.key) for attr in mapper.column_attrs}
+        return orderable_columns(model)
     if callable(fields):
         return fields()
     return {name: _mapped_column(model, name) for name in fields}

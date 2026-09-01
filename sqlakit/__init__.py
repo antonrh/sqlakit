@@ -7,6 +7,7 @@ from ._query import (
     OrderBy,
     Page,
     UncountedPage,
+    orderable_columns,
 )
 from ._recording import Recording, Statement
 from ._registry import Databases, db
@@ -118,4 +119,5 @@ __all__ = [
     "db",
     "import_models",
     "import_string",
+    "orderable_columns",
 ]

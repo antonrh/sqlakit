@@ -138,6 +138,8 @@ plain declarative base.
 
 ::: sqlakit.OrderBy
 
+::: sqlakit.orderable_columns
+
 ## SQL templates
 
 Requires the `sqlakit[sql]` extra. Covered in [SQL templates](sql.md).
