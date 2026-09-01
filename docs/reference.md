@@ -39,6 +39,27 @@ these.
 `SQLAKit` doesn't set `pool_size`, `max_overflow` or `isolation_level`: they
 depend on the worker count, the database's limits and the dialect.
 
+It doesn't set `autoflush` either, so it is `SQLAlchemy`'s `True`: a query
+writes the pending changes out first, without committing them.
+
+```python
+with db.transaction():
+    user = User.query.get_one(1)
+    user.name = "grace"
+    User.query.count()  # the UPDATE goes out first, then this SELECT
+```
+
+A block that alternates changes and queries writes once per query rather than
+once at the end. `session.no_autoflush` holds them back.
+
+Turning it off is the other way round: a query no longer sees what
+`db.session.add()` put in the session. `save()` is unaffected, since it
+flushes on its own.
+
+```python
+db = Database(DB_URL, session_args={"autoflush": False})
+```
+
 ## The async API {#async}
 
 `sqlakit.asyncio` mirrors `sqlakit`. Calls that reach the database are
