@@ -37,6 +37,7 @@ from typing_extensions import TypeVar
 from ._model import resolve_alias, soft_delete_column
 from .exceptions import (
     BulkQueryError,
+    ConflictingJoinError,
     InstanceNotFoundError,
     InvalidCursorError,
     InvalidNullsError,
@@ -1015,11 +1016,13 @@ def ordered(
         else {_field_named(one, fields) for one in ignore_case}
     )
     clauses = []
+    joined: dict[str, Any] = {}
     for criterion in named:
         clause, join = _ordering_for(criterion, fields, ignore_case=folded)
         clauses.append(_with_nulls(clause, nulls))
         if join is not None:
             target, onclause, outer = join
+            _reject_conflicting_join(joined, target, onclause)
             if not _is_joined(select, target):
                 select = select.join(target, onclause, isouter=outer)
     return select.order_by(*clauses)
@@ -1174,6 +1177,33 @@ def _join_for(field: Any) -> tuple[Any, None, bool] | None:  # noqa: ANN401
         return None
     table = getattr(column, "table", None)
     return None if table is None else (table, None, True)
+
+
+def _reject_conflicting_join(
+    joined: dict[str, Any],
+    target: Any,  # noqa: ANN401
+    onclause: Any,  # noqa: ANN401
+) -> None:
+    """Refuse a second join of one table on another condition.
+
+    A statement joins a table once, so the second condition would be dropped
+    and the field would order by the first one's rows.
+
+    Raises:
+        ConflictingJoinError: if the table is already joined on something else.
+
+    """
+    identity = _join_identity(target)
+    if identity is None:
+        return
+    if identity not in joined:
+        joined[identity] = onclause
+        return
+    first = joined[identity]
+    if first is None or onclause is None:
+        return
+    if not first.compare(onclause):
+        raise ConflictingJoinError(identity)
 
 
 def _is_joined(select: sa.Select[Any], target: Any) -> bool:  # noqa: ANN401

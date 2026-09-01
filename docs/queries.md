@@ -367,7 +367,29 @@ paths to the same table.
 
 Either way the join is an outer one, so the rows with nothing on the other side
 come back as well, where `nulls` puts them. `OrderBy(..., outer=False)` drops
-them instead. A table named by several fields is joined once.
+them instead.
+
+A table named by several fields is joined once, so two fields that join it on
+different conditions raise `ConflictingJoinError`. Give each an alias, and each
+gets a join of its own:
+
+```python
+month = sa.orm.aliased(Stats)
+week = sa.orm.aliased(Stats)
+
+{
+    "monthly": OrderBy(
+        month.opens,
+        join=month,
+        on=sa.and_(month.campaign_id == cls.id, month.period == "month"),
+    ),
+    "weekly": OrderBy(
+        week.opens,
+        join=week,
+        on=sa.and_(week.campaign_id == cls.id, week.period == "week"),
+    ),
+}
+```
 
 Only join relationships that match one row. A collection multiplies the rows,
 and the page count comes out wrong. For a collection, join a subquery that
