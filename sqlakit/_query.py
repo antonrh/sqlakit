@@ -14,7 +14,7 @@ from typing import (
     NamedTuple,
     Protocol,
     Self,
-    TypeVar,
+    TypeAlias,
     cast,
 )
 
@@ -30,6 +30,9 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 from sqlalchemy.sql import operators
+
+# `TypeVar` from here, for the default that keeps `Page[User]` the counted one.
+from typing_extensions import TypeVar
 
 from ._model import resolve_alias, soft_delete_column
 from .exceptions import (
@@ -63,6 +66,7 @@ __all__ = [
     "NullsPlacement",
     "OrderBy",
     "Page",
+    "UncountedPage",
     "one_row",
     "one_row_or_none",
     "orderable",
@@ -100,6 +104,8 @@ ONLY = "only"
 
 ModelT = TypeVar("ModelT")
 OtherT = TypeVar("OtherT")
+TotalT = TypeVar("TotalT", bound="int | None", default=int)
+"""What a page knows about its total: an `int`, or `None` when nobody counted."""
 RowT = TypeVar("RowT")
 RowT_co = TypeVar("RowT_co", covariant=True)
 
@@ -170,18 +176,19 @@ def _compile_nulls_for_mysql(
 
 
 @dataclass(frozen=True, slots=True)
-class Page(Generic[ModelT]):
-    """One page of rows, and how many there are in total."""
+class Page(Generic[ModelT, TotalT]):
+    """One page of rows, and how many there are in total.
+
+    ``Page[User]`` is the counted page, whose ``total`` is an `int`.
+    ``page(total=False)`` returns a `Page[User, None]` instead, so the code
+    reading it is not asked about a total nobody counted.
+    """
 
     items: Sequence[ModelT]
-    total: int | None
-    """How many rows match, or None for a page read without counting them."""
-
+    total: TotalT
     limit: int
     offset: int
-
     has_next: bool = False
-    """Whether a page follows this one."""
 
     def __post_init__(self) -> None:
         if self.total is not None:
@@ -189,7 +196,7 @@ class Page(Generic[ModelT]):
                 self, "has_next", self.offset + len(self.items) < self.total
             )
 
-    def map(self, transform: Callable[[ModelT], OtherT]) -> Page[OtherT]:
+    def map(self, transform: Callable[[ModelT], OtherT]) -> Page[OtherT, TotalT]:
         """Return the page with every row put through ``transform``.
 
         ```python
@@ -201,7 +208,7 @@ class Page(Generic[ModelT]):
     def map_all(
         self,
         transform: Callable[[Sequence[ModelT]], Sequence[OtherT]],
-    ) -> Page[OtherT]:
+    ) -> Page[OtherT, TotalT]:
         """Return the page with the rows put through ``transform`` together.
 
         For work that reads better in one go than row by row: one query for
@@ -209,7 +216,7 @@ class Page(Generic[ModelT]):
         """
         return self.with_items(transform(self.items))
 
-    def with_items(self, items: Sequence[OtherT]) -> Page[OtherT]:
+    def with_items(self, items: Sequence[OtherT]) -> Page[OtherT, TotalT]:
         """Return the page carrying these rows instead, counts unchanged.
 
         What an asynchronous transform needs: `page.with_items(await serialize(...))`.
@@ -229,16 +236,24 @@ class Page(Generic[ModelT]):
         )
 
 
+UncountedPage: TypeAlias = Page[ModelT, None]
+"""A page read with ``total=False``, which counted nothing.
+
+The same class, named for what a signature means by it:
+
+```python
+def feed(page: UncountedPage[User]) -> Response: ...
+```
+"""
+
+
 @dataclass(frozen=True, slots=True)
 class CursorPage(Generic[ModelT]):
     """One page of rows, and the cursors that read the ones either side."""
 
     items: Sequence[ModelT]
     next_cursor: str | None = None
-    """Hand it back as ``cursor`` to read on."""
-
     previous_cursor: str | None = None
-    """Hand it back as ``cursor`` to read the page in front of this one."""
 
     @property
     def has_next(self) -> bool:

@@ -1,7 +1,13 @@
 from ._base import DEFAULT_ENGINE_ARGS, DEFAULT_SESSION_ARGS
 from ._db import Database, RetryingTransaction, Transaction
 from ._discovery import import_models, import_string
-from ._query import CASE_INSENSITIVE_COLLATIONS, CursorPage, OrderBy, Page
+from ._query import (
+    CASE_INSENSITIVE_COLLATIONS,
+    CursorPage,
+    OrderBy,
+    Page,
+    UncountedPage,
+)
 from ._recording import Recording, Statement
 from ._registry import Databases, db
 from ._routing import Router
@@ -102,6 +108,7 @@ __all__ = [
     "Transaction",
     "TransactionRolledBackError",
     "UncomparableOrderingError",
+    "UncountedPage",
     "UnknownDatabaseError",
     "UnknownFieldError",
     "UnknownImportPathError",
