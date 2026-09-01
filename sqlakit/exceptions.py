@@ -22,6 +22,7 @@ __all__ = [
     "MissingDatabaseUrlError",
     "MissingDefaultDatabaseError",
     "MissingDependencyError",
+    "MissingRegistryError",
     "MissingSessionError",
     "MultipleInstancesFoundError",
     "NullCursorValueError",
@@ -137,6 +138,20 @@ class UnknownDatabaseError(SQLAKitError, KeyError):
         super().__init__(
             f"No database is configured as {alias!r}. "
             f"Configured: {', '.join(map(repr, known)) or 'none'}."
+        )
+
+
+class MissingRegistryError(SQLAKitError, ValueError):
+    """Raised when a model has nowhere to look a database alias up."""
+
+    def __init__(self, model: str, alias: str | None = None) -> None:
+        self.model = model
+        self.alias = alias
+        named = f"`{alias}`" if alias is not None else "an alias"
+        super().__init__(
+            f"`{model}` has no registry to look {named} up in. Pass the "
+            f"database itself instead of its name, or set `__dbs__` on the "
+            f"model to the registry that holds it."
         )
 
 

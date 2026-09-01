@@ -22,7 +22,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 from .exceptions import (
     DEFAULT_ALIAS,
     DetachedInstanceError,
-    MissingDefaultDatabaseError,
+    MissingRegistryError,
     SQLAKitError,
     UnknownFieldError,
 )
@@ -257,16 +257,21 @@ def db_for(model: type[Any]) -> BaseDatabase[Any, Any]:
     placement = model.__db__
     if isinstance(placement, str):
         if source is None:
-            raise MissingDefaultDatabaseError
+            raise MissingRegistryError(model.__name__, placement)
         return source[placement]
     return placement
 
 
 def resolve_alias(model: type[Any], alias: str) -> BaseDatabase[Any, Any]:
-    """Return the database a model knows under that alias."""
+    """Return the database a model knows under that alias.
+
+    Raises:
+        MissingRegistryError: if the model looks aliases up nowhere.
+
+    """
     source = getattr(model, "__dbs__", None)
     if source is None:
-        raise MissingDefaultDatabaseError
+        raise MissingRegistryError(model.__name__, alias)
     return source[alias]
 
 
