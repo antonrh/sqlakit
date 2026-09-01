@@ -70,7 +70,7 @@ def _project(pytester: pytest.Pytester, *, asyncio: bool) -> None:
 
 def test_the_documented_conftest_isolates_each_test(pytester: pytest.Pytester) -> None:
     _project(pytester, asyncio=False)
-    pytester.makeconftest(_block("conftest.py"))
+    pytester.makeconftest(_block("conftest.py (by hand)"))
     pytester.makepyfile(
         test_users="""
         import pytest
@@ -106,7 +106,7 @@ def test_the_documented_async_conftest_isolates_each_test(
     # The documented conftest, and a teardown of this harness's own: the
     # sub-session runs in this process, and an `aiosqlite` engine holds a
     # thread until something disposes of it.
-    pytester.makeconftest(_block("conftest.py (asyncio)") + DISPOSE)
+    pytester.makeconftest(_block("conftest.py (by hand, asyncio)") + DISPOSE)
     pytester.makepyfile(
         test_users="""
         import pytest
@@ -137,7 +137,7 @@ def test_a_session_without_a_marked_test_builds_no_schema(
     pytester: pytest.Pytester,
 ) -> None:
     _project(pytester, asyncio=False)
-    pytester.makeconftest(_block("conftest.py"))
+    pytester.makeconftest(_block("conftest.py (by hand)"))
     pytester.makepyfile(
         test_plain="""
         def test_needs_no_database() -> None:

@@ -25,6 +25,9 @@ dependencies = [
     "sqlalchemy>=2.0.22",
 ]
 
+[project.entry-points.pytest11]
+sqlakit = "sqlakit.pytest_plugin"
+
 [project.urls]
 Repository = "https://github.com/antonrh/sqlakit"
 Documentation = "https://github.com/antonrh/sqlakit"
@@ -92,6 +95,15 @@ filterwarnings = [
 ]
 # `pytester` runs the conftest the docs show, in a session of its own.
 addopts = "-p pytester"
+# The example is a project of its own, run by tests/examples, not collected here.
+norecursedirs = [
+    "examples/testing_plugin",  # a project of its own, run by tests/examples
+    "tests/projects",           # the projects the plugin tests copy
+    ".*",
+    "build",
+    "dist",
+    "node_modules",
+]
 
 [tool.ruff]
 include = [
@@ -147,6 +159,12 @@ ignore = [
     "INP001",   # examples are read one file at a time, not imported as a package
     "ARG001",   # FastAPI hands handlers a request they may not use
     "TC003",    # examples keep their imports where a reader expects them
+]
+"examples/testing_plugin/*.py" = [
+    "S101",     # the example is a test suite, and tests assert
+]
+"tests/projects/**/*.py" = [
+    "INP001",   # a project the tests copy, not a package of this one
 ]
 
 [tool.ty.src]
