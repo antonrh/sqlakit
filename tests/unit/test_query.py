@@ -38,7 +38,13 @@ from sqlakit import (
     UnknownOrderFieldError,
     UnorderedPageError,
 )
-from sqlakit._query import _is_joined, _join_identity, _payload
+from sqlakit._query import (
+    _is_joined,
+    _join_identity,
+    _payload,
+    orderable,
+    orderable_columns,
+)
 from sqlakit.orm import ModelMixin, Query, SoftDeletes
 from sqlakit.testing import assert_queries
 
@@ -1358,6 +1364,24 @@ def test_a_counted_page_carries_an_int(db: Database) -> None:
         counted: int = page.total
 
         assert counted == 5
+
+
+def test_orderable_columns_is_what_a_model_offers_by_default() -> None:
+    assert dict(orderable_columns(User)) == dict(orderable(User))
+
+
+def test_a_model_may_add_to_the_columns_it_offers(db: Database) -> None:
+    class Extended(User):
+        @classmethod
+        def __orderable__(cls) -> dict[str, Any]:
+            return {**orderable_columns(cls), "lowered": sa.func.lower(cls.name)}
+
+    assert set(orderable(Extended)) == {*orderable_columns(User), "lowered"}
+
+    with db.connect():
+        rows = Extended.query.order_by("lowered").all()
+
+        assert [row.name for row in rows] == ["a", "b", "c", "d", "e"]
 
 
 def test_ignore_case_compares_without_regard_to_case(reports: Database) -> None:

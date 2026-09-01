@@ -302,6 +302,26 @@ class User(Base):
         }
 ```
 
+`__orderable__` replaces the columns rather than adding to them, so that a
+sortable API can be narrowed to a few names. To add instead, start from
+`orderable_columns`:
+
+```python
+from sqlakit import OrderBy, orderable_columns
+
+
+class User(Base):
+    @classmethod
+    def __orderable__(cls) -> Mapping[str, Any]:
+        return {
+            **orderable_columns(cls),
+            "team": OrderBy(Team.name, join=cls.team),
+        }
+```
+
+Calling `orderable` there recurses: it reads the `__orderable__` that is
+running.
+
 You can't order by a field missing from the dict. Its keys are the full list
 of orderings your API supports, written next to the model.
 
