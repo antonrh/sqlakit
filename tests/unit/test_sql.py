@@ -632,3 +632,16 @@ def test_the_async_sql_mirrors_this_one(
     sync: type, asynchronous: type, mirrors: Callable[[type, type], None]
 ) -> None:
     mirrors(sync, asynchronous)
+
+
+def test_a_value_may_be_named_like_the_argument_before_it(db: Database) -> None:
+    # `template` and `source` are ordinary column names, and the API takes
+    # every keyword as a value, so neither may be reserved.
+    with db.connect():
+        rows = db.sql.from_string(
+            "SELECT {{ source }} AS source, {{ template }} AS template",
+            source="feed",
+            template="daily",
+        ).all()
+
+        assert [tuple(row) for row in rows] == [("feed", "daily")]

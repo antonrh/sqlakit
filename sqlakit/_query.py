@@ -466,7 +466,7 @@ class BaseQuery(Generic[ModelT]):
         )
         return query
 
-    def from_sql(self, template: str, **context: Any) -> Self:  # noqa: ANN401
+    def from_sql(self, template: str, /, **context: Any) -> Self:  # noqa: ANN401
         """Take the rows of a SQL template, mapped onto the model.
 
         ```python

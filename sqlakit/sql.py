@@ -45,7 +45,7 @@ class SQL:
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.db!r})"
 
-    def __call__(self, template: str, **context: Any) -> SQLQuery:  # noqa: ANN401
+    def __call__(self, template: str, /, **context: Any) -> SQLQuery:  # noqa: ANN401
         """Read the rows of a template. Short for `from_file`.
 
         ```python
@@ -54,7 +54,7 @@ class SQL:
         """
         return self.from_file(template, **context)
 
-    def from_file(self, template: str, **context: Any) -> SQLQuery:  # noqa: ANN401
+    def from_file(self, template: str, /, **context: Any) -> SQLQuery:  # noqa: ANN401
         """Read the rows of a template kept under the database's ``templates=``.
 
         ```python
@@ -65,7 +65,7 @@ class SQL:
         """
         return SQLQuery(self.db, template, context)
 
-    def from_string(self, source: str, **context: Any) -> SQLQuery:  # noqa: ANN401
+    def from_string(self, source: str, /, **context: Any) -> SQLQuery:  # noqa: ANN401
         """Read the rows of SQL written out here rather than kept in a file.
 
         ```python
