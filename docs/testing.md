@@ -150,13 +150,44 @@ def sqlakit_db() -> Database:
     return db
 ```
 
-`sqlakit_metadata` is the last of them, for a project with no model layer:
-name the database and the metadata, and the tables are created from that.
+### Without the model layer
 
-```python
+A project on plain mapped classes, `SQLModel` among them, has no base to hand
+over. Name the database and the metadata instead:
+
+```python title="conftest.py"
+import pytest
+import sqlalchemy as sa
+
+from sqlakit import Database
+
+from app.db import db
+from app.models import Base
+
+
+@pytest.fixture(scope="session")
+def sqlakit_db() -> Database:
+    return db
+
+
 @pytest.fixture(scope="session")
 def sqlakit_metadata() -> sa.MetaData:
-    return SQLModel.metadata
+    return Base.metadata
+```
+
+The plugin creates the tables with `db.provisioned_tables(Base.metadata)`, the
+same method the model layer uses.
+
+The marker and the rollback work the same, and the tests read through the
+database rather than through a model:
+
+```python
+@pytest.mark.db
+def test_a_user_is_written() -> None:
+    db.session.add(User(name="ada"))
+    db.session.flush()
+
+    assert db.query(User).count() == 1
 ```
 
 ## Seeding data
@@ -214,16 +245,6 @@ def _db_schema() -> Iterator[None]:
     import_models("app")
     with Model.provisioned_tables():
         yield
-```
-
-## A schema without the model layer
-
-For metadata outside the model layer, the same `provisioned_tables` is
-available on the database:
-
-```python
-with db.provisioned_tables(SQLModel.metadata):
-    yield
 ```
 
 ## Starting a server
@@ -603,7 +624,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Give a database to the marked tests and to nothing else."""
     for item in items:
         if isinstance(item, pytest.Function) and item.get_closest_marker("db"):
-            item.fixturenames.append("_db_transaction")
+            item.fixturenames.insert(0, "_db_transaction")
 
 
 @pytest.fixture(scope="session")
@@ -643,7 +664,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Give a database to the marked tests and to nothing else."""
     for item in items:
         if isinstance(item, pytest.Function) and item.get_closest_marker("db"):
-            item.fixturenames.append("_db_transaction")
+            item.fixturenames.insert(0, "_db_transaction")
 
 
 @pytest.fixture(scope="session")
@@ -663,8 +684,13 @@ async def _db_transaction(_db_schema: None) -> AsyncIterator[None]:
         yield
 ```
 
-`pytest` reads `item.fixturenames` at collection time. It ignores a
-`usefixtures` marker added that late.
+`pytest` reads `item.fixturenames` at collection time, and the fixtures set up
+in that order. `insert(0, ...)` puts the transaction before the ones the test
+asked for, so a fixture that writes rows writes them inside it. Appending
+leaves those rows outside the rollback.
+
+A fixture of a wider scope, one that seeds a whole module, needs the
+transaction after it instead. The plugin works that position out for you.
 
 Mark your tests as `anyio`, or make the `anyio_backend` fixture above
 `autouse=True` and mark none of them:
