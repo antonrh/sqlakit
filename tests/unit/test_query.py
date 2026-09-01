@@ -524,7 +524,7 @@ def test_the_two_filters_lift_one_at_a_time(memos: Database) -> None:
 
 
 def test_restoring_clears_the_mark(memos: Database) -> None:
-    with memos.transaction():
+    with memos.connect():
         Memo.query.only_deleted().one().restore()
 
     with memos.connect():
@@ -566,7 +566,7 @@ def test_get_hides_a_marked_row_without_a_query_filter(db: Database) -> None:
     with db.transaction():
         Chore.query.get_one(1).delete()
 
-    with db.transaction():
+    with db.connect():
         assert Chore.query.get(1) is None
         assert Chore.query.with_deleted().get(1) is not None
         assert Chore.query.only_deleted().get(1) is not None
@@ -644,7 +644,7 @@ def test_contains_eager(teams: Database) -> None:
 
 
 def test_with_for_update(teams: Database) -> None:
-    with teams.transaction():
+    with teams.connect():
         # SQLite parses the clause and ignores it; the query still runs.
         assert Member.query.with_for_update(read=True, skip_locked=True).count() == 1
 
@@ -923,13 +923,13 @@ def scoped(db: Database) -> Database:
 
 
 def test_a_base_hands_its_query_class_to_every_model(scoped: Database) -> None:
-    with scoped.transaction():
+    with scoped.connect():
         assert isinstance(Player.query, TeamQuery)
         assert Player.query.in_team("red").count() == 1
 
 
 def test_a_custom_method_keeps_its_type_when_chained(scoped: Database) -> None:
-    with scoped.transaction():
+    with scoped.connect():
         query = Player.query.where(Player.id > 0).order_by(Player.id)
 
         assert isinstance(query, TeamQuery)
@@ -937,7 +937,7 @@ def test_a_custom_method_keeps_its_type_when_chained(scoped: Database) -> None:
 
 
 def test_the_filter_reaches_both_kinds_of_page(scoped: Database) -> None:
-    with scoped.transaction():
+    with scoped.connect():
         page = Player.query.order_by(Player.id).page(limit=10)
         cursor_page = Player.query.order_by(Player.id).cursor_page(limit=10)
 
@@ -947,7 +947,7 @@ def test_the_filter_reaches_both_kinds_of_page(scoped: Database) -> None:
 
 
 def test_unfiltered_reads_the_hidden_rows(scoped: Database) -> None:
-    with scoped.transaction():
+    with scoped.connect():
         assert Player.query.unfiltered().count() == 3
         assert Player.query.unfiltered().in_team("red").count() == 2
 
@@ -958,7 +958,7 @@ def test_is_ordered(db: Database) -> None:
 
 
 def test_latest_and_earliest(db: Database) -> None:
-    with db.transaction():
+    with db.connect():
         latest = User.query.latest(User.id)
         earliest = User.query.earliest(User.id)
 
@@ -1025,7 +1025,7 @@ def test_a_model_can_carry_a_query_of_its_own(db: Database) -> None:
 
 
 def test_query_get_reads_the_identity_map_and_loads_options(db: Database) -> None:
-    with db.transaction():
+    with db.connect():
         user = User.query.get(1)
 
         assert user is not None
@@ -1047,7 +1047,7 @@ def test_query_get_applies_the_loader_options(teams: Database) -> None:
 def test_query_get_loads_options_onto_a_row_already_in_the_session(
     teams: Database,
 ) -> None:
-    with teams.transaction():
+    with teams.connect():
         Member.query.get(1)
         member = Member.query.joinedload(Member.team).get_one(1)
 
@@ -1082,7 +1082,7 @@ class _Statements:
 def test_a_plain_get_costs_nothing_for_a_row_in_the_session(
     db: Database,
 ) -> None:
-    with db.transaction():
+    with db.connect():
         # Holding the instance is what keeps it in the identity map, which
         # references its rows weakly.
         user = User.query.get(1)
@@ -1122,7 +1122,7 @@ def test_a_filtered_get_loads_options_onto_a_row_in_the_session(
 
 
 def test_a_filtered_get_always_asks_the_database(notes: Database) -> None:
-    with notes.transaction():
+    with notes.connect():
         Note.query.get(1)
 
         with _Statements(notes) as statements:
@@ -1133,7 +1133,7 @@ def test_a_filtered_get_always_asks_the_database(notes: Database) -> None:
 
 
 def test_get_hides_what_the_model_hides(notes: Database) -> None:
-    with notes.transaction():
+    with notes.connect():
         hidden = Note.query.unfiltered().where(Note.deleted.is_(True)).first()
 
         assert hidden is not None
@@ -1145,7 +1145,7 @@ def test_get_hides_what_the_model_hides(notes: Database) -> None:
 
 
 def test_get_carries_a_lock_the_query_asks_for(db: Database) -> None:
-    with db.transaction():
+    with db.connect():
         assert User.query.with_for_update().get(1) is not None
 
 
@@ -1184,7 +1184,7 @@ def reports(db: Database) -> Database:
 
 
 def test_order_by_reads_direction_and_nulls(reports: Database) -> None:
-    with reports.transaction():
+    with reports.connect():
         assert [r.id for r in Report.query.order_by("name").all()] == [1, 2, 3]
         assert [r.id for r in Report.query.order_by("name.desc").all()] == [3, 2, 1]
         assert [r.id for r in Report.query.order_by("score.asc.nulls_first").all()] == [
@@ -1200,7 +1200,7 @@ def test_order_by_reads_direction_and_nulls(reports: Database) -> None:
 
 
 def test_a_page_breaks_ties_with_the_key(reports: Database) -> None:
-    with reports.transaction():
+    with reports.connect():
         query = Report.query.order_by("score.desc")
 
         first = query.page(limit=2)
@@ -1220,13 +1220,13 @@ def test_order_by_refuses_a_field_the_model_does_not_offer(
 
 
 def test_order_by_skips_a_sort_the_request_did_not_name(reports: Database) -> None:
-    with reports.transaction():
+    with reports.connect():
         assert Report.query.order_by(None).is_ordered is False
         assert [r.id for r in Report.query.order_by("name", None).all()] == [1, 2, 3]
 
 
 def test_a_model_sorts_by_its_own_columns_by_default(db: Database) -> None:
-    with db.transaction():
+    with db.connect():
         ordered = User.query.order_by("name.desc").all()
 
         assert [user.id for user in ordered] == [5, 4, 3, 2, 1]
@@ -1236,7 +1236,7 @@ def test_a_model_sorts_by_its_own_columns_by_default(db: Database) -> None:
 
 
 def test_a_field_can_carry_where_its_nulls_go(reports: Database) -> None:
-    with reports.transaction():
+    with reports.connect():
         assert [r.id for r in Report.query.order_by("late.desc").all()] == [1, 3, 2]
         assert [r.id for r in Report.query.order_by("late.asc").all()] == [1, 3, 2]
         assert [r.id for r in Report.query.order_by("late.asc.nulls_first").all()] == [
@@ -1247,7 +1247,7 @@ def test_a_field_can_carry_where_its_nulls_go(reports: Database) -> None:
 
 
 def test_order_by_takes_a_list_of_fields(reports: Database) -> None:
-    with reports.transaction():
+    with reports.connect():
         by_list = Report.query.order_by(["score.desc", "name"]).all()
         by_args = Report.query.order_by("score.desc", "name").all()
 
@@ -1292,7 +1292,7 @@ def test_ignore_case_names_the_field_in_any_case(reports: Database) -> None:
 
 
 def test_nulls_says_where_the_empty_values_go(reports: Database) -> None:
-    with reports.transaction():
+    with reports.connect():
         # `id` is not one of the fields this model offers by name.
         first = Report.query.order_by("score", nulls="first").order_by(Report.id).all()
         last = Report.query.order_by("score", nulls="last").order_by(Report.id).all()
@@ -1338,7 +1338,7 @@ def test_nulls_asks_the_dialect_how_to_say_it(reports: Database) -> None:
 
 
 def test_ignore_case_compares_without_regard_to_case(reports: Database) -> None:
-    with reports.transaction():
+    with reports.connect():
         cased = Report.query.order_by("name").all()
         folded = Report.query.order_by("name", ignore_case=True).all()
 
@@ -1355,14 +1355,14 @@ def test_ignore_case_takes_the_fields_it_applies_to(reports: Database) -> None:
 
 
 def test_ignore_case_leaves_a_column_that_is_not_text_alone(reports: Database) -> None:
-    with reports.transaction():
+    with reports.connect():
         ordered = Report.query.order_by("score.desc", ignore_case=True).all()
 
         assert [r.id for r in ordered] == [1, 3, 2]
 
 
 def test_ignore_case_keeps_where_a_field_puts_its_nulls(reports: Database) -> None:
-    with reports.transaction():
+    with reports.connect():
         last = Report.query.order_by("label", ignore_case=True).all()
         first = Report.query.order_by("headline", ignore_case=True).all()
 
@@ -1412,7 +1412,7 @@ def test_a_query_works_without_the_model_layer(db: Database) -> None:
         PlainBase.metadata.create_all(conn)
 
     repository = TicketRepository(db)
-    with db.transaction():
+    with db.connect():
         for subject in ("a", "b", "c"):
             repository.add(subject)
 
@@ -1437,7 +1437,7 @@ def test_a_field_can_bring_the_join_it_needs(teams: Database) -> None:
 
 
 def test_a_field_does_not_join_a_table_the_query_already_has(teams: Database) -> None:
-    with teams.transaction():
+    with teams.connect():
         ordered = Member.query.join(Team).where(Team.name == "red").order_by("team")
 
         assert str(ordered.select).count("JOIN") == 1
@@ -1445,7 +1445,7 @@ def test_a_field_does_not_join_a_table_the_query_already_has(teams: Database) ->
 
 
 def test_ordering_by_a_joined_field_twice_joins_once(teams: Database) -> None:
-    with teams.transaction():
+    with teams.connect():
         ordered = Member.query.order_by("team", "team.desc")
 
         assert str(ordered.select).count("JOIN") == 1
@@ -1478,7 +1478,7 @@ def test_a_field_can_join_a_subquery_for_an_aggregate(teams: Database) -> None:
 
 
 def test_latest_and_earliest_take_a_field_name(reports: Database) -> None:
-    with reports.transaction():
+    with reports.connect():
         latest = Report.query.latest("name")
         earliest = Report.query.earliest("name")
 
@@ -1488,14 +1488,14 @@ def test_latest_and_earliest_take_a_field_name(reports: Database) -> None:
 
 
 def test_order_by_takes_a_join_of_its_own(teams: Database) -> None:
-    with teams.transaction():
+    with teams.connect():
         ordered = Member.query.order_by(OrderBy(Team.name.desc(), join=Member.team))
 
         assert [member.id for member in ordered.all()] == [1]
 
 
 def test_columns_are_ordered_by_name_too(reports: Database) -> None:
-    with reports.transaction():
+    with reports.connect():
         names = Report.query.only_columns(Report.name).order_by("name.desc").all()
 
         assert list(names) == ["c", "a", "B"]
@@ -1509,13 +1509,13 @@ def test_a_page_is_refused_without_an_order_even_when_empty(
 
 
 def test_get_takes_a_key_as_a_mapping(notes: Database) -> None:
-    with notes.transaction():
+    with notes.connect():
         assert Note.query.get({"id": 1}) is not None
         assert Note.query.get({"id": 2}) is None
 
 
 def test_a_missing_row_names_the_model(db: Database) -> None:
-    with db.transaction():
+    with db.connect():
         with pytest.raises(InstanceNotFoundError) as caught:
             User.query.get_one(99)
 
@@ -1527,7 +1527,7 @@ def test_a_missing_row_names_the_model(db: Database) -> None:
 
 
 def test_too_many_rows_name_the_model(db: Database) -> None:
-    with db.transaction():
+    with db.connect():
         with pytest.raises(MultipleInstancesFoundError) as caught:
             User.query.one()
 
@@ -1566,14 +1566,14 @@ def test_a_model_can_name_the_fields_it_sorts_by(db: Database) -> None:
 
 
 def test_a_model_that_says_nothing_sorts_by_every_column(db: Database) -> None:
-    with db.transaction():
+    with db.connect():
         assert set(User.query._orderable()) == {"id", "name", "team"}
 
 
 def test_a_page_breaks_ties_with_its_own_key_not_a_joined_column(
     teams: Database,
 ) -> None:
-    with teams.transaction():
+    with teams.connect():
         # `teams.id` is the same name as the model's key and a different column.
         statement = str(
             Member.query.join(Team).order_by(Team.id)._page_statement(limit=2, offset=0)
@@ -1618,7 +1618,7 @@ def test_two_aliases_of_one_table_are_two_joins(db: Database) -> None:
                 "away": OrderBy(away.name, join=away, on=cls.away_id == away.id),
             }
 
-    with db.transaction():
+    with db.connect():
         statement = str(Fixture.query.order_by("home", "away").select)
 
         assert statement.count("JOIN") == 2

@@ -301,7 +301,7 @@ async def scoped(db: Database) -> Database:
 
 @pytest.mark.anyio
 async def test_a_base_hands_its_query_class_to_every_model(scoped: Database) -> None:
-    async with scoped.transaction():
+    async with scoped.connect():
         assert isinstance(Player.query, NamedQuery)
         assert await Player.query.named("ada").count() == 1
         assert await Player.query.named("grace").count() == 0
@@ -309,7 +309,7 @@ async def test_a_base_hands_its_query_class_to_every_model(scoped: Database) -> 
 
 @pytest.mark.anyio
 async def test_the_filter_reaches_both_kinds_of_page(scoped: Database) -> None:
-    async with scoped.transaction():
+    async with scoped.connect():
         page = await Player.query.order_by(Player.id).page(limit=10)
         cursor_page = await Player.query.order_by(Player.id).cursor_page(limit=10)
 
@@ -321,7 +321,7 @@ async def test_the_filter_reaches_both_kinds_of_page(scoped: Database) -> None:
 
 @pytest.mark.anyio
 async def test_latest_and_earliest(db: Database) -> None:
-    async with db.transaction():
+    async with db.connect():
         latest = await User.query.latest(User.id)
         earliest = await User.query.earliest(User.id)
 
@@ -332,7 +332,7 @@ async def test_latest_and_earliest(db: Database) -> None:
 
 @pytest.mark.anyio
 async def test_query_get(db: Database) -> None:
-    async with db.transaction():
+    async with db.connect():
         user = await User.query.get(1)
 
         assert user is not None
@@ -349,7 +349,7 @@ async def test_query_get(db: Database) -> None:
 
 @pytest.mark.anyio
 async def test_get_hides_what_the_model_hides(scoped: Database) -> None:
-    async with scoped.transaction():
+    async with scoped.connect():
         assert await Player.query.get(2) is None
         assert await Player.query.unfiltered().get(2) is not None
 
@@ -358,7 +358,7 @@ async def test_get_hides_what_the_model_hides(scoped: Database) -> None:
 async def test_get_loads_options_onto_a_row_already_in_the_session(
     scoped: Database,
 ) -> None:
-    async with scoped.transaction():
+    async with scoped.connect():
         first = await Player.query.get(1)
         again = await Player.query.options(defer(Player.name)).get_one(1)
 
@@ -369,14 +369,14 @@ async def test_get_loads_options_onto_a_row_already_in_the_session(
 async def test_a_page_is_refused_without_an_order_even_when_empty(
     db: Database,
 ) -> None:
-    async with db.transaction():
+    async with db.connect():
         with pytest.raises(UnorderedPageError):
             await User.query.where(User.id > 100).page(limit=10)
 
 
 @pytest.mark.anyio
 async def test_missing_and_ambiguous_rows_name_the_model(db: Database) -> None:
-    async with db.transaction():
+    async with db.connect():
         with pytest.raises(InstanceNotFoundError) as missing:
             await User.query.get_one(99)
 
