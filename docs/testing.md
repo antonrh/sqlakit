@@ -34,6 +34,9 @@ and the rollback cannot undo it.
 
 ## The database a test needs
 
+A marker says which tests get one. A hook gives those tests the fixture that
+opens the transaction, so the rest of the suite connects to nothing:
+
 ```python title="conftest.py"
 from collections.abc import Iterator
 
@@ -47,19 +50,21 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "db: the test needs a database")
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Give a database to the marked tests and to nothing else."""
+    for item in items:
+        if isinstance(item, pytest.Function) and item.get_closest_marker("db"):
+            item.fixturenames.append("_db_transaction")
+
+
 @pytest.fixture(scope="session")
-def _create_db() -> Iterator[None]:
+def _db_schema() -> Iterator[None]:
     with Model.provisioned_tables():
         yield
 
 
-@pytest.fixture(autouse=True)
-def _db_marker(request: pytest.FixtureRequest) -> Iterator[None]:
-    if request.node.get_closest_marker("db") is None:
-        yield
-        return
-
-    request.getfixturevalue("_create_db")
+@pytest.fixture
+def _db_transaction(_db_schema: None) -> Iterator[None]:
     with db.transaction(rollback=True):
         yield
 ```
@@ -82,19 +87,13 @@ under test ran on the same session as the test, so `user` is the same instance
 it changed, and a fresh query would return that same object. The test would
 pass even if nothing had reached the database.
 
-`_db_marker` runs for every test, but returns immediately when the marker is
-absent, so a test that doesn't need a database opens no connection. When no
-test is marked, nothing builds the schema either, because only that branch
-requests `_create_db`.
+An unmarked test never asks for `_db_transaction`, so nothing connects, and
+`_db_schema` runs only when some test does ask.
 
 ## With await
 
-Switching to an async database changes one thing: the fixtures have to be
-async, because the transaction has to open on the loop the test runs on. An
-async fixture can't be fetched through `getfixturevalue`: that call is
-synchronous and can't await anything. So the conftest handles the `db` marker
-at collection time, in `pytest_collection_modifyitems`, which adds the fixture
-to the marked tests:
+The fixtures become async, because the transaction has to open on the loop the
+test runs on. The marker and the hook are the same:
 
 ```python title="conftest.py (asyncio)"
 from collections.abc import AsyncIterator
@@ -113,7 +112,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Give a database to the marked tests and to nothing else."""
     for item in items:
         if isinstance(item, pytest.Function) and item.get_closest_marker("db"):
-            item.fixturenames.append("_db_marker")
+            item.fixturenames.append("_db_transaction")
 
 
 @pytest.fixture(scope="session")
@@ -122,19 +121,19 @@ def anyio_backend() -> str:
 
 
 @pytest.fixture(scope="session")
-async def _create_db() -> AsyncIterator[None]:
+async def _db_schema() -> AsyncIterator[None]:
     async with Model.provisioned_tables():
         yield
 
 
 @pytest.fixture
-async def _db_marker(_create_db: None) -> AsyncIterator[None]:
+async def _db_transaction(_db_schema: None) -> AsyncIterator[None]:
     async with db.transaction(rollback=True):
         yield
 ```
 
-`pytest` reads `item.fixturenames` at that moment. It ignores a `usefixtures`
-marker added this late.
+`pytest` reads `item.fixturenames` at collection time. It ignores a
+`usefixtures` marker added that late.
 
 Mark your tests as `anyio`, which you'd be doing for async tests anyway:
 
@@ -163,7 +162,7 @@ from sqlakit import import_models
 
 
 @pytest.fixture(scope="session")
-def _create_db() -> Iterator[None]:
+def _db_schema() -> Iterator[None]:
     import_models("app")
     with Model.provisioned_tables():
         yield
@@ -186,7 +185,7 @@ it. An association table lands on the same database as the rows it joins:
 
 ```python
 @pytest.fixture(scope="session")
-def _create_db() -> Iterator[None]:
+def _db_schema() -> Iterator[None]:
     with Model.provisioned_tables(), Model.provisioned_tables("warehouse"):
         yield
 ```
@@ -195,13 +194,8 @@ Then open a transaction on each one. `transactions()` does that for every
 database in the registry:
 
 ```python
-@pytest.fixture(autouse=True)
-def _db_marker(request: pytest.FixtureRequest) -> Iterator[None]:
-    if request.node.get_closest_marker("db") is None:
-        yield
-        return
-
-    request.getfixturevalue("_create_db")
+@pytest.fixture
+def _db_transaction(_db_schema: None) -> Iterator[None]:
     with db.transactions(rollback=True):
         yield
 ```
@@ -235,8 +229,8 @@ comes back empty. Keep routers off in tests. A fresh registry has none, and
 the fixture below clears them after each test:
 
 ```python
-@pytest.fixture(autouse=True)
-def _db_marker() -> Iterator[None]:
+@pytest.fixture
+def _db_transaction(_db_schema: None) -> Iterator[None]:
     with db.transactions(rollback=True):
         yield
     db.route()  # no routers, reads and writes both go to default
@@ -335,7 +329,7 @@ def alembic_config(pytestconfig: pytest.Config) -> Iterator[alembic.config.Confi
 
 
 @pytest.fixture(scope="session")
-def _create_db(alembic_config: alembic.config.Config) -> Iterator[None]:
+def _db_schema(alembic_config: alembic.config.Config) -> Iterator[None]:
     with db.transaction() as conn:
         alembic_config.attributes["connection"] = conn
         alembic.command.upgrade(alembic_config, "head")
@@ -350,7 +344,7 @@ def _create_db(alembic_config: alembic.config.Config) -> Iterator[None]:
 
 ```python
 @pytest.fixture(scope="session")
-async def _create_db(alembic_config: alembic.config.Config) -> AsyncIterator[None]:
+async def _db_schema(alembic_config: alembic.config.Config) -> AsyncIterator[None]:
     def upgrade(connection: sa.Connection) -> None:
         alembic_config.attributes["connection"] = connection
         alembic.command.upgrade(alembic_config, "head")
