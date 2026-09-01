@@ -133,7 +133,7 @@ async def test_chunks_walk_the_whole_result(db: Database) -> None:
 async def test_a_template_that_writes_says_how_many_rows_it_touched(
     db: Database,
 ) -> None:
-    async with db.transaction():
+    async with db.connect():
         touched = await db.sql("notes/rename.sql", to="z", from_="a").execute()
 
         assert touched == 1

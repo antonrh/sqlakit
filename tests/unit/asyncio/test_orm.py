@@ -174,7 +174,7 @@ async def test_restoring_and_forcing(db: Database) -> None:
     async with db.transaction():
         assert await Memo.query.where(Memo.id == 1).delete() == 1
 
-    async with db.transaction():
+    async with db.connect():
         await (await Memo.query.only_deleted().one()).restore()
 
     async with db.connect():

@@ -251,7 +251,7 @@ async def test_a_transaction_inside_autocommit_opens_its_own_connection(
 
 @pytest.mark.anyio
 async def test_nested_block_gets_its_own_session(users_db: Database) -> None:
-    async with users_db.transaction():
+    async with users_db.connect():
         session = users_db.session
 
         async with users_db.session_factory() as inner:
@@ -446,6 +446,7 @@ async def test_retry_is_skipped_when_the_block_joins_a_transaction(
         raise ValueError
 
     with pytest.raises(ValueError):
+        # The point of the test: the block already owns a transaction.
         async with users_db.transaction():
             await flaky()
 
@@ -472,7 +473,7 @@ async def test_a_transaction_that_cannot_connect_leaves_nothing_bound() -> None:
     db = Database("sqlite+aiosqlite:////nonexistent/path/db.sqlite3")
 
     with pytest.raises(sa.exc.OperationalError):
-        async with db.transaction():
+        async with db.connect():
             pass  # pragma: no cover
 
     with pytest.raises(MissingConnectionError):
@@ -655,7 +656,7 @@ async def test_the_other_blocks_connect_on_entry(
 ) -> None:
     async with db.connect():
         assert len(checkouts) == 1
-    async with db.transaction():
+    async with db.connect():
         assert len(checkouts) == 2
     async with db.autocommit():
         assert len(checkouts) == 3
