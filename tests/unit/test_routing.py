@@ -14,7 +14,7 @@ from sqlakit import (
     AliasInUseError,
     Database,
     DefaultAliasError,
-    MissingDefaultDatabaseError,
+    MissingRegistryError,
     MissingSessionError,
     Router,
     UnknownDatabaseError,
@@ -233,7 +233,7 @@ def test_a_model_with_no_source_cannot_resolve_a_name() -> None:
     class Loose:
         __db__ = "main"
 
-    with pytest.raises(MissingDefaultDatabaseError):
+    with pytest.raises(MissingRegistryError, match="`Loose` has no registry"):
         db_for(Loose)
 
 
@@ -248,7 +248,7 @@ def test_a_query_on_a_model_with_no_source_cannot_take_an_alias() -> None:
 
     db = Database("sqlite://", engine_args={"poolclass": sa.StaticPool})
 
-    with pytest.raises(MissingDefaultDatabaseError):
+    with pytest.raises(MissingRegistryError, match="Pass the database itself"):
         Query(Row, db).using("replica")
 
     assert Query(Row, db).using(db).db is db

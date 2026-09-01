@@ -262,6 +262,8 @@ except ValueError:  # any bad input, from here or elsewhere
 
 ::: sqlakit.MissingDefaultDatabaseError
 
+::: sqlakit.MissingRegistryError
+
 ::: sqlakit.InvalidDatabaseConfigError
 
 ::: sqlakit.MissingDatabaseUrlError
