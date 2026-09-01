@@ -603,11 +603,32 @@ class Member(Base):
         return {"name": cls.name, "team": OrderBy(Team.name, join=cls.team)}
 
 
+class Guest(Base):
+    """A member of no team, for the join that has to keep them."""
+
+    __tablename__ = "guests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    team_id: Mapped[int | None] = mapped_column(sa.ForeignKey("teams.id"), default=None)
+    team: Mapped[Team | None] = relationship()
+
+    @classmethod
+    def __orderable__(cls) -> dict[str, Any]:
+        return {
+            "team": OrderBy(Team.name, join=cls.team),
+            "team_only": OrderBy(Team.name, join=cls.team, outer=False),
+            "team_name": Team.name,  # the join is worked out from the key
+        }
+
+
 @pytest.fixture
 def teams(db: Database) -> Database:
     with db.transaction():
         Team(id=1, name="red").save()
         Member(id=1, name="ada", team_id=1).save()
+        Guest(id=1, name="ada", team_id=1).save()
+        Guest(id=2, name="bob").save()
     return db
 
 
@@ -1382,6 +1403,40 @@ def test_a_model_may_add_to_the_columns_it_offers(db: Database) -> None:
         rows = Extended.query.order_by("lowered").all()
 
         assert [row.name for row in rows] == ["a", "b", "c", "d", "e"]
+
+
+def test_ordering_by_a_joined_field_keeps_the_rows_with_no_match(
+    teams: Database,
+) -> None:
+    with teams.connect():
+        rows = Guest.query.order_by("team", nulls="last").all()
+
+        assert [guest.name for guest in rows] == ["ada", "bob"]
+        assert Guest.query.order_by("team").page(limit=10).total == 2
+
+
+def test_a_column_of_another_table_joins_it(teams: Database) -> None:
+    query = Guest.query.order_by("team_name", nulls="last")
+    statement = str(query.select)
+
+    assert statement.count("JOIN") == 1
+    assert "LEFT OUTER JOIN" in statement
+
+    with teams.connect():
+        assert [guest.name for guest in query.all()] == ["ada", "bob"]
+
+
+def test_two_fields_of_one_table_join_it_once(teams: Database) -> None:
+    query = Guest.query.order_by("team_name", "team")
+
+    assert str(query.select).count("JOIN") == 1
+
+
+def test_an_inner_join_drops_them(teams: Database) -> None:
+    with teams.connect():
+        rows = Guest.query.order_by("team_only").all()
+
+        assert [guest.name for guest in rows] == ["ada"]
 
 
 def test_ignore_case_compares_without_regard_to_case(reports: Database) -> None:

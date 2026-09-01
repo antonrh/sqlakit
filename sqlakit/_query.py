@@ -294,10 +294,11 @@ class CursorPage(Generic[ModelT]):
 
 
 class OrderBy(NamedTuple):
-    """A field to order by that lives in another table.
+    """A field to order by that a foreign key cannot reach on its own.
 
-    Name the table, or the relationship that reaches it, and a query ordered by
-    that field joins it once, however many fields name it:
+    A plain column of another table needs none of this: naming it in
+    ``__orderable__`` joins its table on the key between them. This is for what
+    that cannot answer, an alias, a subquery, or two paths to one table:
 
     ```python
     {"team": OrderBy(Team.name, join=cls.team)}
@@ -306,11 +307,16 @@ class OrderBy(NamedTuple):
     Join what holds one row. A collection multiplies the rows, and a page of
     multiplied rows counts wrong: join a subquery that aggregates them instead,
     with the ``on`` it needs.
+
+    The join is an outer one, so ordering by the field returns the rows with
+    nothing on the other side as well. ``outer=False`` makes it an inner join,
+    which drops them, and ``nulls`` on `order_by` says where they go.
     """
 
     expression: Any
     join: Any = None
     on: Any = None
+    outer: bool = True
 
 
 class SupportsClause(Protocol):
@@ -1013,9 +1019,9 @@ def ordered(
         clause, join = _ordering_for(criterion, fields, ignore_case=folded)
         clauses.append(_with_nulls(clause, nulls))
         if join is not None:
-            target, onclause = join
+            target, onclause, outer = join
             if not _is_joined(select, target):
-                select = select.join(target, onclause)
+                select = select.join(target, onclause, isouter=outer)
     return select.order_by(*clauses)
 
 
@@ -1027,16 +1033,16 @@ def _ordering_for(
 ) -> tuple[Any, Any]:
     """Return the clause a criterion stands for, and the table it needs."""
     if isinstance(criterion, OrderBy):
-        return criterion.expression, (criterion.join, criterion.on)
+        return criterion.expression, (criterion.join, criterion.on, criterion.outer)
     if not isinstance(criterion, str):
         return criterion, None
     asked, descending, nulls = _parse_sort_field(criterion)
     name = _field_named(asked, fields)
     field = fields[name]
     if isinstance(field, OrderBy):
-        column, join = field.expression, (field.join, field.on)
+        column, join = field.expression, (field.join, field.on, field.outer)
     else:
-        column, join = field, None
+        column, join = field, _join_for(field)
     if ignore_case is True or (ignore_case is not False and name in ignore_case):
         column = _case_insensitive(column)
     return _sort_clause(column, descending=descending, nulls=nulls), join
@@ -1153,6 +1159,21 @@ def _flatten(criteria: Iterable[Any]) -> Iterator[Any]:
             yield from _flatten(criterion)
         else:
             yield criterion
+
+
+def _join_for(field: Any) -> tuple[Any, None, bool] | None:  # noqa: ANN401
+    """Return the table a field lives in, for a field that is a plain column.
+
+    A column of another table is reachable only through a join, and `SQLAlchemy`
+    works the condition out from the foreign key. An expression may name several
+    tables or none, so it is left alone: `OrderBy` says what to join for those,
+    as it does for an alias or a subquery.
+    """
+    column = _as_column(field)
+    if not isinstance(column, sa.Column):
+        return None
+    table = getattr(column, "table", None)
+    return None if table is None else (table, None, True)
 
 
 def _is_joined(select: sa.Select[Any], target: Any) -> bool:  # noqa: ANN401
