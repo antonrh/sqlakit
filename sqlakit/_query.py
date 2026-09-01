@@ -587,6 +587,7 @@ class BaseQuery(Generic[ModelT]):
                 criteria,
                 ignore_case=ignore_case,
                 nulls=nulls,
+                model=self.model,
             )
         )
 
@@ -990,13 +991,14 @@ def _mapped_column(model: type[Any], name: str) -> Any:  # noqa: ANN401
     return column
 
 
-def ordered(
+def ordered(  # noqa: PLR0913 - the shape of an ordering, not a call site
     select: sa.Select[Any],
     fields: Mapping[str, Any],
     criteria: Iterable[Any],
     *,
     ignore_case: bool | Sequence[str] = False,
     nulls: str | None = None,
+    model: type[Any] | None = None,
 ) -> sa.Select[Any]:
     """Return the statement ordered by these criteria, joining what they need.
 
@@ -1018,7 +1020,7 @@ def ordered(
     clauses = []
     joined: dict[str, Any] = {}
     for criterion in named:
-        clause, join = _ordering_for(criterion, fields, ignore_case=folded)
+        clause, join = _ordering_for(criterion, fields, ignore_case=folded, model=model)
         clauses.append(_with_nulls(clause, nulls))
         if join is not None:
             target, onclause, outer = join
@@ -1033,6 +1035,7 @@ def _ordering_for(
     fields: Mapping[str, Any],
     *,
     ignore_case: bool | set[str],
+    model: type[Any] | None = None,
 ) -> tuple[Any, Any]:
     """Return the clause a criterion stands for, and the table it needs."""
     if isinstance(criterion, OrderBy):
@@ -1045,7 +1048,7 @@ def _ordering_for(
     if isinstance(field, OrderBy):
         column, join = field.expression, (field.join, field.on, field.outer)
     else:
-        column, join = field, _join_for(field)
+        column, join = field, _join_for(field, model)
     if ignore_case is True or (ignore_case is not False and name in ignore_case):
         column = _case_insensitive(column)
     return _sort_clause(column, descending=descending, nulls=nulls), join
@@ -1164,19 +1167,40 @@ def _flatten(criteria: Iterable[Any]) -> Iterator[Any]:
             yield criterion
 
 
-def _join_for(field: Any) -> tuple[Any, None, bool] | None:  # noqa: ANN401
-    """Return the table a field lives in, for a field that is a plain column.
+def _join_for(
+    field: Any,  # noqa: ANN401
+    model: type[Any] | None,
+) -> tuple[Any, None, bool] | None:
+    """Return what to join for a field that is a plain column of another table.
 
-    A column of another table is reachable only through a join, and `SQLAlchemy`
-    works the condition out from the foreign key. An expression may name several
-    tables or none, so it is left alone: `OrderBy` says what to join for those,
-    as it does for an alias or a subquery.
+    A relationship of the model that reaches that table is the join, condition
+    and all, which is what a view with no foreign key needs. Failing that, the
+    table itself, and `SQLAlchemy` works the condition out from the key.
+
+    An expression may name several tables or none, so it is left alone:
+    `OrderBy` says what to join for those, as it does for an alias, a subquery,
+    or a table two relationships reach.
     """
     column = _as_column(field)
     if not isinstance(column, sa.Column):
         return None
     table = getattr(column, "table", None)
-    return None if table is None else (table, None, True)
+    if table is None:
+        return None
+    return (_relationship_to(model, table) or table, None, True)
+
+
+def _relationship_to(model: type[Any] | None, table: Any) -> Any:  # noqa: ANN401
+    """Return the model's one relationship that reaches this table, if there is one."""
+    mapper = None if model is None else sa.inspect(model, raiseerr=False)
+    if mapper is None:
+        return None
+    reaching = [
+        getattr(model, relationship.key)
+        for relationship in mapper.relationships
+        if relationship.entity.persist_selectable is table
+    ]
+    return reaching[0] if len(reaching) == 1 else None
 
 
 def _reject_conflicting_join(

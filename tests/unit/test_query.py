@@ -13,6 +13,7 @@ from sqlalchemy.orm import (
     InstrumentedAttribute,
     Mapped,
     aliased,
+    foreign,
     joinedload,
     mapped_column,
     relationship,
@@ -1473,6 +1474,48 @@ def test_an_alias_gives_each_field_its_own_join(teams: Database) -> None:
             }
 
     assert str(Split(Guest, teams).order_by("red", "blue").select).count("JOIN") == 2
+
+
+class Readings(Base):
+    """A table with no key back, as a view has none."""
+
+    __tablename__ = "readings"
+
+    guest_id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(primary_key=True)
+    value: Mapped[int] = mapped_column(default=0)
+
+
+class Watched(Guest):
+    """Reaches the readings by a condition no foreign key describes."""
+
+    readings: Mapped[Readings] = relationship(
+        primaryjoin=lambda: sa.and_(
+            Guest.id == foreign(Readings.guest_id), Readings.kind == "email"
+        ),
+        viewonly=True,
+    )
+
+    @classmethod
+    def __orderable__(cls) -> dict[str, Any]:
+        return {"value": Readings.value}
+
+
+def test_a_relationship_is_the_join_when_one_reaches_the_table(
+    teams: Database,
+) -> None:
+    with teams.transaction():
+        Readings(guest_id=1, kind="email", value=5).save()
+        Readings(guest_id=1, kind="sms", value=99).save()
+
+    statement = str(Watched.query.order_by("value.desc").select)
+
+    assert "readings.kind = " in statement  # the relationship's own condition
+    with teams.connect():
+        assert [guest.name for guest in Watched.query.order_by("value.desc").all()] == [
+            "ada",
+            "bob",
+        ]
 
 
 def test_ignore_case_compares_without_regard_to_case(reports: Database) -> None:
