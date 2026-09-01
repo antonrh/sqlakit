@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.2
+
+### Fixed
+
+- A template value may be named `template` or `source`. Every keyword is a
+  value, and those two collided with the argument holding the file name, which
+  is positional now on `sql()`, `from_file`, `from_string` and `from_sql`.
+
 ## 0.7.1
 
 ### Fixed
