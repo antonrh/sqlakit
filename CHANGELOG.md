@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.0
+
+### Changed
+
+- `Page.total` is typed by how the page was read. `page(limit=20)` returns a
+  `Page[User]` whose `total` is an `int`, and `page(total=False)` returns a
+  `Page[User, None]`. Nothing changes at run time, but a type checker now
+  refuses a page read without counting where a counted one is expected, and
+  one without PEP 696 type parameter defaults refuses the library itself.
+  `mypy` has them from 1.12.
+
+### Added
+
+- `UncountedPage[User]`, the name for a page read with `total=False`.
+- `orderable_columns(model)`, every mapped column of a model. What an
+  `__orderable__` that adds to the columns rather than replacing them starts
+  from, since calling `orderable` there reads the method that is running.
+
 ## 0.5.1
 
 ### Added
