@@ -355,6 +355,20 @@ db.query(User).order_by("team").page(limit=20)
 db.query(User).join(Team).where(Team.active).order_by("team").page(limit=20)
 ```
 
+A column of another table needs no `OrderBy` at all. Name it, and the table is
+joined on the key between them:
+
+```python
+{"opens": Stats.opens, "clicks": Stats.clicks}
+```
+
+`OrderBy` is for what a foreign key cannot answer: an alias, a subquery, or two
+paths to the same table.
+
+Either way the join is an outer one, so the rows with nothing on the other side
+come back as well, where `nulls` puts them. `OrderBy(..., outer=False)` drops
+them instead. A table named by several fields is joined once.
+
 Only join relationships that match one row. A collection multiplies the rows,
 and the page count comes out wrong. For a collection, join a subquery that
 aggregates it, with an explicit `on`:
