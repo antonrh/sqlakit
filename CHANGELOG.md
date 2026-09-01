@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.1
+
+### Fixed
+
+- The `pytest` plugin opens the test's transaction before the fixtures the test
+  asked for. It opened it after them, so a fixture that wrote rows wrote them
+  outside the transaction: with the model layer that raised
+  `MissingSessionError`, and a fixture that opened a session of its own left
+  rows behind for the tests that followed. A fixture of a wider scope, one that
+  seeds a module or a class, still wraps the test.
+
+### Documentation
+
+- The hand-written conftest inserts the fixture rather than appending it, and
+  says what the order means.
+- A project with no model layer has a section of its own, on `sqlakit_db` and
+  `sqlakit_metadata`.
+
 ## 0.8.0
 
 ### Added
