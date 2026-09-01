@@ -231,36 +231,26 @@ db.query(User).order_by(sort)  # a string, or None when the client sent nothing
 db.query(User).order_by(["team", "name.desc"])  # or several
 ```
 
-The name is matched whichever case convention it arrives in, so an API sending
-`userName` orders by the `user_name` the model declares, and you have nothing
-to translate. A model offering both spellings is matched exactly, and a name
-that could mean either is refused.
+A name is matched whichever case convention it arrives in, so `userName` finds
+the `user_name` a model declares. A model offering both spellings is matched
+exactly.
 
-`nulls` says where the rows with no value go:
+`nulls` says where the rows with no value go, `first` or `last`:
 
 ```python
 db.query(User).order_by(sort, nulls="last").page(limit=20)
 ```
 
-Without it the database answers, and the answer differs by dialect and by
-direction. The same table, ordered by a column whose second row is `NULL`:
+Without it the database decides, and they disagree:
 
 | | `ASC` | `DESC` |
 | --- | --- | --- |
 | `SQLite`, `MySQL` | `NULL` first | `NULL` last |
 | `PostgreSQL` | `NULL` last | `NULL` first |
 
-So a sort that reads one way in a test on `SQLite` reads the other way in
-production, and the empty rows change ends whenever a client reverses the
-direction.
-
-`nulls` fills in only what nothing else said. A sort string that names its own
-(`sent_at.desc.nulls_first`) keeps it, and so does a field the model declared
-as `sa.nulls_first(...)`.
-
-`MySQL` and `MariaDB` have no `NULLS FIRST` or `NULLS LAST`. There the clause
-comes out as the two the standard is short for, `v IS NULL ASC, v ASC`, so the
-rows land in the same places as everywhere else.
+A sort string that names its own (`sent_at.desc.nulls_first`) wins over it, and
+so does a field the model declared as `sa.nulls_first(...)`. `MySQL` has no
+`NULLS LAST` at all, so there the clause comes out as `v IS NULL ASC, v ASC`.
 
 `ignore_case` compares text without regard to case:
 
@@ -275,34 +265,18 @@ of it is compared that way:
 db.query(User).order_by(sort, ignore_case=["name"]).page(limit=20)
 ```
 
-How that is compared is the database's to decide. `SQLite` orders by
-`name COLLATE NOCASE`, and a database with no collation named for it orders by
-`lower(name)`. The dialect is read when the query runs, not when it is built,
-so the same model works on `SQLite` under test and on the server it ships to.
-
-Name the collation you created, once, before any query runs:
+The database decides how. `SQLite` orders by `COLLATE NOCASE`, and everything
+else by `lower(name)` until you name a collation:
 
 ```python
 sqlakit.CASE_INSENSITIVE_COLLATIONS["postgresql"] = "und-ci-ai"
 ```
 
-Naming it is not only about the index. `lower()` folds the case and leaves the
-accents, so `résumé` and `resume` stay apart, while a collation like
-`und-ci-ai` folds both. The two order differently, and only the collation reads
-an index built on the column.
+Name one if the column has a collation of its own. `lower()` ignores it, and
+with it the index and the accent folding: `résumé` and `resume` stay apart. A
+column that is already case-insensitive needs no `ignore_case` at all.
 
-That matters most when the column already carries a case-insensitive collation
-from the schema. Ordering by it is already case-insensitive, so `ignore_case`
-has nothing to add, and calling it without naming the collation replaces what
-the schema does with `lower()`. Name the same collation the column has, or
-leave `ignore_case` off.
-
-A collation decides the whole order, the alphabet and the accents along with
-the case. This one is asked for only by `ignore_case`. To sort by another,
-name it on the column in `__orderable__`: `cls.name.collate("de-DE")`.
-
-Cursor pagination doesn't support either form, so use `ignore_case` with
-`page`.
+A cursor cannot page either form, so use `ignore_case` with `page`.
 
 By default you can order by **every mapped column**, and `__orderable__`
 narrows that to the names an API may send:

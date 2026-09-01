@@ -146,22 +146,7 @@ with db.using("replica"):
 ## A registry of the model's own
 
 Everything above uses `sqlakit.db`, the registry an application imports. A set
-of models can have its own instead, which nothing else in the process shares.
-`__dbs__` is where a model looks an alias up:
-
-```python
-from sqlalchemy.orm import DeclarativeBase
-
-from sqlakit import Database, Databases
-from sqlakit.orm import ModelMixin
-
-
-class Base(ModelMixin, DeclarativeBase):
-    __dbs__ = Databases()
-```
-
-`register_db` fills it from databases you built yourself, a shard that only
-exists once the application runs among them:
+of models can have its own instead, filled with databases you built yourself:
 
 ```python
 Base.register_db(Database(DB1_URL), alias="db1")
@@ -171,16 +156,12 @@ with Base.dbs.using("db2").transaction():
     User(name="ada").save()
 ```
 
-The first call builds the registry, so the `__dbs__ = Databases()` line above
-only matters when you configure it from settings as well. `Base.dbs` reaches
-it, and a model under `Base` registers into the same one.
+The first call builds the registry, so nothing global is configured.
+`Base.dbs` reaches it, and a model under `Base` registers into the same one.
+Placement works as above: `__db__`, the routers, then the open `using()` block.
 
-The rules are the ones above: `__db__`, then the routers, then the open
-`using()` block. `using()` moves a model left on the default alias, which is
-what makes the switch work.
-
-`register` does the same on a registry directly, for a shard added while the
-application runs:
+`register` does the same on a registry directly, for a shard that appears while
+the application runs:
 
 ```python
 db.register("shard-7", Database(SHARD_URL))

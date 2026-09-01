@@ -40,6 +40,16 @@ no trailing colon. Prose wraps at 80 columns.
 `tools/lint_docs.py` catches the mechanical half of this. The rest is
 judgement, and belongs to review.
 
+## A page is a reference
+
+It answers "how do I" and "what happens", in the fewest lines that stay true.
+What went into the work stays out: the measurements, the dialect internals, the
+alternatives weighed, the reason a default is what it is. A reader looking
+something up wants the rule and an example, not the investigation behind them.
+
+Two things to grep for after writing: three paragraphs where the API takes one
+argument, and a paragraph restating the table above it.
+
 ## What goes where
 
 - **`README.md` and `docs/index.md` are the shop window.** What the library is,
