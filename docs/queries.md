@@ -362,8 +362,26 @@ joined on the key between them:
 {"opens": Stats.opens, "clicks": Stats.clicks}
 ```
 
-`OrderBy` is for what a foreign key cannot answer: an alias, a subquery, or two
-paths to the same table.
+A relationship of the model that reaches that table is used instead of the key,
+condition and all. A view carrying no key is reachable that way:
+
+```python
+class Campaign(Model):
+    analytics: Mapped[Analytics] = relationship(
+        primaryjoin=lambda: sa.and_(
+            Campaign.id == sa.orm.foreign(Analytics.campaign_id),
+            Analytics.kind == "email",
+        ),
+        viewonly=True,
+    )
+
+    @classmethod
+    def __orderable__(cls) -> Mapping[str, Any]:
+        return {"bounces": Analytics.bounces}
+```
+
+`OrderBy` is for the rest: an alias, a subquery, or a table two relationships
+reach.
 
 Either way the join is an outer one, so the rows with nothing on the other side
 come back as well, where `nulls` puts them. `OrderBy(..., outer=False)` drops

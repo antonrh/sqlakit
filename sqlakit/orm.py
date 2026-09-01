@@ -444,6 +444,7 @@ class ColumnQuery(Generic[RowT]):
                 criteria,
                 ignore_case=ignore_case,
                 nulls=nulls,
+                model=self.model,
             )
         )
 
