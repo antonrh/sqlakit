@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.7.0
+
+### Changed
+
+- Ordering by a field in another table joins it with an outer join. It was an
+  inner one, so a row with nothing on the other side disappeared from the
+  results and `page.total` counted it out. `OrderBy(..., outer=False)` keeps
+  the inner join, and `nulls` says where the rows with no match go.
+- A model that looks an alias up nowhere raises `MissingRegistryError`, naming
+  the model and the alias. It raised `MissingDefaultDatabaseError`, whose
+  message is about a configuration mapping needing a `default` key.
+
+### Added
+
+- A plain column of another table can be named in `__orderable__` directly,
+  without an `OrderBy`. Its table is joined on the key between them, once
+  however many fields name it. Naming one used to build a statement whose
+  `FROM` lacked the table.
+- `register_db(db)` without an alias points the model at that database, the
+  same as `set_db(db)`.
+
 ## 0.6.0
 
 ### Changed
