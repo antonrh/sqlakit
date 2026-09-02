@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Detail } from "@/components/detail"
 import { List } from "@/components/list"
+import { Mark } from "@/components/mark"
 import { Strip } from "@/components/strip"
 import { Waiting } from "@/components/waiting"
 import { ThemeButton } from "@/components/theme"
@@ -110,8 +111,11 @@ export function App() {
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       <header className="flex flex-wrap items-center gap-3 border-b px-4 py-2">
-        <h1 className="font-mono text-base font-bold">
-          <span className="text-teal-700 dark:text-teal-300">SQLA</span>Kit
+        <h1 className="flex items-center gap-2 font-mono text-base font-bold">
+          <Mark className="size-5 text-teal-700 dark:text-teal-300" />
+          <span>
+            <span className="text-teal-700 dark:text-teal-300">SQLA</span>Kit
+          </span>
         </h1>
 
         <button
