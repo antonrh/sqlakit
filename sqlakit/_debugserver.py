@@ -144,7 +144,22 @@ class DebugServer:
     @property
     def sender(self) -> str:
         """The name the page groups this application under."""
-        return self.app or pathlib.Path(sys.argv[0]).name or "python"
+        return self.app or _program()
+
+
+def _program() -> str:
+    """Name the running program, for a sender that named no application.
+
+    `python -m myapp` runs a file called `__main__.py`, which says nothing on
+    a page, so the module it was started as is the name instead.
+    """
+    started = getattr(sys.modules.get("__main__"), "__spec__", None)
+    if started is not None and started.name:
+        return started.name.removesuffix(".__main__")
+    script = pathlib.Path(sys.argv[0])
+    if script.name in ("", "__main__.py"):
+        return script.parent.name or "python"
+    return script.name
 
 
 def as_payload(

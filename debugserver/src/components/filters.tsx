@@ -30,12 +30,15 @@ function Row({
   on,
   onPick,
   dot,
+  note,
 }: {
   label: React.ReactNode
   count: number
   on: boolean
   onPick: () => void
   dot?: Kind
+  /** Where the thing lives, for a page with more than one database. */
+  note?: string
 }) {
   return (
     <button
@@ -49,7 +52,10 @@ function Row({
     >
       {dot && <span className={cn("size-1.5 shrink-0 rounded-xs", TONE[dot].fill)} />}
       <span className="truncate">{label}</span>
-      <span className="ml-auto text-xs tabular-nums opacity-70">{count}</span>
+      {note && (
+        <span className="ml-auto shrink-0 font-mono text-[11px] opacity-70">{note}</span>
+      )}
+      <span className={cn("text-xs tabular-nums opacity-70", !note && "ml-auto")}>{count}</span>
     </button>
   )
 }
@@ -160,6 +166,21 @@ export function Filters({ runs }: { runs: Run[] }) {
           }
         />
 
+        {databases > 1 && (
+          <Group
+            title="databases"
+            rows={tally(runs, (run) => run.databases).map(([name, many]) => (
+              <Row
+                key={name}
+                label={<span className="font-mono">{name}</span>}
+                count={many}
+                on={terms.includes(`db:${name}`)}
+                onPick={() => search_(withTerm(search, `db:${name}`))}
+              />
+            ))}
+          />
+        )}
+
         <Group
           title="tags"
           rows={tally(runs, (run) => run.tags).map(([tag, many]) => (
@@ -192,16 +213,8 @@ export function Filters({ runs }: { runs: Run[] }) {
           rows={tally(runs, (run) => run.tables).map(([table, many]) => (
             <Row
               key={table}
-              label={
-                <span className="font-mono">
-                  {table}
-                  {databases > 1 && (
-                    <span className="ml-1.5 text-muted-foreground">
-                      {(touched.get(table) ?? []).join(" · ")}
-                    </span>
-                  )}
-                </span>
-              }
+              label={<span className="font-mono">{table}</span>}
+              note={databases > 1 ? (touched.get(table) ?? []).join(" · ") : undefined}
               count={many}
               on={terms.includes(`table:${table}`)}
               onPick={() => search_(withTerm(search, `table:${table}`))}

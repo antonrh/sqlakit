@@ -6,10 +6,12 @@ import datetime
 import decimal
 import enum
 import json
+import sys
 import threading
 import urllib.error
 import urllib.request
 import uuid
+from importlib.machinery import ModuleSpec
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -265,6 +267,25 @@ def test_a_debug_server_says_who_is_sending() -> None:
     assert DebugServer.of(("localhost", 5555)) == DebugServer("localhost", 5555)
     assert DebugServer.of(named) is named
     assert DebugServer("localhost", 5555).sender  # the program that sent it
+
+
+def test_a_sender_with_no_application_is_named_after_the_program(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    main = sys.modules["__main__"]
+    monkeypatch.setattr(main, "__spec__", None, raising=False)
+    monkeypatch.setattr(sys, "argv", ["/app/web.py"])
+
+    assert DebugServer("localhost", 5555).sender == "web.py"
+
+    # `python -m myapp` runs a file called `__main__.py`, which names nothing.
+    monkeypatch.setattr(sys, "argv", ["/app/myapp/__main__.py"])
+
+    assert DebugServer("localhost", 5555).sender == "myapp"
+
+    monkeypatch.setattr(main, "__spec__", ModuleSpec("myapp.__main__", None))
+
+    assert DebugServer("localhost", 5555).sender == "myapp"
 
 
 def test_a_recording_names_the_dialect_that_ran_each_statement(db: Database) -> None:
