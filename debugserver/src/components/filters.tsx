@@ -53,7 +53,9 @@ function Row({
       {dot && <span className={cn("size-1.5 shrink-0 rounded-xs", TONE[dot].fill)} />}
       <span className="truncate">{label}</span>
       {note && (
-        <span className="ml-auto shrink-0 font-mono text-[11px] opacity-70">{note}</span>
+        <span className="ml-auto truncate font-mono text-[11px] opacity-70" title={note}>
+          {note}
+        </span>
       )}
       <span className={cn("text-xs tabular-nums opacity-70", !note && "ml-auto")}>{count}</span>
     </button>
@@ -103,7 +105,10 @@ export function Filters({ runs }: { runs: Run[] }) {
         <Filter className="size-3.5" />
         {picked > 0 ? picked : "filter"}
       </PopoverTrigger>
-      <PopoverContent align="start" className="max-h-[70vh] w-64 overflow-y-auto p-2">
+      <PopoverContent
+        align="start"
+        className="max-h-[70vh] w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-2"
+      >
         {picked > 0 && (
           <button
             type="button"

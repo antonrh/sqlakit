@@ -112,3 +112,29 @@ describe("the parameters put into the SQL", () => {
     expect(bound("SELECT 1", null)).toBe("SELECT 1")
   })
 })
+
+describe("a statement whose template named itself in a comment", () => {
+  const sql = "-- users.sql\nSELECT users.id\nFROM users\nWHERE users.id = :id"
+
+  test("keeps the comment on a line of its own", () => {
+    expect(laid(sql).split("\n")).toEqual([
+      "-- users.sql",
+      "SELECT users.id",
+      "FROM users",
+      "WHERE users.id = :id",
+    ])
+  })
+
+  test("is laid out by the formatter rather than commented out", () => {
+    const held = formatted(sql, "postgresql")
+
+    expect(held.split("\n")[0]).toBe("-- users.sql")
+    expect(held).toContain("FROM\n  users")
+  })
+
+  test("a block comment travels on the line it opens", () => {
+    expect(laid("/* users.sql */ SELECT 1 FROM users")).toBe(
+      "/* users.sql */ SELECT 1\nFROM users",
+    )
+  })
+})
