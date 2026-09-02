@@ -39,7 +39,47 @@ const BREAK = new RegExp(
  * reader is looking for, so those are what the lines are.
  */
 export function laid(sql: string): string {
-  return flat(sql).replace(LEAD, "$1\n").replace(BREAK, "\n$1")
+  return flat(sql)
+    .replace(LEAD, "$1\n")
+    .replace(BREAK, "\n$1")
+    .split("\n")
+    .map(broken)
+    .join("\n")
+}
+
+/** How long a clause may be before it is broken up as well. */
+const WRAP = 100
+
+/**
+ * A clause too long to read, broken where it joins one part to the next.
+ *
+ * The columns a mapper selects fit on a line or two. A report written by hand
+ * has thirty of them, and the clause alone is a paragraph, so its commas and
+ * its `AND`s become lines. What is inside brackets stays where it is.
+ */
+function broken(clause: string): string {
+  if (clause.length <= WRAP) return clause
+  const parts: string[] = []
+  let depth = 0
+  let quoted = false
+  let held = ""
+  for (const [at, letter] of [...clause].entries()) {
+    if (letter === "'") quoted = !quoted
+    if (!quoted && letter === "(") depth += 1
+    if (!quoted && letter === ")") depth -= 1
+    held += letter
+    const joins = !quoted && depth === 0 && (letter === "," || /\s(and|or)$/i.test(held))
+    if (joins && at < clause.length - 1) {
+      parts.push(held)
+      held = ""
+    }
+  }
+  parts.push(held)
+  if (parts.length < 2) return clause
+  return parts
+    .map((part, at) => (at === 0 ? part.trim() : `  ${part.trim()}`))
+    .filter(Boolean)
+    .join("\n")
 }
 
 /** A comment a statement opens with, which a template writes its name in. */
