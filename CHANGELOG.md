@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.5
+
+### Changed
+
+- A clause over 100 characters is broken at the commas and the `AND`s that are
+  its own, so a report written by hand reads as lines rather than as a
+  paragraph. Brackets and quoted values are left alone, and a statement a
+  mapper wrote is unchanged.
+
 ## 0.10.4
 
 ### Fixed
