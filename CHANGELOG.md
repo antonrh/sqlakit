@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.10.1
+
+### Fixed
+
+- A recording reaches a debug server once. Two blocks writing into one
+  recording, which is how databases outside a registry report under a single
+  label, each sent it when they ended, and the page showed the same recording
+  twice. A recording now carries an `id`, and a server keeps the first that
+  arrives under it.
+
+### Documentation
+
+- The debugging page shows how two databases outside a registry report under
+  one label.
+
 ## 0.10.0
 
 ### Added
