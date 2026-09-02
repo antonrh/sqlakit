@@ -190,3 +190,25 @@ describe("a clause too long to read", () => {
     )
   })
 })
+
+describe("the width a reader chose", () => {
+  const sql = "SELECT alpha_column, beta_column, gamma_column FROM users"
+
+  test("is the width the clauses wrap at", () => {
+    expect(laid(sql, 100).split("\n")[0]).toBe("SELECT alpha_column, beta_column, gamma_column")
+    expect(laid(sql, 20).split("\n")).toEqual([
+      "SELECT alpha_column,",
+      "  beta_column,",
+      "  gamma_column",
+      "FROM users",
+    ])
+  })
+
+  test("opens the brackets when what is inside them is long as well", () => {
+    const ids = Array.from({ length: 12 }, (_, at) => `'id-number-${at}'`).join(", ")
+    const lines = laid(`SELECT id FROM users WHERE id in (${ids})`).split("\n")
+
+    expect(lines[2]).toBe("WHERE id in ('id-number-0',")
+    expect(lines[3]).toBe("    'id-number-1',")
+  })
+})
