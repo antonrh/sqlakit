@@ -22,7 +22,6 @@ import urllib.request
 import uuid
 from collections import deque
 from dataclasses import dataclass
-from functools import cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from typing import TYPE_CHECKING, Any
@@ -313,9 +312,12 @@ class _Handler(BaseHTTPRequestHandler):
         """Say nothing: the page is the output, not the terminal."""
 
 
-@cache
 def page() -> bytes:
-    """Return the page, built into one file by `bun run dist` in `debugserver/`."""
+    """Return the page, built into one file by `bun run dist` in `debugserver/`.
+
+    Read every time rather than once: a server left running while the page is
+    being worked on would otherwise keep handing out the build it started with.
+    """
     return (files("sqlakit") / "debugserver.html").read_bytes()
 
 

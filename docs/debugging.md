@@ -142,9 +142,11 @@ The search reads fields as well as words: `table:users`, `kind:insert`,
 which recordings are listed. `filter` counts what there is to narrow by, and
 picking a count writes the field into the search.
 
-Three buttons sit above the statements: the SQL as the database ran it, the
-SQL with the parameters in it, ready to paste into a client, and a fold that
-lists a repeated statement once with a count of the times it ran.
+Above the statements: the SQL as the database ran it or with the parameters
+in it, ready to paste into a client, a fold that lists a repeated statement
+once with a count of the times it ran, and how the SQL is laid out, by clause
+or by a formatter, with the indent and the case of the keywords to go with
+it.
 
 One server watches several applications, and a recording says which one it
 came out of:
