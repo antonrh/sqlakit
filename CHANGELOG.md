@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+
+- A debug server, for seeing what a block ran while it is running.
+  `sqlakit debugserver` serves a page, and
+  `db.recording("GET /users", debugserver=("localhost", 5555))` sends the
+  recording to it when the block ends. Sending happens on a thread of its own,
+  so the block that recorded is not waiting on it, and a server that is not
+  there is not the application's problem.
+- The page shows the recordings as they arrive, and for the one open, every
+  statement in order: what it took, its parameters, which of them ran more than
+  once, and the lines of yours that ran it. `table:users ms:>50` reads as a
+  search, over the label, the SQL, the tables, the database and the trace, and
+  over what a recording counted. It filters by application and tag, sorts, and
+  lays a statement out in full or as it was sent.
+- `pytest --sqlakit-report` writes that same page for a test run, as one file
+  that opens without a server. Every recording is labelled by the test and
+  carries the file it lives in. `--sqlakit-report=PATH` names the file, and the
+  flag on its own names it after the clock, so a run keeps the one before it.
+- `sqlakit_skip_queries_from` names the files whose queries stay out of a
+  report, a factory or a helper among them, so what it shows is the code under
+  test rather than the rows a fixture wrote.
+- `recording(..., skip_queries_from=...)`, the same for one block.
+- `DebugServer` says where recordings go, and under which application and tags,
+  for a project that sends from a web process and a worker at once.
+- `Statement.dialect`, what ran the statement, as SQLAlchemy names it.
+
+### Changed
+
+- The frames a statement remembers with `stacks=True` are the ones you wrote.
+  Installed packages go, the test runner and the event loop among them, and so
+  does the code SQLAlchemy generates, whose line numbers lead nowhere. A caller
+  with no frames of its own, a library calling from `site-packages`, gets them
+  back rather than nothing.
+
+### Documentation
+
+- The debugging page has a section on the debug server: what the command
+  prints, what to send it, and the page itself in a screenshot.
+- The site carries the library's mark and colours rather than the theme's
+  defaults.
+
 ## 0.8.1
 
 ### Fixed
