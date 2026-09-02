@@ -58,20 +58,27 @@ const compare = (operator: string | undefined, wanted: number) =>
     "<=": (had: number) => had <= wanted,
   })[operator ?? ">="]!
 
-/** The recordings a search leaves. */
+/**
+ * The recordings a search leaves.
+ *
+ * Two terms of one field are read as either, so picking a second table in the
+ * filters widens the list. Terms of different fields are read as both.
+ */
 export function asQuery(text: string): (run: Run) => boolean {
-  const terms: ((run: Run) => boolean)[] = []
+  const terms = new Map<string, ((run: Run) => boolean)[]>()
+  const under = (field: string, test: (run: Run) => boolean) =>
+    terms.set(field, [...(terms.get(field) ?? []), test])
   const words = text
     .replace(TERM, (match, field: string, operator: string, value: string) => {
       const bare = value.replace(/^"|"$/g, "")
       if (field in OF_RUN) {
-        terms.push((run) => OF_RUN[field]!(run).toLowerCase().includes(bare.toLowerCase()))
+        under(field, (run) => OF_RUN[field]!(run).toLowerCase().includes(bare.toLowerCase()))
         return ""
       }
       if (field in COUNTED) {
         const wanted = Number(bare)
         const test = compare(operator, wanted)
-        if (!Number.isNaN(wanted)) terms.push((run) => test(COUNTED[field]!(run)))
+        if (!Number.isNaN(wanted)) under(field, (run) => test(COUNTED[field]!(run)))
         return ""
       }
       return match
@@ -80,24 +87,27 @@ export function asQuery(text: string): (run: Run) => boolean {
     .toLowerCase()
 
   if (words) {
-    terms.push(
+    under(
+      "",
       (run) =>
         (run.label ?? "").toLowerCase().includes(words) ||
         run.statements.some((one) => one.sql.toLowerCase().includes(words)),
     )
   }
-  return (run) => terms.every((term) => term(run))
+  return (run) => [...terms.values()].every((group) => group.some((test) => test(run)))
 }
 
 /** The statements a search leaves of a card, or null when it says nothing
  * about statements. */
 export function asNarrowing(text: string): ((one: Statement) => boolean) | null {
-  const tests: ((one: Statement) => boolean)[] = []
+  const tests = new Map<string, ((one: Statement) => boolean)[]>()
+  const under = (field: string, test: (one: Statement) => boolean) =>
+    tests.set(field, [...(tests.get(field) ?? []), test])
   const words = text
     .replace(TERM, (match, field: string, _operator: string, value: string) => {
       const bare = value.replace(/^"|"$/g, "").toLowerCase()
       if (field in OF_STATEMENT) {
-        tests.push((one) => OF_STATEMENT[field]!(one, bare))
+        under(field, (one) => OF_STATEMENT[field]!(one, bare))
         return ""
       }
       return field in OF_RUN || field in COUNTED ? "" : match
@@ -105,9 +115,9 @@ export function asNarrowing(text: string): ((one: Statement) => boolean) | null 
     .trim()
     .toLowerCase()
 
-  if (words) tests.push((one) => one.sql.toLowerCase().includes(words))
-  if (!tests.length) return null
-  return (one) => tests.every((test) => test(one))
+  if (words) under("", (one) => one.sql.toLowerCase().includes(words))
+  if (!tests.size) return null
+  return (one) => [...tests.values()].every((group) => group.some((test) => test(one)))
 }
 
 /** The terms of a search, as words. */

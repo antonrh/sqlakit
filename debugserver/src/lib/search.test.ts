@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { received, type Recording } from "@/lib/records"
+import { received, type Recording, type Run } from "@/lib/records"
 import { asNarrowing, asQuery, withTerm } from "@/lib/search"
 
 const recording = (over: Partial<Recording> = {}): Recording => ({
@@ -91,5 +91,49 @@ describe("a term the filters write into the search", () => {
   test("goes in, and comes back out", () => {
     expect(withTerm("", "kind:insert")).toBe("kind:insert")
     expect(withTerm("app:web kind:insert", "kind:insert")).toBe("app:web")
+  })
+})
+
+describe("two terms of one field", () => {
+  const of = (label: string, table: string, app = "web"): Run =>
+    received({
+      app,
+      tags: [],
+      label,
+      count: 1,
+      at: 0,
+      milliseconds: 1,
+      duplicates: 0,
+      statements: [
+        {
+          sql: `SELECT id FROM ${table}`,
+          parameters: null,
+          milliseconds: 1,
+          database: "default",
+          stack: [],
+        },
+      ],
+    })
+
+  const runs = [of("GET /users", "users"), of("GET /posts", "posts"), of("GET /teams", "teams")]
+
+  test("are read as either of them", () => {
+    const left = runs.filter(asQuery("table:users table:posts"))
+
+    expect(left.map((run) => run.label)).toEqual(["GET /users", "GET /posts"])
+  })
+
+  test("and terms of two fields as both", () => {
+    const left = runs.filter(asQuery("table:users table:posts app:web queries:>0"))
+
+    expect(left).toHaveLength(2)
+    expect(runs.filter(asQuery("table:users app:worker"))).toEqual([])
+  })
+
+  test("narrow the statements to either as well", () => {
+    const narrow = asNarrowing("table:users table:posts")
+    const statements = [...runs[0]!.statements, ...runs[2]!.statements]
+
+    expect(statements.filter(narrow!).map((one) => one.sql)).toEqual(["SELECT id FROM users"])
   })
 })
