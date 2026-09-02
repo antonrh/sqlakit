@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.1
+
+### Fixed
+
+- A registry answers for a database registered as `default`. Registering one
+  used to raise, and `Model.register_db(db)` without an alias pointed the
+  models at the database while leaving the registry without one, so the two
+  disagreed: `db["default"]` was the registry itself, `transactions()` failed
+  on it with an `AttributeError`, and the `pytest` plugin created the tables of
+  one alias out of several and rolled back one database out of several.
+- A registry with no database of its own raises `DatabaseNotConfiguredError`
+  rather than failing on state it never built, and says to reach the default as
+  `db["default"]` when that is where it was registered.
+
 ## 0.9.0
 
 ### Added
