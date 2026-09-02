@@ -37,6 +37,7 @@ __all__ = [
     "Records",
     "create_server",
     "flush_recordings",
+    "page",
     "send_recording",
     "write_report",
 ]
@@ -269,7 +270,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/":
-            self._respond(200, _page(), "text/html; charset=utf-8")
+            self._respond(200, page(), "text/html; charset=utf-8")
         elif self.path == "/records":
             body = json.dumps(self.records.all()).encode()
             self._respond(200, body, "application/json")
@@ -312,8 +313,8 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 @cache
-def _page() -> bytes:
-    """Return the page, read from the file next to this one."""
+def page() -> bytes:
+    """Return the page, built into one file by `bun run dist` in `debugserver/`."""
     return (files("sqlakit") / "debugserver.html").read_bytes()
 
 
@@ -332,12 +333,12 @@ def write_report(
     held = json.dumps({"records": list(records), "about": about}).replace(
         "<", "\\u003c"
     )
-    page = _page().decode()
+    whole = page().decode()
     # Before the page's own script, which reads it as it loads.
-    filled = page.replace(
-        "</head>", f"<script>window.SQLAKIT = {held}</script>\n</head>", 1
+    filled = whole.replace(
+        "</head>", f"<script>window.SQLAKit = {held}</script>\n</head>", 1
     )
-    if filled == page:  # pragma: no cover - the page has a head
+    if filled == whole:  # pragma: no cover - the page has a head
         message = "the page has no </head> to put the recordings before"
         raise RuntimeError(message)
     written = pathlib.Path(path)

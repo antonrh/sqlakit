@@ -15,6 +15,7 @@ from .exceptions import DEFAULT_ALIAS
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
+    from os import PathLike
     from typing import TextIO
 
     import sqlparse
@@ -27,6 +28,7 @@ else:
         sqlparse = None
 
 __all__ = ["Recording", "Statement"]
+
 
 _LIBRARIES = (
     str(Path(__file__).parent),
@@ -45,8 +47,11 @@ _INSTALLED = tuple(
 _WALK = 100
 """How far back a stack is read before the search for your own frames gives up."""
 
-_KEEP = 3
+KEEP = 3
 """How many of your frames a statement remembers."""
+
+WIDE = 8
+"""How many to read when some of them are about to be left out."""
 
 _TRUNCATE = 120
 
@@ -386,7 +391,12 @@ def _formatted(sql: str) -> str:
     return sqlparse.format(sql, reindent=True, keyword_case="upper").strip()
 
 
-def caller_stack(skip: Sequence[str] = ()) -> tuple[str, ...]:
+def resolved(paths: Sequence[str | PathLike[str]]) -> tuple[str, ...]:
+    """Return these paths as they are on disk, for comparing with a frame."""
+    return tuple(str(Path(one).resolve()) for one in paths)
+
+
+def caller_stack(skip: Sequence[str] = (), keep: int = KEEP) -> tuple[str, ...]:
     """Return the frames of your own code that led to a statement.
 
     Ours and SQLAlchemy's are left out by directory rather than by name: a
@@ -401,13 +411,15 @@ def caller_stack(skip: Sequence[str] = ()) -> tuple[str, ...]:
     ``skip`` names more to leave out, a file or a directory, so that the frames
     point past a factory of yours at whoever called it.
     """
-    skipped = (*_LIBRARIES, *(str(Path(one).resolve()) for one in skip))
+    skipped = (*_LIBRARIES, *resolved(skip))
     frames = list(islice(_frames(), _WALK))
-    return _yours(frames, (*skipped, *_INSTALLED)) or _yours(frames, skipped)
+    return _yours(frames, (*skipped, *_INSTALLED), keep) or _yours(
+        frames, skipped, keep
+    )
 
 
 def _yours(
-    frames: Sequence[traceback.FrameSummary], skipped: tuple[str, ...]
+    frames: Sequence[traceback.FrameSummary], skipped: tuple[str, ...], keep: int
 ) -> tuple[str, ...]:
     """Return the first few frames that none of these directories hold."""
     kept = []
@@ -415,7 +427,7 @@ def _yours(
         if frame.filename.startswith(skipped) or frame.filename.startswith("<"):
             continue
         kept.append(f"{frame.filename}:{frame.lineno} in {frame.name}")
-        if len(kept) == _KEEP:
+        if len(kept) == keep:
             break
     return tuple(kept)
 

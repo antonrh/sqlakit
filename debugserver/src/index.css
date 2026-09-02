@@ -1,0 +1,24 @@
+@import "../styles/globals.css";
+
+/* `shiki` writes both themes into variables, and the page picks one. */
+.sql .shiki,
+.sql .shiki span {
+  color: var(--shiki-light);
+  background: transparent !important;
+}
+.dark .sql .shiki,
+.dark .sql .shiki span {
+  color: var(--shiki-dark);
+}
+.sql,
+.sql pre,
+.sql code {
+  margin: 0;
+  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  font-size: 12.5px;
+  line-height: 1.5;
+  background: transparent;
+  /* A statement is as wide as its widest clause, and the pane is not. */
+  white-space: pre-wrap;
+  word-break: break-word;
+}

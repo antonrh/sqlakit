@@ -230,10 +230,11 @@ with db.recording("GET /users", stacks=True, debugserver=("localhost", 5555)):
 
 ![The SQLAKit debug server](assets/debugserver.png)
 
-One card per block: the SQL highlighted, the parameters ready to paste, the
-repeats counted, and the line of your code behind every statement. Search by
-`table:`, `kind:`, `ms:>50` or `repeated:>0`, and one server watches as many
-applications as you point at it.
+The recordings are listed on the left, the one you pick opens on the right:
+the SQL highlighted, the parameters ready to paste, the repeats counted, and
+the line of your code behind every statement. Search by `table:`, `kind:`,
+`ms:>50` or `repeated:>0`, and one server watches as many applications as you
+point at it.
 
 `pytest --sqlakit-report` writes the same page for a test run, as a file that
 opens without a server: the test is the label, and each statement carries the

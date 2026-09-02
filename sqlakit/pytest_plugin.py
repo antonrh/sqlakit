@@ -69,8 +69,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
     )
     parser.addini(
-        "sqlakit_skip_frames",
-        "files the traces point past: a factory, a helper, a fixture of yours",
+        "sqlakit_skip_queries",
+        "files whose queries stay out of the report: a factory, a helper of yours",
         type="paths",
         default=[],
     )
@@ -297,8 +297,8 @@ def _reported(request: pytest.FixtureRequest, db: Any) -> Iterator[None]:  # noq
         yield
         return
     node = request.node
-    skip_frames = request.config.getini("sqlakit_skip_frames")
-    with db.recording(node.name, stacks=True, skip_frames=skip_frames) as recording:
+    skip = request.config.getini("sqlakit_skip_queries")
+    with db.recording(_named(node), stacks=True, skip_queries=skip) as recording:
         yield
     request.config.stash[REPORT].append(
         as_payload(
@@ -307,6 +307,11 @@ def _reported(request: pytest.FixtureRequest, db: Any) -> Iterator[None]:  # noq
             tags=[mark.name for mark in node.iter_markers() if mark.name != MARKER],
         )
     )
+
+
+def _named(node: pytest.Item) -> str:
+    """Return the test as the suite names it, the class it is in included."""
+    return "::".join(node.nodeid.split("::")[1:]) or node.name
 
 
 @contextmanager

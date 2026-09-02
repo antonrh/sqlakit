@@ -27,11 +27,14 @@ from typing_extensions import Unpack
 from ._debugserver import DebugServer, send_recording
 from ._discovery import import_string
 from ._recording import (
+    KEEP,
+    WIDE,
     Recording,
     Statement,
     caller_stack,
     check,
     require_expectation,
+    resolved,
 )
 from ._routing import Router, as_router
 from .exceptions import (
@@ -99,20 +102,9 @@ RetryOn = (
 _random = random.SystemRandom()
 
 
-def _skipping(
-    stacks: bool,  # noqa: FBT001 - what the block asked for
-    skip_frames: Sequence[str | PathLike[str]],
-    already: tuple[str, ...] | None,
-) -> tuple[str, ...] | None:
-    """Return the files a statement's frames leave out, or None for no frames.
-
-    A block inside a recording that asked for stacks keeps them, and the files
-    the two of them leave out add up.
-    """
-    asked = tuple(str(one) for one in skip_frames)
-    if not stacks and not asked:
-        return already
-    return asked if already is None else (*already, *asked)
+def _elsewhere(frames: tuple[str, ...], skipped: tuple[str, ...]) -> bool:
+    """Whether one of the files a recording leaves out ran this statement."""
+    return bool(skipped) and bool(frames) and frames[0].startswith(skipped)
 
 
 ConnectionT = TypeVar("ConnectionT")
@@ -257,8 +249,11 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         self._recordings: ContextVar[tuple[Recording, ...]] = ContextVar(
             f"{type(self).__name__}.recordings", default=()
         )
-        self._stacks: ContextVar[tuple[str, ...] | None] = ContextVar(
-            f"{type(self).__name__}.stacks", default=None
+        self._stacks: ContextVar[bool] = ContextVar(
+            f"{type(self).__name__}.stacks", default=False
+        )
+        self._skipped: ContextVar[tuple[str, ...]] = ContextVar(
+            f"{type(self).__name__}.skipped", default=()
         )
         self._listening = 0
         self._listened: Any = None
@@ -313,7 +308,7 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         logger: logging.Logger | None = None,
         echo: bool = False,
         stacks: bool = False,
-        skip_frames: Sequence[str | PathLike[str]] = (),
+        skip_queries: Sequence[str | PathLike[str]] = (),
         into: Recording | None = None,
         debugserver: DebugServer | tuple[str, int] | None = None,
     ) -> Iterator[Recording]:
@@ -333,8 +328,9 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         installed. ``debugserver`` sends the recording to a `sqlakit debugserver`
         listening there, and says nothing when none is. ``stacks`` has every
         statement remember the frames that led to it, at the cost of a stack walk
-        each time. ``skip_frames`` names files those frames point past, for a factory
-        or a helper that every statement in a suite would otherwise lead to.
+        each time. ``skip_queries`` names files whose statements are none of your
+        business: what they run is not recorded, which leaves a test's report showing
+        the code under test rather than the rows a factory wrote to set the scene.
 
         Blocks nest, each recording what runs inside it, and the listeners come off
         after. `with` is right on either side, awaited or not: it listens, it does
@@ -343,10 +339,12 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         recording = Recording(label=label) if into is None else into
         self._listen()
         recordings = self._recordings.set((*self._recordings.get(), recording))
-        asked = self._stacks.set(_skipping(stacks, skip_frames, self._stacks.get()))
+        asked = self._stacks.set(stacks or self._stacks.get())
+        skipped = self._skipped.set((*self._skipped.get(), *resolved(skip_queries)))
         try:
             yield recording
         finally:
+            self._skipped.reset(skipped)
             self._stacks.reset(asked)
             self._recordings.reset(recordings)
             self._silence()
@@ -437,14 +435,18 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         recordings = self._recordings.get()
         if not recordings or statement.split(None, 1)[0].upper() in _CONTROL:
             return
+        stacks = self._stacks.get()
+        skipped = self._skipped.get()
+        frames = caller_stack(keep=WIDE) if stacks or skipped else ()
+        if _elsewhere(frames, skipped):
+            # A row a factory of the tests wrote, not what the block is about.
+            return
         record = Statement(
             sql=statement,
             parameters=parameters,
             duration=time.perf_counter() - started,
             database=self._name,
-            stack=caller_stack(skip)
-            if (skip := self._stacks.get()) is not None
-            else (),
+            stack=frames[:KEEP] if stacks else (),
         )
         for recording in recordings:
             recording.statements.append(record)
@@ -760,7 +762,7 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         logger: logging.Logger | None = None,
         echo: bool = False,
         stacks: bool = False,
-        skip_frames: Sequence[str | PathLike[str]] = (),
+        skip_queries: Sequence[str | PathLike[str]] = (),
         into: Recording | None = None,
         debugserver: DebugServer | tuple[str, int] | None = None,
     ) -> Iterator[Recording]:
@@ -785,7 +787,7 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
                         db,
                         label,
                         stacks=stacks,
-                        skip_frames=skip_frames,
+                        skip_queries=skip_queries,
                         into=together,
                     )
                 )

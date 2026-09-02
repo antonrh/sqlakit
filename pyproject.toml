@@ -209,4 +209,4 @@ default_item_type = "cmd"
 [tool.codespell]
 # `froms` is SQLAlchemy's own word for what a SELECT selects from.
 ignore-words-list = "froms"
-skip = "./.venv,./site,./uv.lock,./.git"
+skip = "./.venv,./site,./uv.lock,./.git,./debugserver/node_modules,./debugserver/bun.lock,./sqlakit/debugserver.html"

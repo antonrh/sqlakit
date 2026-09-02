@@ -130,20 +130,21 @@ with db.recording("GET /users", stacks=True, debugserver=("localhost", 5555)):
 
 ![The debug server](assets/debugserver.png)
 
-Every recording is a card: the statements it ran, how long each took, how
-often each repeated, and the line of your code behind it. The bar across the
-card is the block's time, one segment per statement, coloured by what the
-statement was.
+The recordings are listed on the left, newest first, each with the shape of
+what it ran. The one you pick opens on the right: every statement, how long it
+took, how often it repeated, and the line of your code behind it. The bar
+across the top is the block's time, one segment per statement, coloured by
+what the statement was.
 
 The search reads fields as well as words: `table:users`, `kind:insert`,
 `ms:>50`, `queries:>10`, `repeated:>0`, `trace:views.py`, `app:web`,
-`tag:api`. A field about statements narrows the statements inside a card, not
-only which cards are listed. The panel on the left counts what there is to
-narrow by, and clicking a count writes the field into the search.
+`tag:api`. A field about statements narrows the statements shown, not only
+which recordings are listed. `filter` counts what there is to narrow by, and
+picking a count writes the field into the search.
 
-`with values` puts the parameters into the SQL, ready to paste into a client.
-`fold repeats` lists a repeated statement once, with a count of the times it
-ran.
+Three buttons sit above the statements: the SQL as the database ran it, the
+SQL with the parameters in it, ready to paste into a client, and a fold that
+lists a repeated statement once with a count of the times it ran.
 
 One server watches several applications, and a recording says which one it
 came out of:
@@ -179,14 +180,17 @@ on, so each statement carries the line of the test, or of the code under test,
 that issued it. `--sqlakit-report=build/queries.html` writes where you say
 instead.
 
-A suite that builds its rows through one factory has every statement pointing
-at that factory. Name the file, and the traces point past it:
+A suite writes rows to set the scene, and those writes are not what the test
+is about. Name the file they come out of, and the report holds what the code
+under test ran:
 
 ```toml
 [tool.pytest.ini_options]
 sqlakit = true
-sqlakit_skip_frames = ["tests/helpers.py"]
+sqlakit_skip_queries = ["tests/factories.py"]
 ```
+
+`db.recording(..., skip_queries=[...])` does the same outside a test.
 
 The marker and the fixtures behind it are on the [testing](testing.md) page.
 
