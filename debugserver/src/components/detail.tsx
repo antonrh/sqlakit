@@ -6,14 +6,12 @@ import { Statement } from "@/components/statement"
 import { Waterfall } from "@/components/waterfall"
 import { Badge } from "@/components/ui/badge"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Toggle } from "@/components/ui/toggle"
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { folded, repeats, type Run, type Statement as One } from "@/lib/records"
 import type { Kind } from "@/lib/sql"
 import { ago, clock, exactly, ms } from "@/lib/time"
@@ -29,12 +27,47 @@ const REPEATS = 3
  * By `aria`, not by `data-state`: these sit inside a tooltip trigger, and it
  * puts its own state, `closed`, on the button it wraps.
  */
-const PRESSED = cn(
-  "aria-checked:border-teal-600 aria-checked:bg-teal-500/25",
-  "aria-checked:text-teal-700 dark:aria-checked:text-teal-200",
-  "aria-pressed:border-teal-600 aria-pressed:bg-teal-500/25",
-  "aria-pressed:text-teal-700 dark:aria-pressed:text-teal-200",
+const BUTTON = cn(
+  "flex h-7 items-center rounded-md border px-2 text-muted-foreground",
+  "hover:bg-accent hover:text-foreground",
 )
+
+/** What a control looks like while what it does is on. */
+const ON = "border-teal-600 bg-teal-500/25 text-teal-700 dark:text-teal-200"
+
+/** One choice of two, in a box that keeps its border either way. */
+function Segments<T>({
+  among,
+  value,
+  onPick,
+}: {
+  among: [T, React.ReactNode, string][]
+  value: T
+  onPick: (one: T) => void
+}) {
+  return (
+    <span className="flex h-7 items-center divide-x overflow-hidden rounded-md border">
+      {among.map(([one, icon, said], index) => (
+        <Tooltip key={index}>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => onPick(one)}
+              className={cn(
+                "flex h-full items-center px-2 text-muted-foreground hover:bg-accent",
+                "hover:text-foreground",
+                value === one && "bg-teal-500/25 text-teal-700 dark:text-teal-200",
+              )}
+            >
+              {icon}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{said}</TooltipContent>
+        </Tooltip>
+      ))}
+    </span>
+  )
+}
 
 function Choices({
   title,
@@ -153,41 +186,31 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
 
           <TooltipProvider delayDuration={300}>
             <span className="ml-auto flex items-center gap-1">
-              <ToggleGroup
-                type="single"
-                size="sm"
-                variant="outline"
-                value={values ? "values" : "raw"}
-                onValueChange={(picked) => picked && set("values", picked === "values")}
-              >
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <ToggleGroupItem value="raw" className={cn("size-7 px-0", PRESSED)}>
-                      <Code2 className="size-3.5" />
-                    </ToggleGroupItem>
-                  </TooltipTrigger>
-                  <TooltipContent>the statement as the database ran it</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <ToggleGroupItem value="values" className={cn("size-7 px-0", PRESSED)}>
-                      <Variable className="size-3.5" />
-                    </ToggleGroupItem>
-                  </TooltipTrigger>
-                  <TooltipContent>the parameters put into the SQL</TooltipContent>
-                </Tooltip>
-              </ToggleGroup>
+              <Segments
+                among={[
+                  [
+                    false,
+                    <Code2 key="raw" className="size-3.5" />,
+                    "the statement as the database ran it",
+                  ],
+                  [
+                    true,
+                    <Variable key="values" className="size-3.5" />,
+                    "the parameters put into the SQL",
+                  ],
+                ]}
+                value={values}
+                onPick={(one) => set("values", one)}
+              />
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Toggle
-                    size="sm"
-                    variant="outline"
-                    pressed={fold}
-                    onPressedChange={(on) => set("fold", on)}
-                    className={cn("size-7 px-0", PRESSED)}
+                  <button
+                    type="button"
+                    onClick={() => set("fold", !fold)}
+                    className={cn(BUTTON, fold && ON)}
                   >
                     <FoldVertical className="size-3.5" />
-                  </Toggle>
+                  </button>
                 </TooltipTrigger>
                 <TooltipContent>
                   a statement that ran more than once, listed once
@@ -197,12 +220,7 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <PopoverTrigger
-                      className={cn(
-                        "flex h-7 items-center gap-0.5 rounded-md border px-1.5",
-                        "text-muted-foreground hover:bg-accent hover:text-foreground",
-                        layout.indent !== "compact" &&
-                          "border-teal-600 bg-teal-500/25 text-teal-700 dark:text-teal-200",
-                      )}
+                      className={cn(BUTTON, "gap-0.5", layout.indent !== "compact" && ON)}
                     >
                       <IndentIncrease className="size-3.5" />
                       <ChevronDown className="size-3 opacity-70" />
