@@ -308,7 +308,7 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         logger: logging.Logger | None = None,
         echo: bool = False,
         stacks: bool = False,
-        skip_queries: Sequence[str | PathLike[str]] = (),
+        skip_queries_from: Sequence[str | PathLike[str]] = (),
         into: Recording | None = None,
         debugserver: DebugServer | tuple[str, int] | None = None,
     ) -> Iterator[Recording]:
@@ -328,9 +328,10 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         installed. ``debugserver`` sends the recording to a `sqlakit debugserver`
         listening there, and says nothing when none is. ``stacks`` has every
         statement remember the frames that led to it, at the cost of a stack walk
-        each time. ``skip_queries`` names files whose statements are none of your
-        business: what they run is not recorded, which leaves a test's report showing
-        the code under test rather than the rows a factory wrote to set the scene.
+        each time. ``skip_queries_from`` names the files whose statements are none of
+        your business: what those run is not recorded at all, which leaves a test's
+        report showing the code under test rather than the rows a factory of the tests
+        wrote to set the scene.
 
         Blocks nest, each recording what runs inside it, and the listeners come off
         after. `with` is right on either side, awaited or not: it listens, it does
@@ -340,7 +341,9 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         self._listen()
         recordings = self._recordings.set((*self._recordings.get(), recording))
         asked = self._stacks.set(stacks or self._stacks.get())
-        skipped = self._skipped.set((*self._skipped.get(), *resolved(skip_queries)))
+        skipped = self._skipped.set(
+            (*self._skipped.get(), *resolved(skip_queries_from))
+        )
         try:
             yield recording
         finally:
@@ -763,7 +766,7 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         logger: logging.Logger | None = None,
         echo: bool = False,
         stacks: bool = False,
-        skip_queries: Sequence[str | PathLike[str]] = (),
+        skip_queries_from: Sequence[str | PathLike[str]] = (),
         into: Recording | None = None,
         debugserver: DebugServer | tuple[str, int] | None = None,
     ) -> Iterator[Recording]:
@@ -788,7 +791,7 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
                         db,
                         label,
                         stacks=stacks,
-                        skip_queries=skip_queries,
+                        skip_queries_from=skip_queries_from,
                         into=together,
                     )
                 )

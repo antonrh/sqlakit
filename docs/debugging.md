@@ -183,16 +183,16 @@ that issued it. `--sqlakit-report=build/queries.html` writes where you say
 instead.
 
 A suite writes rows to set the scene, and those writes are not what the test
-is about. Name the file they come out of, and the report holds what the code
-under test ran:
+is about. Name the file that writes them, and the queries it runs stay out of
+the report, which then holds what the code under test ran:
 
 ```toml
 [tool.pytest.ini_options]
 sqlakit = true
-sqlakit_skip_queries = ["tests/factories.py"]
+sqlakit_skip_queries_from = ["tests/factories.py"]
 ```
 
-`db.recording(..., skip_queries=[...])` does the same outside a test.
+`db.recording(..., skip_queries_from=[...])` does the same outside a test.
 
 The marker and the fixtures behind it are on the [testing](testing.md) page.
 

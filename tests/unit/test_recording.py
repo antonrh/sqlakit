@@ -189,7 +189,7 @@ def test_a_recording_can_remember_where_a_query_came_from(db: Database) -> None:
 def test_a_recording_leaves_out_what_a_named_file_ran(db: Database) -> None:
     from tests.projects.factory import factory
 
-    with db.recording(skip_queries=[factory.__file__]) as sql, db.transaction():
+    with db.recording(skip_queries_from=[factory.__file__]) as sql, db.transaction():
         factory.make(Team, name="red")
         Player.query.count()
 
@@ -200,7 +200,7 @@ def test_a_recording_leaves_out_what_a_named_file_ran(db: Database) -> None:
 def test_a_recording_keeps_what_the_code_under_test_ran(db: Database) -> None:
     from tests.projects.factory import factory
 
-    with db.recording(stacks=True, skip_queries=[factory.__file__]) as sql:
+    with db.recording(stacks=True, skip_queries_from=[factory.__file__]) as sql:
         with db.transaction():
             factory.make(Team, name="blue")
             Team.query.count()

@@ -69,8 +69,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
     )
     parser.addini(
-        "sqlakit_skip_queries",
-        "files whose queries stay out of the report: a factory, a helper of yours",
+        "sqlakit_skip_queries_from",
+        "the queries these files run stay out of the report: a factory, a helper",
         type="paths",
         default=[],
     )
@@ -297,8 +297,8 @@ def _reported(request: pytest.FixtureRequest, db: Any) -> Iterator[None]:  # noq
         yield
         return
     node = request.node
-    skip = request.config.getini("sqlakit_skip_queries")
-    with db.recording(_named(node), stacks=True, skip_queries=skip) as recording:
+    skip = request.config.getini("sqlakit_skip_queries_from")
+    with db.recording(_named(node), stacks=True, skip_queries_from=skip) as recording:
         yield
     request.config.stash[REPORT].append(
         as_payload(
