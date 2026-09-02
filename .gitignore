@@ -90,3 +90,4 @@ bench*.py
 .mcp.json
 # a scratch script that fills the debug server
 debugserver_demo.py
+debugserver_wide.py
