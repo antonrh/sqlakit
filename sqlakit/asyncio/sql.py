@@ -95,7 +95,7 @@ class SQL:
 
     @property
     def templates(self) -> Templates:
-        """Where this database looks for its templates."""
+        """The directory this database looks in for its templates."""
         return templates_of(self.db)
 
     def check(self) -> None:
@@ -110,7 +110,7 @@ class SQL:
 class SQLRows(BaseSQLQuery[RowT, "Database"]):
     """The rows of a SQL template, on the connection of the block it runs in.
 
-    What the rows are is settled: reading them is all that is left.
+    The rows are settled: reading them is all that is left.
     """
 
     async def all(self) -> Sequence[RowT]:
@@ -196,7 +196,7 @@ class SQLQuery(SQLRows[sa.Row[Any]]):
         await db.sql("reports/by_team.sql", since=since).typed(TeamReport).all()
         ```
 
-        The type is what one row becomes, and the terminal decides the container.
+        The type says what one row becomes, and the terminal decides the container.
         Anything pydantic can validate works: a model, a dataclass, a
         `TypedDict`. The type also says how much of the row it takes: one built
         from columns is given the whole row, and anything else is given the

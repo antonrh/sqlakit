@@ -236,7 +236,7 @@ class InstanceNotFoundError(SQLAKitError, sa_exc.NoResultFound):
     """Raised when a query that must match one instance matches none.
 
     A subclass of SQLAlchemy's `NoResultFound`, so code that catches either one
-    catches this. It names the model, which is what an API answering 404 wants:
+    catches this. It names the model, as an API answering 404 wants:
 
     ```python
     except InstanceNotFoundError as error:

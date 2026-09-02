@@ -15,7 +15,7 @@ __all__ = ["import_models", "import_string"]
 def import_string(path: str) -> Any:  # noqa: ANN401
     """Return what a dotted path names, importing what it has to.
 
-    What settings hand over instead of the thing itself:
+    Settings carry a path instead of the thing itself:
 
     ```python
     db.configure(

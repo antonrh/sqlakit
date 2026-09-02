@@ -315,7 +315,7 @@ class Database(BaseDatabase[AsyncConnection, AsyncSession]):
                 let them reach the database on their own, seeing nothing of this
                 block and surviving its rollback.
             rollback: Roll back on the way out rather than commit. Implies
-                ``savepoint``, and is what wraps a test.
+                ``savepoint``, and wraps a test.
             commit_on_error: Exception types whose escape still commits. The
                 exception propagates; what was written before it stays.
             retry_on: Exception types, or a predicate over the exception, worth
@@ -409,7 +409,7 @@ class Database(BaseDatabase[AsyncConnection, AsyncSession]):
     ) -> AsyncIterator[None]:
         """Create these tables here, and drop them when the block ends.
 
-        What a test session opens once, around everything that needs a schema:
+        A test session opens this once, around everything that needs a schema:
 
         ```python
         @pytest.fixture(scope="session")
@@ -418,8 +418,8 @@ class Database(BaseDatabase[AsyncConnection, AsyncSession]):
                 yield
         ```
 
-        Every table of the metadata unless ``tables`` names fewer, which is what a
-        second database wants.
+        Every table of the metadata unless ``tables`` names fewer, as a second
+        database wants.
         """
         async with self.transaction() as connection:
             await connection.run_sync(metadata.create_all, tables=tables)
@@ -473,11 +473,11 @@ class Transaction(
 ):
     """The transaction an awaited block runs, as an object.
 
-    What [`Database.transaction`][sqlakit.asyncio.Database.transaction] returns.
+    [`Database.transaction`][sqlakit.asyncio.Database.transaction] returns this.
 
     Kept as a class rather than a generator so that it also works as a
     decorator, and so that a single instance can be entered more than once,
-    which is what ``@db.transaction()`` on a coroutine function does.
+    as ``@db.transaction()`` on a coroutine function does.
     """
 
     def __init__(
@@ -637,8 +637,8 @@ class Transaction(
 class RetryingTransaction(BaseRetryingTransaction):
     """A transaction that runs its block again.
 
-    What [`Database.transaction`][sqlakit.asyncio.Database.transaction] returns
-    when it is given ``retry_on``.
+    [`Database.transaction`][sqlakit.asyncio.Database.transaction] returns
+    this when it is given ``retry_on``.
     """
 
     def __call__(self, func: _FuncT) -> _FuncT:

@@ -531,7 +531,7 @@ def test_a_nested_rollback_ends_the_transaction(
     rollback: bool,
 ) -> None:
     # A session that only takes part in a transaction cannot undo its own work
-    # alone. `savepoint=True` is what a block that has to fail alone uses.
+    # alone. `savepoint=True` is for a block that has to fail alone.
     with (
         pytest.raises(TransactionRolledBackError),
         users_db.transaction(rollback=rollback),
@@ -602,7 +602,7 @@ def test_autocommit_commits_every_statement(tmp_path: Path) -> None:
 
 
 def test_autocommit_inside_a_test_transaction_is_rolled_back(tmp_path: Path) -> None:
-    # What lets a test wrap code that autocommits: inside a transaction there is
+    # A test can wrap code that autocommits: inside a transaction there is
     # nothing to commit to but that transaction, so it goes with it.
     db = Database(f"sqlite:///{tmp_path / 'test.db'}")
     with db.transaction() as conn:
@@ -955,7 +955,7 @@ def test_the_engine_is_built_once_under_threads() -> None:
 
 
 def test_a_rolled_back_transaction_does_not_mask_the_error(users_db: Database) -> None:
-    # The block failed for a reason; that reason is what the caller wants.
+    # The block failed for a reason, and the caller wants that reason.
     with pytest.raises(ZeroDivisionError), users_db.transaction():
         with users_db.session_factory() as inner:
             inner.add(User(name="ada"))

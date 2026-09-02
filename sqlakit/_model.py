@@ -50,7 +50,7 @@ DatabaseT = TypeVar("DatabaseT", bound="BaseDatabase[Any, Any]")
 
 
 class DatabaseSource(Protocol):
-    """Where an alias is looked up: the importable registry, or a stand-in."""
+    """The registry an alias is looked up in: the importable one, or a stand-in."""
 
     def __getitem__(self, alias: str) -> BaseDatabase[Any, Any]: ...
 
@@ -82,7 +82,7 @@ class RegistryDescriptor:
 
 
 class BaseModel(Generic[DatabaseT]):
-    """What the sync and async models share: everything that is not IO.
+    """The sync and async models share this: everything that is not IO.
 
     A model works on the database named by ``__db__``: an alias in the
     importable registry, or a database of its own.
@@ -95,7 +95,7 @@ class BaseModel(Generic[DatabaseT]):
     """Where an alias in ``__db__`` is looked up."""
 
     # Declared, not assigned: the declarative base a model is built on brings
-    # them, and saying so here is what lets the helpers below read them.
+    # them, and saying so here lets the helpers below read them.
     registry: ClassVar[sa.orm.registry]
     metadata: ClassVar[sa.MetaData]
 
@@ -134,9 +134,9 @@ class BaseModel(Generic[DatabaseT]):
             User(name="ada").save()
         ```
 
-        Which database a model resolves to is still `__db__`, the routers and
-        the open `using()` block, in that order. A model left on the default
-        alias follows `using()`, which is what makes the switch above work.
+        A model still resolves through `__db__`, the routers and the open
+        `using()` block, in that order. A model left on the default alias
+        follows `using()`, and that makes the switch above work.
 
         Without an alias it goes in as the default one, which is where a model
         that names no database lives:
@@ -196,7 +196,7 @@ class BaseModel(Generic[DatabaseT]):
         campaign.set_loaded("thumbnail", None)  # known to be empty
         ```
 
-        What a `lazy="raise"` relationship needs when the value is already in hand:
+        A `lazy="raise"` relationship needs this when the value is in hand:
         rows fetched for a whole page at once, a row this block created, or an
         instance that outlives the session that loaded it.
 
@@ -293,7 +293,7 @@ def tables_for(
 ) -> list[sa.Table] | None:
     """Return the tables of this model's metadata that live on that database.
 
-    None when they all do, which is what `create_all` wants for the ordinary
+    None when they all do, as `create_all` wants for the ordinary
     case of one database. Otherwise the tables of the models pointed at it,
     and the tables that only reference those. An association table belongs
     with the rows it joins.
