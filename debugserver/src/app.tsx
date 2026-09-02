@@ -170,34 +170,36 @@ export function App() {
         </div>
       </header>
 
-      {!runs.length && <Waiting />}
-
-      <ResizablePanelGroup
-        orientation="horizontal"
-        className={cn("min-h-0 flex-1", !runs.length && "hidden")}
-        defaultLayout={panes.defaultLayout}
-        onLayoutChanged={panes.onLayoutChanged}
-      >
-        <ResizablePanel
-          id="list"
-          defaultSize="40"
-          minSize={320}
-          maxSize="65"
-          className="flex min-h-0 flex-col"
+      {runs.length === 0 ? (
+        <Waiting />
+      ) : (
+        <ResizablePanelGroup
+          orientation="horizontal"
+          className="min-h-0 flex-1"
+          defaultLayout={panes.defaultLayout}
+          onLayoutChanged={panes.onLayoutChanged}
         >
-          <List runs={runs} shown={shown} picked={open?.id ?? null} onPick={setPicked} />
-        </ResizablePanel>
-        <ResizableHandle withHandle />
-        <ResizablePanel id="detail" className="min-h-0 overflow-y-auto">
-          {open ? (
-            <Detail run={open} narrow={narrow} />
-          ) : (
-            <p className="p-10 text-center text-muted-foreground">
-              Nothing matches that search.
-            </p>
-          )}
-        </ResizablePanel>
-      </ResizablePanelGroup>
+          <ResizablePanel
+            id="list"
+            defaultSize="40"
+            minSize={320}
+            maxSize="65"
+            className="flex min-h-0 flex-col"
+          >
+            <List runs={runs} shown={shown} picked={open?.id ?? null} onPick={setPicked} />
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          <ResizablePanel id="detail" className="min-h-0 overflow-y-auto">
+            {open ? (
+              <Detail run={open} narrow={narrow} />
+            ) : (
+              <p className="p-10 text-center text-muted-foreground">
+                Nothing matches that search.
+              </p>
+            )}
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      )}
     </div>
   )
 }

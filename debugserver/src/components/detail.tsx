@@ -1,10 +1,11 @@
 /** The recording the reader picked: what it ran, in the order it ran it. */
 
-import { Code2, FoldVertical, IndentIncrease, Variable } from "lucide-react"
+import { ChevronDown, Code2, FoldVertical, IndentIncrease, Variable } from "lucide-react"
 
 import { Statement } from "@/components/statement"
 import { Waterfall } from "@/components/waterfall"
 import { Badge } from "@/components/ui/badge"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Toggle } from "@/components/ui/toggle"
 import {
   Tooltip,
@@ -22,15 +23,58 @@ import { cn } from "@/lib/utils"
 
 const REPEATS = 3
 
-/** A pressed toggle reads as pressed: the theme's own accent is too quiet. */
+/**
+ * A pressed toggle reads as pressed.
+ *
+ * By `aria`, not by `data-state`: these sit inside a tooltip trigger, and it
+ * puts its own state, `closed`, on the button it wraps.
+ */
 const PRESSED = cn(
-  "data-[state=on]:border-teal-600 data-[state=on]:bg-teal-500/25",
-  "data-[state=on]:text-teal-700 dark:data-[state=on]:text-teal-200",
-  "data-[state=on]:shadow-[inset_0_0_0_1px_var(--color-teal-600)]",
+  "aria-checked:border-teal-600 aria-checked:bg-teal-500/25",
+  "aria-checked:text-teal-700 dark:aria-checked:text-teal-200",
+  "aria-pressed:border-teal-600 aria-pressed:bg-teal-500/25",
+  "aria-pressed:text-teal-700 dark:aria-pressed:text-teal-200",
 )
 
+function Choices({
+  title,
+  value,
+  among,
+  onPick,
+}: {
+  title: string
+  value: string
+  among: [string, string][]
+  onPick: (one: string) => void
+}) {
+  return (
+    <div className="mb-2 last:mb-0">
+      <div className="px-1 pb-1 text-[11px] uppercase tracking-wider text-muted-foreground">
+        {title}
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {among.map(([one, said]) => (
+          <button
+            key={one}
+            type="button"
+            onClick={() => onPick(one)}
+            className={cn(
+              "rounded-md border px-2 py-0.5 text-[12px] text-muted-foreground",
+              "hover:bg-accent hover:text-foreground",
+              value === one &&
+                "border-teal-600 bg-teal-500/20 text-teal-700 dark:text-teal-200",
+            )}
+          >
+            {said}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boolean) | null }) {
-  const { fold, values, pretty, set, toggleTag } = useStore((state) => state)
+  const { fold, values, pretty, layout, set, toggleTag } = useStore((state) => state)
   const seen = repeats(run)
   const matching = narrow ? run.statements.filter(narrow) : run.statements
   const listed = fold
@@ -163,6 +207,46 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
                 </TooltipTrigger>
                 <TooltipContent>laid out in full, a column to a line</TooltipContent>
               </Tooltip>
+              <Popover>
+                <PopoverTrigger
+                  title="how it is laid out"
+                  className="rounded-md p-1 text-muted-foreground hover:bg-accent
+                             hover:text-foreground"
+                >
+                  <ChevronDown className="size-3" />
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-56 p-2 text-[13px]">
+                  <Choices
+                    title="indent"
+                    value={layout.indent}
+                    among={[
+                      ["standard", "standard"],
+                      ["tabularLeft", "tabular"],
+                    ]}
+                    onPick={(one) => set("layout", { ...layout, indent: one as never })}
+                  />
+                  <Choices
+                    title="keywords"
+                    value={layout.keywords}
+                    among={[
+                      ["upper", "UPPER"],
+                      ["lower", "lower"],
+                      ["preserve", "as they came"],
+                    ]}
+                    onPick={(one) => set("layout", { ...layout, keywords: one as never })}
+                  />
+                  <Choices
+                    title="width"
+                    value={String(layout.width)}
+                    among={[
+                      ["50", "50"],
+                      ["72", "72"],
+                      ["100", "100"],
+                    ]}
+                    onPick={(one) => set("layout", { ...layout, width: Number(one) })}
+                  />
+                </PopoverContent>
+              </Popover>
             </span>
           </TooltipProvider>
         </div>
