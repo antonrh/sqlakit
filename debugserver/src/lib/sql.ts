@@ -6,12 +6,14 @@ export const KINDS = ["select", "insert", "update", "delete", "other"] as const
 
 export type Kind = (typeof KINDS)[number]
 
-/** The first word, past a template comment, or `other`. */
+/** A comment a statement opens with, of either kind. */
+const OPENING = /^\s*(?:\/\*[\s\S]*?\*\/|--[^\n]*(?:\n|$))\s*/
+
+/** The first word, past the comments a template writes its name in, or `other`. */
 export function kindOf(sql: string): Kind {
-  const word = sql
-    .replace(/^\s*(\/\*[\s\S]*?\*\/)?\s*/, "")
-    .split(/\s+/, 1)[0]
-    ?.toLowerCase()
+  let rest = sql.trimStart()
+  while (OPENING.test(rest)) rest = rest.replace(OPENING, "")
+  const word = rest.split(/\s+/, 1)[0]?.toLowerCase()
   return KINDS.includes(word as Kind) && word !== "other" ? (word as Kind) : "other"
 }
 
@@ -37,22 +39,29 @@ const BREAK = new RegExp(
  * reader is looking for, so those are what the lines are.
  */
 export function laid(sql: string): string {
-  return flat(sql).replace(BREAK, "\n$1")
+  return flat(sql).replace(LEAD, "$1\n").replace(BREAK, "\n$1")
 }
 
+/** A comment a statement opens with, which a template writes its name in. */
+const LEAD = /^(\/\*[\s\S]*?\*\/)[ \t]*\n?/
+
 /**
- * The statement on one line, except where a line comment ends one.
+ * The statement on one line, except where a comment ends one.
  *
- * A template names itself in a `--` comment, and joining that line to the next
- * would comment the statement out.
+ * A template names itself in a comment, and joining a `--` line to the next
+ * would comment the statement out. A block comment keeps its line because
+ * that is where the reader looks for the name.
  */
 export function flat(sql: string): string {
   return sql
     .split("\n")
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter(Boolean)
-    .reduce((held, line) => held + (/--[^\n]*$/.test(held) ? "\n" : " ") + line)
+    .reduce((held, line) => held + (ENDED.test(held) ? "\n" : " ") + line)
 }
+
+/** Whether the text so far ends in a comment, of either kind. */
+const ENDED = /--[^\n]*$|\*\/$/
 
 /**
  * The statement as a formatter lays it out, a column to a line.
