@@ -75,6 +75,15 @@ export function Filters({ runs }: { runs: Run[] }) {
   const picked = (app ? 1 : 0) + tags.length + terms.length
   const apps = tally(runs, (run) => [run.app])
   const short = (name: string) => name.split("/").slice(-2).join("/")
+  // Which database each table was read or written on, over every recording.
+  const touched = new Map<string, string[]>()
+  for (const run of runs) {
+    for (const [table, on] of Object.entries(run.tablesOn)) {
+      const known = touched.get(table) ?? []
+      touched.set(table, [...known, ...on.filter((one) => !known.includes(one))])
+    }
+  }
+  const databases = new Set(runs.flatMap((run) => run.databases)).size
 
   return (
     <Popover>
@@ -183,7 +192,16 @@ export function Filters({ runs }: { runs: Run[] }) {
           rows={tally(runs, (run) => run.tables).map(([table, many]) => (
             <Row
               key={table}
-              label={<span className="font-mono">{table}</span>}
+              label={
+                <span className="font-mono">
+                  {table}
+                  {databases > 1 && (
+                    <span className="ml-1.5 text-muted-foreground">
+                      {(touched.get(table) ?? []).join(" · ")}
+                    </span>
+                  )}
+                </span>
+              }
               count={many}
               on={terms.includes(`table:${table}`)}
               onPick={() => search_(withTerm(search, `table:${table}`))}

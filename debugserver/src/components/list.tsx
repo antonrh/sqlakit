@@ -44,6 +44,8 @@ type Props = {
 export function List({ runs, shown, picked, onPick }: Props) {
   const { search, sort, set, search_ } = useStore((state) => state)
   const apps = new Set(runs.map((run) => run.app)).size
+  // With one database everywhere, saying which one is noise on every row.
+  const databases = new Set(runs.flatMap((run) => run.databases)).size
 
   // With nothing recorded there is nothing to search, and nothing to sort.
   if (!runs.length) return null
@@ -103,6 +105,11 @@ export function List({ runs, shown, picked, onPick }: Props) {
               <span className="truncate text-[13px] font-medium">
                 {run.label ?? "(no label)"}
               </span>
+              {databases > 1 && (
+                <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                  {run.databases.join(" · ")}
+                </span>
+              )}
               <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">
                 {clock(run.at)}
               </span>
@@ -112,7 +119,29 @@ export function List({ runs, shown, picked, onPick }: Props) {
               <span>
                 <b className="font-semibold text-foreground">{run.count}</b> queries
               </span>
-              <span className="font-semibold text-foreground">{ms(run.milliseconds)}</span>
+              <span
+                className={cn(
+                  "font-semibold text-foreground",
+                  run.hot > 0
+                    ? "text-rose-600 dark:text-rose-400"
+                    : run.slow > 0
+                      ? "text-amber-600 dark:text-amber-400"
+                      : "",
+                )}
+              >
+                {ms(run.milliseconds)}
+              </span>
+              {run.slow > 0 && (
+                <span
+                  className={
+                    run.hot > 0
+                      ? "text-rose-600 dark:text-rose-400"
+                      : "text-amber-600 dark:text-amber-400"
+                  }
+                >
+                  {run.slow} slow
+                </span>
+              )}
               {run.duplicates > 0 && (
                 <span
                   className={

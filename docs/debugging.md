@@ -267,6 +267,10 @@ record.databases  # ("default", "warehouse")
 
 `db["warehouse"].recording()` watches that one alone.
 
+One block covers them all, so a middleware opens one, not one per database.
+A block per database sends the debug server a recording per database, each
+under the same label, and each holding a part of what the request ran.
+
 ## In a test
 
 `assert_queries` is the same recorder with an assertion around it, and it
