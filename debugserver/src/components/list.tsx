@@ -39,13 +39,13 @@ type Props = {
   shown: Run[]
   picked: number | null
   onPick: (id: number) => void
+  /** How many databases the page has seen: with one, its name is noise. */
+  databases: number
 }
 
-export function List({ runs, shown, picked, onPick }: Props) {
+export function List({ runs, shown, picked, onPick, databases }: Props) {
   const { search, sort, set, search_ } = useStore((state) => state)
   const apps = new Set(runs.map((run) => run.app)).size
-  // With one database everywhere, saying which one is noise on every row.
-  const databases = new Set(runs.flatMap((run) => run.databases)).size
 
   // With nothing recorded there is nothing to search, and nothing to sort.
   if (!runs.length) return null

@@ -114,7 +114,16 @@ function Choices({
   )
 }
 
-export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boolean) | null }) {
+export function Detail({
+  run,
+  narrow,
+  databases,
+}: {
+  run: Run
+  narrow: ((one: One) => boolean) | null
+  /** How many databases the page has seen: with one, its name is noise. */
+  databases: number
+}) {
   const { fold, values, layout, set, toggleTag } = useStore((state) => state)
   const seen = repeats(run)
   const { statements: matching, narrowed } = left(run, narrow)
@@ -139,7 +148,7 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
             {run.app}
           </Badge>
           <h2 className="text-sm font-semibold">{run.label ?? "(no label)"}</h2>
-          {run.databases.length > 1 && (
+          {databases > 1 && (
             <span className="font-mono text-[11px] text-muted-foreground">
               {run.databases.join(" · ")}
             </span>
@@ -309,6 +318,7 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
           run={run}
           index={at}
           repeats={seen.get(one.sql) ?? 1}
+          named={databases > 1}
         />
       ))}
     </>
