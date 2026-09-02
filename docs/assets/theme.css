@@ -1,0 +1,167 @@
+/* The colours of the debug server's page, on the documentation. */
+
+:root {
+  --sqlakit-teal: #0f7a82;
+  --sqlakit-teal-dark: #4ecdc7;
+}
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #0d5f66;
+  --md-primary-fg-color--light: var(--sqlakit-teal);
+  --md-primary-fg-color--dark: #0a4c52;
+  --md-accent-fg-color: var(--sqlakit-teal);
+  --md-typeset-a-color: var(--sqlakit-teal);
+  --md-code-bg-color: #f4f6f6;
+  --md-code-fg-color: #33403f;
+  --sqlakit-hairline: rgba(15, 122, 130, 0.16);
+  --sqlakit-tint: rgba(15, 122, 130, 0.07);
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #0b1618;
+  --md-accent-fg-color: var(--sqlakit-teal-dark);
+  --md-typeset-a-color: var(--sqlakit-teal-dark);
+  --md-default-bg-color: #0f1417;
+  --md-default-fg-color: hsla(180, 5%, 96%, 0.94);
+  --md-default-fg-color--light: hsla(180, 5%, 96%, 0.72);
+  --md-code-bg-color: #161c20;
+  --md-code-fg-color: #e6eaea;
+  --md-footer-bg-color: #0b1618;
+  --sqlakit-hairline: rgba(78, 205, 199, 0.2);
+  --sqlakit-tint: rgba(78, 205, 199, 0.1);
+}
+
+::selection {
+  background: var(--sqlakit-tint);
+}
+
+/* The header: the mark, then the name, with nothing between them. */
+.md-header {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.2);
+  box-shadow: none;
+}
+
+.md-header__button.md-logo {
+  margin-right: 0;
+  padding-right: 0;
+}
+
+.md-header__button.md-logo img {
+  height: 1.4rem;
+}
+
+.md-header__title {
+  margin-left: 0.35rem;
+}
+
+/* The name reads as it does on the page: mono, as code does. */
+.md-header__title .md-ellipsis {
+  font-family: var(--md-code-font-family, ui-monospace), monospace;
+  font-weight: 700;
+  font-size: 0.86rem;
+  letter-spacing: -0.02em;
+}
+
+/* A title carries the page, so it is not a shade of grey. */
+.md-typeset h1 {
+  color: var(--md-default-fg-color);
+  font-weight: 700;
+  font-size: 1.9rem;
+  letter-spacing: -0.025em;
+  margin-bottom: 1.2rem;
+}
+
+.md-typeset h2 {
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  margin-top: 2.4rem;
+}
+
+.md-typeset h3 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* A statement is a block, here as well as there. */
+.md-typeset pre > code {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 8px;
+}
+
+.md-typeset code {
+  border-radius: 4px;
+}
+
+/* A name written inline stays a name, in the colour of the library. */
+.md-typeset p > code,
+.md-typeset li > code,
+.md-typeset td > code {
+  background: var(--sqlakit-tint);
+  color: var(--md-typeset-a-color);
+}
+
+.md-typeset a:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+/* The screenshots have a ground of their own, and a border keeps it. */
+.md-typeset img {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 10px;
+}
+
+/* The page beside the text: quiet, with the current page in colour. */
+.md-nav__title {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.md-nav__link--active,
+.md-nav__link--active code {
+  font-weight: 600;
+}
+
+.md-sidebar--primary .md-nav__list .md-nav__link {
+  border-left: 2px solid transparent;
+  padding-left: 0.6rem;
+}
+
+.md-sidebar--primary .md-nav__link--active {
+  border-left-color: var(--md-typeset-a-color);
+}
+
+/* A table of a few columns, with a ruled head. */
+.md-typeset table:not([class]) {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 8px;
+}
+
+.md-typeset table:not([class]) th {
+  background: var(--sqlakit-tint);
+  color: var(--md-default-fg-color);
+  font-weight: 600;
+}
+
+/* A note reads as an aside, not as a warning. */
+.md-typeset .admonition,
+.md-typeset details {
+  border-radius: 8px;
+  border-width: 1px;
+  box-shadow: none;
+  font-size: 0.72rem;
+}
+
+.md-typeset .admonition-title,
+.md-typeset summary {
+  font-weight: 600;
+}
+
+.md-search__form {
+  border-radius: 6px;
+}
+
+.md-footer-meta {
+  font-size: 0.66rem;
+}

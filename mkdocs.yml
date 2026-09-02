@@ -5,14 +5,23 @@ edit_uri: ""
 
 theme:
   name: material
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
+  font:
+    text: Inter
+    code: JetBrains Mono
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-night
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-sunny
         name: Switch to light mode
@@ -36,6 +45,9 @@ nav:
   - Testing: testing.md
   - Examples: examples.md
   - Reference: reference.md
+
+extra_css:
+  - assets/theme.css
 
 plugins:
   - search
