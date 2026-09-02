@@ -38,52 +38,67 @@ const BREAK = new RegExp(
  * for the forty a mapper writes is a screen of names. The clauses are what a
  * reader is looking for, so those are what the lines are.
  */
-export function laid(sql: string): string {
+export function laid(sql: string, width: number = LAYOUT.width): string {
   return flat(sql)
     .replace(LEAD, "$1\n")
     .replace(BREAK, "\n$1")
     .split("\n")
-    .map(broken)
+    .map((clause) => broken(clause, width))
     .join("\n")
 }
 
-/** How long a clause may be before it is broken up as well. */
-const WRAP = 100
+/** A comment a statement opens with, which a template writes its name in. */
+const LEAD = /^(\/\*[\s\S]*?\*\/)[ \t]*\n?/
 
 /**
  * A clause too long to read, broken where it joins one part to the next.
  *
  * The columns a mapper selects fit on a line or two. A report written by hand
- * has thirty of them, and the clause alone is a paragraph, so its commas and
- * its `AND`s become lines. What is inside brackets stays where it is.
+ * has thirty of them, and a list of ids as long again, so the commas and the
+ * `AND`s of the clause become lines, and the brackets are opened only when
+ * what is inside them is still too long to read.
  */
-function broken(clause: string): string {
-  if (clause.length <= WRAP) return clause
+function broken(clause: string, width: number, depth = 0): string {
+  if (clause.length <= width || depth > INSIDE) return clause
+  const parts = pieces(clause, depth)
+  if (parts.length < 2) return broken(clause, width, depth + 1)
+  const pad = "  ".repeat(depth + 1)
+  return parts
+    .map((part, at) => {
+      const line = at === 0 ? part.trim() : pad + part.trim()
+      if (line.length <= width) return line
+      const held = broken(part.trim(), width, depth + 1)
+      return held
+        .split("\n")
+        .map((one) => (at === 0 ? one : pad + one))
+        .join("\n")
+    })
+    .join("\n")
+}
+
+/** How many brackets deep the breaking goes before a line is left long. */
+const INSIDE = 2
+
+/** The parts of a clause, split where one joins the next at that depth. */
+function pieces(clause: string, depth: number): string[] {
   const parts: string[] = []
-  let depth = 0
+  let level = 0
   let quoted = false
   let held = ""
   for (const [at, letter] of [...clause].entries()) {
     if (letter === "'") quoted = !quoted
-    if (!quoted && letter === "(") depth += 1
-    if (!quoted && letter === ")") depth -= 1
+    if (!quoted && letter === "(") level += 1
+    if (!quoted && letter === ")") level -= 1
     held += letter
-    const joins = !quoted && depth === 0 && (letter === "," || /\s(and|or)$/i.test(held))
+    const joins = !quoted && level === depth && (letter === "," || /\s(and|or)$/i.test(held))
     if (joins && at < clause.length - 1) {
       parts.push(held)
       held = ""
     }
   }
   parts.push(held)
-  if (parts.length < 2) return clause
-  return parts
-    .map((part, at) => (at === 0 ? part.trim() : `  ${part.trim()}`))
-    .filter(Boolean)
-    .join("\n")
+  return parts.filter((one) => one.trim())
 }
-
-/** A comment a statement opens with, which a template writes its name in. */
-const LEAD = /^(\/\*[\s\S]*?\*\/)[ \t]*\n?/
 
 /**
  * The statement on one line, except where a comment ends one.
@@ -131,7 +146,7 @@ export const LAYOUT: Layout = { indent: "compact", keywords: "upper", width: 72 
 
 /** The statement as the reader asked to see it. */
 export function shown(sql: string, dialect?: string, how: Layout = LAYOUT): string {
-  return how.indent === "compact" ? laid(sql) : formatted(sql, dialect, how)
+  return how.indent === "compact" ? laid(sql, how.width) : formatted(sql, dialect, how)
 }
 
 export function formatted(sql: string, dialect?: string, how: Layout = LAYOUT): string {
