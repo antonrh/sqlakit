@@ -152,3 +152,41 @@ describe("a statement whose template named itself in a comment", () => {
     expect(laid("SELECT 1 /* trailing */")).toBe("SELECT 1 /* trailing */")
   })
 })
+
+describe("a clause too long to read", () => {
+  const columns = Array.from({ length: 20 }, (_, at) => `column_number_${at}`).join(", ")
+
+  test("breaks at the commas of the clause, not at those inside brackets", () => {
+    const lines = laid(`SELECT ${columns}, count(a, b) FROM users`).split("\n")
+
+    expect(lines[0]).toBe("SELECT column_number_0,")
+    expect(lines[1]).toBe("  column_number_1,")
+    expect(lines.at(-2)).toBe("  count(a, b)")
+    expect(lines.at(-1)).toBe("FROM users")
+  })
+
+  test("breaks where one condition joins the next", () => {
+    const conditions = Array.from(
+      { length: 8 },
+      (_, at) => `users.column_number_${at} = ${at}`,
+    ).join(" AND ")
+    const lines = laid(`SELECT id FROM users WHERE ${conditions}`).split("\n")
+
+    expect(lines[2]).toBe("WHERE users.column_number_0 = 0 AND")
+    expect(lines[3]).toBe("  users.column_number_1 = 1 AND")
+  })
+
+  test("leaves a comma inside a value where it is", () => {
+    const long = `WHERE city in ('Rome, Italy', 'Bath, England') AND plan = 'free' AND ${"x".repeat(60)} = 1`
+
+    expect(laid(`SELECT id FROM users ${long}`).split("\n")[2]).toBe(
+      "WHERE city in ('Rome, Italy', 'Bath, England') AND",
+    )
+  })
+
+  test("a statement a mapper wrote is left alone", () => {
+    expect(laid("SELECT users.id AS users_id FROM users WHERE users.id = ?")).toBe(
+      "SELECT users.id AS users_id\nFROM users\nWHERE users.id = ?",
+    )
+  })
+})
