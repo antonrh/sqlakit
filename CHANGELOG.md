@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.10.2
+
+### Changed
+
+- The debug server's page lists the databases it has seen as a filter, and
+  picking one narrows the list to `db:warehouse`. Each table in the filters
+  carries the databases it was touched on.
+
+### Fixed
+
+- A sender that names no application is named after the module the program was
+  started as. `python -m myapp` sent recordings under `__main__.py`, the file
+  the interpreter ran, and now sends them under `myapp`.
+
 ## 0.10.1
 
 ### Fixed
