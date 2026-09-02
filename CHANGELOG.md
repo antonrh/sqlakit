@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.10.3
+
+### Fixed
+
+- A statement whose template names itself in a `--` comment is laid out on the
+  debug server's page again. Both layouts collapsed the statement to one line
+  first, which left the rest of it inside the comment.
+
+### Changed
+
+- The filters on that page are wide enough for the database beside a table.
+
 ## 0.10.2
 
 ### Changed
