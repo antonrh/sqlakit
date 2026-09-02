@@ -4,6 +4,7 @@ import logging
 import sys
 import sysconfig
 import traceback
+import uuid
 from dataclasses import dataclass, field
 from itertools import islice
 from pathlib import Path
@@ -118,6 +119,8 @@ class Recording:
 
     label: str | None = None
     statements: list[Statement] = field(default_factory=list)
+    id: str = field(default_factory=lambda: uuid.uuid4().hex, repr=False, compare=False)
+    """A unique id, so a recording several blocks sent is kept once."""
 
     @property
     def count(self) -> int:

@@ -144,6 +144,33 @@ def test_a_recording_reaches_a_server(
     assert held[0]["app"]  # the program that sent it, when none was named
 
 
+def test_a_recording_two_blocks_report_arrives_once(
+    server: ThreadingHTTPServer, records: Records
+) -> None:
+    # What several databases writing into one recording would otherwise send
+    # twice, once for each block that names the server.
+    recording = a_recording()
+    at = ("localhost", int(server.server_address[1]))
+
+    send_recording(recording, at)
+    send_recording(recording, at)
+    send_recording(a_recording(), at)
+    flush_recordings(timeout=2.0)
+
+    assert len(records.all()) == 2
+
+
+def test_an_id_the_history_has_dropped_is_free_again() -> None:
+    records = Records(history=1)
+    one = as_payload(a_recording(), app="web")
+
+    records.add(one)
+    records.add(as_payload(a_recording("POST /posts"), app="web"))
+    records.add(one)  # the same recording, after its id fell out of the history
+
+    assert [record["label"] for record in records.all()] == ["GET /users"]
+
+
 def test_a_server_that_is_not_there_is_not_the_application_s_problem() -> None:
     # Nothing listens on the port, and the block that recorded carries on.
     send_recording(a_recording(), ("localhost", 9))
