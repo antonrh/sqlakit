@@ -68,7 +68,7 @@ export function Statement({ one, run, index, repeats }: Props) {
         >
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
         </button>
-        <div className="rounded-md border bg-muted/40 px-3 py-2">
+        <div className="overflow-x-auto rounded-md border bg-muted/40 px-3 py-2">
           <Sql one={one} />
         </div>
         {!values && <Parameters parameters={one.parameters} />}

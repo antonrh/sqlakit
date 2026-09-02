@@ -193,60 +193,67 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
                   a statement that ran more than once, listed once
                 </TooltipContent>
               </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Toggle
-                    size="sm"
-                    variant="outline"
-                    pressed={pretty}
-                    onPressedChange={(on) => set("pretty", on)}
-                    className={cn("size-7 px-0", PRESSED)}
+              <div
+                className={cn(
+                  "flex items-center rounded-md border",
+                  pretty && "border-teal-600 bg-teal-500/25 text-teal-700 dark:text-teal-200",
+                )}
+              >
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Toggle
+                      size="sm"
+                      variant="default"
+                      pressed={pretty}
+                      onPressedChange={(on) => set("pretty", on)}
+                      className="size-7 rounded-r-none px-0 hover:bg-transparent
+                                 aria-pressed:bg-transparent"
+                    >
+                      <IndentIncrease className="size-3.5" />
+                    </Toggle>
+                  </TooltipTrigger>
+                  <TooltipContent>laid out in full, a column to a line</TooltipContent>
+                </Tooltip>
+                <Popover>
+                  <PopoverTrigger
+                    title="how it is laid out"
+                    className="rounded-r-md py-1 pl-0 pr-1 opacity-70 hover:opacity-100"
                   >
-                    <IndentIncrease className="size-3.5" />
-                  </Toggle>
-                </TooltipTrigger>
-                <TooltipContent>laid out in full, a column to a line</TooltipContent>
-              </Tooltip>
-              <Popover>
-                <PopoverTrigger
-                  title="how it is laid out"
-                  className="rounded-md p-1 text-muted-foreground hover:bg-accent
-                             hover:text-foreground"
-                >
-                  <ChevronDown className="size-3" />
-                </PopoverTrigger>
-                <PopoverContent align="end" className="w-56 p-2 text-[13px]">
-                  <Choices
-                    title="indent"
-                    value={layout.indent}
-                    among={[
-                      ["standard", "standard"],
-                      ["tabularLeft", "tabular"],
-                    ]}
-                    onPick={(one) => set("layout", { ...layout, indent: one as never })}
-                  />
-                  <Choices
-                    title="keywords"
-                    value={layout.keywords}
-                    among={[
-                      ["upper", "UPPER"],
-                      ["lower", "lower"],
-                      ["preserve", "as they came"],
-                    ]}
-                    onPick={(one) => set("layout", { ...layout, keywords: one as never })}
-                  />
-                  <Choices
-                    title="width"
-                    value={String(layout.width)}
-                    among={[
-                      ["50", "50"],
-                      ["72", "72"],
-                      ["100", "100"],
-                    ]}
-                    onPick={(one) => set("layout", { ...layout, width: Number(one) })}
-                  />
-                </PopoverContent>
-              </Popover>
+                    <ChevronDown className="size-3" />
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-56 p-2 text-[13px]">
+                    <Choices
+                      title="indent"
+                      value={layout.indent}
+                      among={[
+                        ["standard", "standard"],
+                        ["tabularLeft", "tabular"],
+                      ]}
+                      onPick={(one) => set("layout", { ...layout, indent: one as never })}
+                    />
+                    <Choices
+                      title="keywords"
+                      value={layout.keywords}
+                      among={[
+                        ["upper", "UPPER"],
+                        ["lower", "lower"],
+                        ["preserve", "as they came"],
+                      ]}
+                      onPick={(one) => set("layout", { ...layout, keywords: one as never })}
+                    />
+                    <Choices
+                      title="width"
+                      value={String(layout.width)}
+                      among={[
+                        ["50", "50"],
+                        ["72", "72"],
+                        ["100", "100"],
+                      ]}
+                      onPick={(one) => set("layout", { ...layout, width: Number(one) })}
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
             </span>
           </TooltipProvider>
         </div>
