@@ -85,6 +85,13 @@ class RetryNotSupportedError(SQLAKitError, TypeError):
         super().__init__(message)
 
 
+REGISTERED_DEFAULT = (
+    "This registry did not build the default database, it was registered. "
+    "Reach that one as `db['default']`, or through the models that live on it."
+)
+"""What a registry says when it is asked for connections it does not have."""
+
+
 class DatabaseNotConfiguredError(SQLAKitError, RuntimeError):
     """Raised when the importable database is used before it has a URL."""
 
@@ -123,12 +130,13 @@ class AliasInUseError(SQLAKitError, ValueError):
 
 
 class DefaultAliasError(SQLAKitError, ValueError):
-    """Raised when registering a database as the default one."""
+    """Raised when a registry is given a second default database."""
 
     def __init__(self) -> None:
         super().__init__(
-            f"`{DEFAULT_ALIAS}` is the registry itself. Configure it with "
-            "`configure()`, and register the others under their own names."
+            f"This registry already has a `{DEFAULT_ALIAS}` database. "
+            "`configure()` builds one and `register()` hands one over, and a "
+            "registry keeps whichever came first."
         )
 
 

@@ -138,27 +138,29 @@ class BaseModel(Generic[DatabaseT]):
         the open `using()` block, in that order. A model left on the default
         alias follows `using()`, which is what makes the switch above work.
 
-        Without an alias it points the model at that database, the same as
-        [`set_db`][sqlakit.orm.ModelMixin.set_db], for an application with one:
+        Without an alias it goes in as the default one, which is where a model
+        that names no database lives:
 
         ```python
         Base.register_db(Database(DB_URL))
         ```
 
+        The registry answers for it either way, so `dbs["default"]`,
+        `dbs.transactions()` and `using()` all reach what was registered.
+        [`set_db`][sqlakit.orm.ModelMixin.set_db] is the other way to name a
+        database, and it leaves the registry out of it.
+
         Raises:
             AliasInUseError: if another database holds that alias.
-            DefaultAliasError: if the alias is `default`.
+            DefaultAliasError: if the registry already has a default database.
 
         """
-        if alias is None:
-            cls.set_db(db)
-            return
         if _owns_no_registry(cls):
             # A registry of its own: registering into the importable one would
             # configure it for every model in the process. A class under one
             # that already has its own registers into that one.
             cls.__dbs__ = type(cls.__dbs__)()
-        cast("DatabaseRegistry", cls.__dbs__).register(alias, db)
+        cast("DatabaseRegistry", cls.__dbs__).register(alias or DEFAULT_ALIAS, db)
 
     def update(self, values: Mapping[str, Any]) -> Self:
         """Set these fields on this instance, and return it.

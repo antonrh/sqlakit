@@ -7,11 +7,13 @@ from sqlakit import (
     DatabaseAlreadyConfiguredError,
     DatabaseNotConfiguredError,
     Databases,
+    DefaultAliasError,
     MissingConnectionError,
     MissingDatabaseUrlError,
     MissingDefaultDatabaseError,
     UnknownDatabaseError,
 )
+from sqlakit._base import DATABASE_STATE
 
 
 @pytest.fixture
@@ -137,6 +139,97 @@ def test_reconfigure_after_an_alias_connected_raises(aliased: Databases) -> None
 
     with pytest.raises(DatabaseAlreadyConfiguredError):
         aliased.configure("sqlite://")
+
+
+# a database registered rather than configured
+
+
+@pytest.fixture
+def handed_over(db: Databases) -> Databases:
+    """A registry given the databases, the default one among them."""
+    db.register(
+        "default", Database("sqlite://", engine_args={"poolclass": sa.StaticPool})
+    )
+    db.register(
+        "replica", Database("sqlite://", engine_args={"poolclass": sa.StaticPool})
+    )
+    return db
+
+
+def test_the_default_alias_answers_with_what_was_registered(
+    handed_over: Databases,
+) -> None:
+    default = handed_over["default"]
+
+    assert default is not handed_over
+    assert handed_over.is_configured is True
+    assert handed_over.aliases == ("default", "replica")
+
+    with default.transaction():
+        assert default.in_transaction() is True
+
+
+def test_every_database_takes_a_transaction(handed_over: Databases) -> None:
+    with handed_over.transactions(rollback=True):
+        assert handed_over["default"].in_transaction() is True
+        assert handed_over["replica"].in_transaction() is True
+
+
+def test_a_recording_covers_the_registered_default(handed_over: Databases) -> None:
+    with (
+        handed_over.recording() as recording,
+        handed_over["default"].connect() as connection,
+    ):
+        connection.execute(sa.text("SELECT 1"))
+
+    assert [statement.database for statement in recording.statements] == ["default"]
+
+
+def test_disposing_reaches_the_registered_default(handed_over: Databases) -> None:
+    assert handed_over["default"].engine is not None
+
+    handed_over.dispose()
+
+    assert handed_over["default"]._engine is None
+    assert handed_over["replica"]._engine is None
+
+
+def test_the_registry_says_it_has_no_database_of_its_own(
+    handed_over: Databases,
+) -> None:
+    with pytest.raises(DatabaseNotConfiguredError, match=r"db\['default'\]"):
+        _ = handed_over.session
+
+    with pytest.raises(DatabaseNotConfiguredError, match=r"db\['default'\]"):
+        with handed_over.transaction():
+            pass
+
+
+def test_a_registry_without_a_database_says_so_rather_than_breaking(
+    db: Databases,
+) -> None:
+    # The state a database has once it is configured, reached from a method of
+    # its own rather than from the caller.
+    with pytest.raises(DatabaseNotConfiguredError):
+        with db.transaction():
+            pass
+
+
+def test_the_state_a_registry_explains_is_the_state_a_database_has() -> None:
+    assert set(vars(Database("sqlite://"))) >= DATABASE_STATE
+
+
+def test_only_one_of_them_can_be_the_default(handed_over: Databases) -> None:
+    with pytest.raises(DefaultAliasError, match="default"):
+        handed_over.register("default", Database("sqlite://"))
+
+    with pytest.raises(DefaultAliasError, match="default"):
+        handed_over.configure("sqlite://")
+
+
+def test_a_configured_registry_keeps_the_default_it_built(aliased: Databases) -> None:
+    with pytest.raises(DefaultAliasError, match="default"):
+        aliased.register("default", Database("sqlite://"))
 
 
 def test_dispose_covers_every_alias(aliased: Databases) -> None:

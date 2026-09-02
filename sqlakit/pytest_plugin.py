@@ -172,8 +172,8 @@ def _before_the_test_s_own(item: pytest.Function) -> int:
 def sqlakit_db(sqlakit_base: Any) -> Any:  # noqa: ANN401
     """Return the database the marked tests run on.
 
-    The one the models live on, which is the importable registry unless they
-    were given a `Database` of their own. Override it for a project with no
+    The one the models live on: their registry, which knows every alias, or the
+    `Database` they were given in person. Override it for a project with no
     model layer.
     """
     if sqlakit_base is None:
@@ -185,6 +185,15 @@ def sqlakit_db(sqlakit_base: Any) -> Any:  # noqa: ANN401
                 pytrace=False,
             )
         return importable_db
+    registry = getattr(sqlakit_base, "dbs", None)
+    if (
+        isinstance(getattr(sqlakit_base, "__db__", None), str)
+        and registry is not None
+        and registry.is_configured
+    ):
+        # The models look their aliases up there, so the schema and the
+        # transactions cover every one of them, not the default alone.
+        return registry
     database = getattr(sqlakit_base, "db", None)
     if database is None:
         pytest.fail(
