@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.10.4
+
+### Fixed
+
+- A statement whose template names itself in a `/* ... */` comment keeps that
+  comment on a line of its own, rather than on the line of the first clause.
+- A statement opening with a `--` comment is counted as the kind of statement
+  it runs. It counted as `other`, since only a block comment was read past.
+
+### Changed
+
+- The tables in the filters are listed under the database they live on. The
+  database was a tag beside the name, in the same type, so a long name was cut
+  and the two ran together.
+
 ## 0.10.3
 
 ### Fixed
