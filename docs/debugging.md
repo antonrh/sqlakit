@@ -1,4 +1,4 @@
-[# Debugging
+# Debugging
 
 `recording()` shows what queries a block ran, how long they took, and which
 ones ran more than once:
@@ -24,7 +24,7 @@ A recording skips transaction control. `BEGIN` and `COMMIT` reach a cursor on
 some drivers and not on others, so counting them would give the same code
 different numbers on `SQLite` and `PostgreSQL`.
 
-## In a log
+## One line per block
 
 ```python
 import logging
