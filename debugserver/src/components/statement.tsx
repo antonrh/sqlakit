@@ -58,18 +58,19 @@ export function Statement({ one, run, index, repeats }: Props) {
           <span className="mt-1 block font-mono text-[11px]">{one.database}</span>
         )}
       </div>
-      <div className="relative min-w-0 flex-1">
-        <button
-          type="button"
-          onClick={copy}
-          title="copy the statement"
-          className="absolute right-0 top-0 hidden text-muted-foreground
-                     hover:text-foreground group-hover:block"
-        >
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        </button>
-        <div className="overflow-x-auto rounded-md border bg-muted/40 px-3 py-2">
+      <div className="min-w-0 flex-1">
+        <div className="relative overflow-x-auto rounded-md border bg-muted/40 px-3 py-2">
           <Sql one={one} />
+          <button
+            type="button"
+            onClick={copy}
+            title="copy the statement"
+            className="absolute right-1.5 top-1.5 hidden rounded-md border bg-background/80
+                       p-1 text-muted-foreground backdrop-blur hover:text-foreground
+                       group-hover:block"
+          >
+            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+          </button>
         </div>
         {!values && <Parameters parameters={one.parameters} />}
         <Trace stack={one.stack} label={run.label} />
