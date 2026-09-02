@@ -66,7 +66,8 @@ def get(server: ThreadingHTTPServer, path: str) -> tuple[int, bytes, str]:
         with urllib.request.urlopen(where(server, path)) as answer:
             return answer.status, answer.read(), answer.headers["Content-Type"]
     except urllib.error.HTTPError as refused:
-        return refused.status or 0, refused.read(), ""
+        with refused:
+            return refused.status or 0, refused.read(), ""
 
 
 def a_recording(label: str = "GET /users") -> Recording:
