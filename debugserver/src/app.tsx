@@ -3,7 +3,6 @@
 import { Trash2 } from "lucide-react"
 import { useEffect, useState } from "react"
 
-import { Code } from "@/components/code"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,6 +17,7 @@ import {
 import { Detail } from "@/components/detail"
 import { List } from "@/components/list"
 import { Strip } from "@/components/strip"
+import { Waiting } from "@/components/waiting"
 import { ThemeButton } from "@/components/theme"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 import { useDefaultLayout } from "react-resizable-panels"
@@ -33,20 +33,6 @@ const BY: Record<string, (a: Run, b: Run) => number> = {
   many: (a, b) => b.count - a.count,
   repeated: (a, b) => b.duplicates - a.duplicates,
   label: (a, b) => a.key.localeCompare(b.key) || b.at - a.at,
-}
-
-function Waiting() {
-  return (
-    <div className="p-10 text-center text-muted-foreground">
-      <p>Waiting for the first recording.</p>
-      <Code
-        lang="python"
-        className="sql mt-4 inline-block rounded-xl border bg-card px-5 py-4 text-left"
-        code={`with db.recording("GET /users", debugserver=("localhost", 5555)):
-    list_users()`}
-      />
-    </div>
-  )
 }
 
 /** Forgetting reaches the server too, so it asks first. */
@@ -184,9 +170,11 @@ export function App() {
         </div>
       </header>
 
+      {!runs.length && <Waiting />}
+
       <ResizablePanelGroup
         orientation="horizontal"
-        className="min-h-0 flex-1"
+        className={cn("min-h-0 flex-1", !runs.length && "hidden")}
         defaultLayout={panes.defaultLayout}
         onLayoutChanged={panes.onLayoutChanged}
       >

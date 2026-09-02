@@ -12,5 +12,5 @@ export function readable(one: Statement, values: boolean, pretty = false): strin
 
 export function Sql({ one }: { one: Statement }) {
   const { values, pretty } = useStore((state) => state)
-  return <Code code={readable(one, values, pretty)} className="sql" />
+  return <Code code={readable(one, values, pretty)} className="" />
 }

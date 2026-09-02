@@ -22,6 +22,13 @@ import { cn } from "@/lib/utils"
 
 const REPEATS = 3
 
+/** A pressed toggle reads as pressed: the theme's own accent is too quiet. */
+const PRESSED = cn(
+  "data-[state=on]:border-teal-600 data-[state=on]:bg-teal-500/25",
+  "data-[state=on]:text-teal-700 dark:data-[state=on]:text-teal-200",
+  "data-[state=on]:shadow-[inset_0_0_0_1px_var(--color-teal-600)]",
+)
+
 export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boolean) | null }) {
   const { fold, values, pretty, set, toggleTag } = useStore((state) => state)
   const seen = repeats(run)
@@ -111,7 +118,7 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
               >
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <ToggleGroupItem value="raw" className="size-7 px-0">
+                    <ToggleGroupItem value="raw" className={cn("size-7 px-0", PRESSED)}>
                       <Code2 className="size-3.5" />
                     </ToggleGroupItem>
                   </TooltipTrigger>
@@ -119,7 +126,7 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <ToggleGroupItem value="values" className="size-7 px-0">
+                    <ToggleGroupItem value="values" className={cn("size-7 px-0", PRESSED)}>
                       <Variable className="size-3.5" />
                     </ToggleGroupItem>
                   </TooltipTrigger>
@@ -133,7 +140,7 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
                     variant="outline"
                     pressed={fold}
                     onPressedChange={(on) => set("fold", on)}
-                    className="size-7 px-0"
+                    className={cn("size-7 px-0", PRESSED)}
                   >
                     <FoldVertical className="size-3.5" />
                   </Toggle>
@@ -149,7 +156,7 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
                     variant="outline"
                     pressed={pretty}
                     onPressedChange={(on) => set("pretty", on)}
-                    className="size-7 px-0"
+                    className={cn("size-7 px-0", PRESSED)}
                   >
                     <IndentIncrease className="size-3.5" />
                   </Toggle>
