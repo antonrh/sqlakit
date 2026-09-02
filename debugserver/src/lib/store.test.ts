@@ -3,17 +3,6 @@ import { beforeEach, expect, test } from "bun:test"
 import type { Recording } from "@/lib/records"
 import { HELD, useStore } from "@/lib/store"
 
-// A browser keeps what the reader chose; the runner has nowhere to keep it.
-const kept = new Map<string, string>()
-Object.defineProperty(globalThis, "localStorage", {
-  value: {
-    getItem: (name: string) => kept.get(name) ?? null,
-    setItem: (name: string, value: string) => kept.set(name, value),
-    removeItem: (name: string) => kept.delete(name),
-  },
-  configurable: true,
-})
-
 const arriving = (label: string): Recording => ({
   app: "web",
   tags: [],

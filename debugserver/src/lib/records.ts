@@ -27,8 +27,18 @@ export type Run = Recording & {
   key: string
   kinds: Partial<Record<Kind, number>>
   tables: string[]
-  databases: number
+  /** The databases each table was touched on, for a page with more than one. */
+  tablesOn: Record<string, string[]>
+  /** The databases that ran it, named, so a recording says where it went. */
+  databases: string[]
+  /** How many statements took long enough to be worth a look, and how many were worse. */
+  slow: number
+  hot: number
 }
+
+/** Milliseconds at which a statement is worth a second look, and worth alarm. */
+export const SLOW = 10
+export const HOT = 100
 
 let counter = 0
 
@@ -36,10 +46,21 @@ let counter = 0
 export function received(recording: Recording): Run {
   const kinds: Partial<Record<Kind, number>> = {}
   const tables = new Set<string>()
+  const tablesOn: Record<string, string[]> = {}
+  const databases = new Set<string>()
+  let slow = 0
+  let hot = 0
   for (const one of recording.statements) {
     const kind = kindOf(one.sql)
     kinds[kind] = (kinds[kind] ?? 0) + 1
-    for (const table of tablesIn(one.sql)) tables.add(table)
+    for (const table of tablesIn(one.sql)) {
+      tables.add(table)
+      const on = (tablesOn[table] ??= [])
+      if (!on.includes(one.database)) on.push(one.database)
+    }
+    databases.add(one.database)
+    if (one.milliseconds >= SLOW) slow += 1
+    if (one.milliseconds >= HOT) hot += 1
   }
   return {
     ...recording,
@@ -48,7 +69,10 @@ export function received(recording: Recording): Run {
     key: `${recording.app} · ${recording.label ?? "(no label)"}`,
     kinds,
     tables: [...tables],
-    databases: new Set(recording.statements.map((one) => one.database)).size,
+    tablesOn,
+    databases: [...databases],
+    slow,
+    hot,
   }
 }
 

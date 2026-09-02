@@ -12,7 +12,15 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { folded, left, repeats, type Run, type Statement as One } from "@/lib/records"
+import {
+  folded,
+  HOT,
+  left,
+  repeats,
+  SLOW,
+  type Run,
+  type Statement as One,
+} from "@/lib/records"
 import type { Kind } from "@/lib/sql"
 import { ago, clock, exactly, ms } from "@/lib/time"
 import { TONE } from "@/lib/tone"
@@ -106,7 +114,16 @@ function Choices({
   )
 }
 
-export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boolean) | null }) {
+export function Detail({
+  run,
+  narrow,
+  databases,
+}: {
+  run: Run
+  narrow: ((one: One) => boolean) | null
+  /** How many databases the page has seen: with one, its name is noise. */
+  databases: number
+}) {
   const { fold, values, layout, set, toggleTag } = useStore((state) => state)
   const seen = repeats(run)
   const { statements: matching, narrowed } = left(run, narrow)
@@ -131,6 +148,11 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
             {run.app}
           </Badge>
           <h2 className="text-sm font-semibold">{run.label ?? "(no label)"}</h2>
+          {databases > 1 && (
+            <span className="font-mono text-[11px] text-muted-foreground">
+              {run.databases.join(" · ")}
+            </span>
+          )}
           {run.tags.map((tag) => (
             <button
               key={tag}
@@ -156,7 +178,30 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
             <b className="font-semibold">{run.count}</b>{" "}
             <span className="text-muted-foreground">queries</span>
           </span>
-          <span className="font-semibold">{ms(run.milliseconds)}</span>
+          <span
+            className={cn(
+              "font-semibold",
+              run.hot > 0
+                ? "text-rose-600 dark:text-rose-400"
+                : run.slow > 0
+                  ? "text-amber-600 dark:text-amber-400"
+                  : "",
+            )}
+          >
+            {ms(run.milliseconds)}
+          </span>
+          {run.slow > 0 && (
+            <span
+              className={
+                run.hot > 0
+                  ? "text-rose-600 dark:text-rose-400"
+                  : "text-amber-600 dark:text-amber-400"
+              }
+              title={`${SLOW} ms and over, ${HOT} ms and over in red`}
+            >
+              {run.slow} slow
+            </span>
+          )}
           {Object.entries(run.kinds).map(([kind, many]) => (
             <span
               key={kind}
@@ -273,6 +318,7 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
           run={run}
           index={at}
           repeats={seen.get(one.sql) ?? 1}
+          named={databases > 1}
         />
       ))}
     </>

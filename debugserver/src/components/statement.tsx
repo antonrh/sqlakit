@@ -9,16 +9,13 @@ import { Trace } from "@/components/trace"
 import { kindOf } from "@/lib/sql"
 import { ms } from "@/lib/time"
 import { TONE } from "@/lib/tone"
-import type { Run, Statement as One } from "@/lib/records"
+import { HOT, SLOW, type Run, type Statement as One } from "@/lib/records"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
-const SLOW = 10
-const HOT = 100
+type Props = { one: One; run: Run; index: number; repeats: number; named: boolean }
 
-type Props = { one: One; run: Run; index: number; repeats: number }
-
-export function Statement({ one, run, index, repeats }: Props) {
+export function Statement({ one, run, index, repeats, named }: Props) {
   const values = useStore((state) => state.values)
   const [copied, setCopied] = useState(false)
   const took = one.milliseconds
@@ -54,9 +51,7 @@ export function Statement({ one, run, index, repeats }: Props) {
           className={cn("mt-1 block h-0.5 rounded-full opacity-70", TONE[kindOf(one.sql)].fill)}
           style={{ width: `${Math.max(2, (took / Math.max(run.milliseconds, 0.001)) * 100)}%` }}
         />
-        {run.databases > 1 && (
-          <span className="mt-1 block font-mono text-[11px]">{one.database}</span>
-        )}
+        {named && <span className="mt-1 block font-mono text-[11px]">{one.database}</span>}
       </div>
       <div className="min-w-0 flex-1">
         <div className="relative overflow-x-auto rounded-md border bg-muted/40 px-3 py-2">

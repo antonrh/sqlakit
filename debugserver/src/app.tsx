@@ -105,6 +105,8 @@ export function App() {
     )
     .sort(BY[sort]!)
   const queries = shown.reduce((sum, run) => sum + left(run, narrow).statements.length, 0)
+  // With one database everywhere, naming it on every row is noise.
+  const databases = new Set(runs.flatMap((run) => run.databases)).size
   // The newest, until the reader picks one to stay on.
   const open = shown.find((run) => run.id === picked) ?? shown[0]
 
@@ -197,12 +199,18 @@ export function App() {
             maxSize="55"
             className="flex min-h-0 flex-col"
           >
-            <List runs={runs} shown={shown} picked={open?.id ?? null} onPick={setPicked} />
+            <List
+              runs={runs}
+              shown={shown}
+              picked={open?.id ?? null}
+              onPick={setPicked}
+              databases={databases}
+            />
           </ResizablePanel>
           <ResizableHandle withHandle />
           <ResizablePanel id="detail" className="min-h-0 overflow-y-auto">
             {open ? (
-              <Detail run={open} narrow={narrow} />
+              <Detail run={open} narrow={narrow} databases={databases} />
             ) : (
               <p className="p-10 text-center text-muted-foreground">
                 Nothing matches that search.

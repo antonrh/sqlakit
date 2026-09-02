@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { folded, left, received, repeats, type Recording } from "@/lib/records"
+import { folded, HOT, left, received, repeats, SLOW, type Recording } from "@/lib/records"
 
 const recording: Recording = {
   app: "web",
@@ -46,7 +46,34 @@ describe("what the page adds to a recording", () => {
   test("what ran, and where", () => {
     expect(run.kinds).toEqual({ select: 3 })
     expect(run.tables).toEqual(["users", "posts"])
-    expect(run.databases).toBe(1)
+    expect(run.databases).toEqual(["default"])
+  })
+
+  test("how much of it was slow", () => {
+    const quick = received(recording)
+    const heavy = received({
+      ...recording,
+      statements: [
+        { ...recording.statements[0]!, milliseconds: SLOW },
+        { ...recording.statements[1]!, milliseconds: HOT },
+      ],
+    })
+
+    expect([quick.slow, quick.hot]).toEqual([0, 0])
+    expect([heavy.slow, heavy.hot]).toEqual([2, 1])
+  })
+
+  test("the databases that ran it, named, and where each table was touched", () => {
+    const across = received({
+      ...recording,
+      statements: [
+        recording.statements[0]!,
+        { ...recording.statements[1]!, database: "warehouse" },
+      ],
+    })
+
+    expect(across.databases).toEqual(["default", "warehouse"])
+    expect(across.tablesOn).toEqual({ users: ["default"], posts: ["warehouse"] })
   })
 })
 

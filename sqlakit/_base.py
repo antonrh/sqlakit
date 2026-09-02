@@ -207,6 +207,7 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         engine_args: EngineArgs | None = None,
         session_args: SessionArgs | None = None,
         templates: TemplatesLike | None = None,
+        alias: str | None = None,
         **parts: Unpack[UrlParts],
     ) -> None:
         """Build a database on ``url``, or on the parts to make one from.
@@ -221,7 +222,13 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         )
 
         Database(DB_URL, templates="app/sql")  # where `sql` reads templates from
+        Database(WAREHOUSE_URL, alias="warehouse")  # what a recording calls it
         ```
+
+        ``alias`` is the name a recorded statement carries, for telling two
+        databases apart in a log or on the debug server's page. A registry
+        names the databases it holds after the aliases they are registered
+        under, so it is worth setting on a database you keep yourself.
 
         Raises:
             MissingDatabaseUrlError: if given neither a ``url`` nor the parts to
@@ -259,7 +266,7 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         self._listening = 0
         self._listened: Any = None
         self._listening_lock = threading.Lock()
-        self._name = DEFAULT_ALIAS
+        self._name = alias or DEFAULT_ALIAS
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.url.render_as_string()!r})"
@@ -781,6 +788,7 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         skip_queries_from: Sequence[str | PathLike[str]] = (),
         into: Recording | None = None,
         debugserver: DebugServer | tuple[str, int] | None = None,
+        using: str | DatabaseT | Sequence[str | DatabaseT] | None = None,
     ) -> Iterator[Recording]:
         """Record every database this registry has, not the default one alone.
 
@@ -791,11 +799,26 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         record.databases  # ("default", "warehouse")
         ```
 
-        Statements say which database ran them. `db["warehouse"].recording()` records
-        that one on its own.
+        Statements say which database ran them. ``using`` narrows the block to
+        the databases named, by alias or in person, as `assert_queries` takes
+        them:
+
+        ```python
+        with db.recording(using="warehouse"):
+            move_the_reports()
+
+        with db.recording(using=["default", "warehouse"]):
+            move_the_reports()
+        ```
+
+        `db["warehouse"].recording()` records that one on its own.
+
+        Raises:
+            UnknownDatabaseError: if ``using`` names an alias nothing holds.
+
         """
         together = Recording(label=label) if into is None else into
-        databases = tuple(self[alias] for alias in self.aliases)
+        databases = self._recorded(using)
         with ExitStack() as stack:
             for db in databases:
                 stack.enter_context(
@@ -816,6 +839,15 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
                     together.echo()
                 if debugserver is not None:
                     send_recording(together, debugserver)
+
+    def _recorded(
+        self, using: str | DatabaseT | Sequence[str | DatabaseT] | None
+    ) -> tuple[Any, ...]:
+        """Return the databases a recording watches: the ones named, or all of them."""
+        if using is None:
+            return tuple(self[alias] for alias in self.aliases)
+        asked = using if isinstance(using, (list, tuple, set, frozenset)) else (using,)
+        return tuple(self[one] if isinstance(one, str) else one for one in asked)
 
     @staticmethod
     def _named(alias: str, db: DatabaseT) -> DatabaseT:
