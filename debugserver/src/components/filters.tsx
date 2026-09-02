@@ -70,9 +70,10 @@ function Group({ title, rows }: { title: string; rows: React.ReactNode[] }) {
 }
 
 export function Filters({ runs }: { runs: Run[] }) {
-  const { search, app, tags, set, search_, toggleTag } = useStore((state) => state)
+  const { search, tags, set, search_, toggleTag } = useStore((state) => state)
+  const clear = () => set("tags", [])
   const terms = termsOf(search)
-  const picked = (app ? 1 : 0) + tags.length + terms.length
+  const picked = tags.length + terms.length
   const apps = tally(runs, (run) => [run.app])
   const short = (name: string) => name.split("/").slice(-2).join("/")
   const databases = new Set(runs.flatMap((run) => run.databases)).size
@@ -124,8 +125,7 @@ export function Filters({ runs }: { runs: Run[] }) {
           <button
             type="button"
             onClick={() => {
-              set("app", "")
-              set("tags", [])
+              clear()
               search_("")
             }}
             className="mb-2 flex w-full items-center gap-1 rounded-md px-2 py-1 text-[13px]
@@ -156,28 +156,19 @@ export function Filters({ runs }: { runs: Run[] }) {
           title="app"
           rows={
             apps.length > 1
-              ? [
+              ? apps.map(([name, many]) => (
                   <Row
-                    key="all"
-                    label="everything"
-                    count={runs.length}
-                    on={!app}
-                    onPick={() => set("app", "")}
-                  />,
-                  ...apps.map(([name, many]) => (
-                    <Row
-                      key={name}
-                      label={
-                        <span className="font-mono" title={name}>
-                          {short(name)}
-                        </span>
-                      }
-                      count={many}
-                      on={app === name}
-                      onPick={() => set("app", name)}
-                    />
-                  )),
-                ]
+                    key={name}
+                    label={
+                      <span className="font-mono" title={name}>
+                        {short(name)}
+                      </span>
+                    }
+                    count={many}
+                    on={terms.includes(`app:${name}`)}
+                    onPick={() => search_(withTerm(search, `app:${name}`))}
+                  />
+                ))
               : []
           }
         />

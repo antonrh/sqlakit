@@ -65,7 +65,7 @@ function Bin() {
 
 export function App() {
   const state = useStore((one) => one)
-  const { runs, held, search, sort, app, tags, live, about, paused } = state
+  const { runs, held, search, sort, tags, live, about, paused } = state
   const [now, setNow] = useState(() => Date.now())
   const [picked, setPicked] = useState<number | null>(null)
   // The reader's own split, kept between visits.
@@ -98,10 +98,7 @@ export function App() {
   const narrow = asNarrowing(search)
   const shown = [...runs]
     .filter(
-      (run) =>
-        (!app || run.app === app) &&
-        (!tags.length || run.tags.some((tag) => tags.includes(tag))) &&
-        wanted(run),
+      (run) => (!tags.length || run.tags.some((tag) => tags.includes(tag))) && wanted(run),
     )
     .sort(BY[sort]!)
   const queries = shown.reduce((sum, run) => sum + left(run, narrow).statements.length, 0)

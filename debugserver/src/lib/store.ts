@@ -19,7 +19,6 @@ type State = {
   held: Run[]
   search: string
   sort: Sort
-  app: string
   tags: string[]
   page: number
   values: boolean
@@ -46,7 +45,6 @@ export const useStore = create<State & Actions>()(
       held: [],
       search: "",
       sort: "recent",
-      app: "",
       tags: [],
       page: 0,
       values: false,
