@@ -21,7 +21,7 @@ import { Waiting } from "@/components/waiting"
 import { ThemeButton } from "@/components/theme"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 import { useDefaultLayout } from "react-resizable-panels"
-import type { Run } from "@/lib/records"
+import { left, type Run } from "@/lib/records"
 import { asNarrowing, asQuery } from "@/lib/search"
 import { forget, listen } from "@/lib/source"
 import { useStore } from "@/lib/store"
@@ -103,10 +103,7 @@ export function App() {
         wanted(run),
     )
     .sort(BY[sort]!)
-  const queries = shown.reduce(
-    (sum, run) => sum + (narrow ? run.statements.filter(narrow).length : run.count),
-    0,
-  )
+  const queries = shown.reduce((sum, run) => sum + left(run, narrow).statements.length, 0)
   // The newest, until the reader picks one to stay on.
   const open = shown.find((run) => run.id === picked) ?? shown[0]
 

@@ -12,7 +12,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { folded, repeats, type Run, type Statement as One } from "@/lib/records"
+import { folded, left, repeats, type Run, type Statement as One } from "@/lib/records"
 import type { Kind } from "@/lib/sql"
 import { ago, clock, exactly, ms } from "@/lib/time"
 import { TONE } from "@/lib/tone"
@@ -109,7 +109,7 @@ function Choices({
 export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boolean) | null }) {
   const { fold, values, layout, set, toggleTag } = useStore((state) => state)
   const seen = repeats(run)
-  const matching = narrow ? run.statements.filter(narrow) : run.statements
+  const { statements: matching, narrowed } = left(run, narrow)
   const listed = fold
     ? folded(matching)
     : matching.map((one) => ({ one, at: run.statements.indexOf(one) }))
@@ -149,7 +149,7 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
           </span>
         </div>
 
-        <Waterfall run={run} narrow={narrow} onPick={show} />
+        <Waterfall run={run} narrow={narrowed ? narrow : null} onPick={show} />
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-2 text-xs">
           <span>
@@ -166,7 +166,7 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
               {many} {kind}
             </span>
           ))}
-          {narrow && matching.length < run.count && (
+          {narrowed && (
             <span className="text-teal-700 dark:text-teal-300">
               {matching.length} of {run.count} match
             </span>
