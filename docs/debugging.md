@@ -176,8 +176,9 @@ $ pytest --sqlakit-report
 sqlakit wrote /app/sqlakit-20260901-224817.html
 ```
 
-Every test marked `db` becomes a card. The test is the label, the file it
-lives in is the application, and its other markers are the tags. Stacks are
+Every test marked `db` is one recording in the list. The test is the label,
+the file it lives in is the application, and its other markers are its
+tags. Stacks are
 on, so each statement carries the line of the test, or of the code under test,
 that issued it. `--sqlakit-report=build/queries.html` writes where you say
 instead.
