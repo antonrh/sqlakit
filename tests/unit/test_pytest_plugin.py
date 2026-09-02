@@ -149,7 +149,7 @@ def test_the_plugin_stays_out_of_the_way_until_it_is_asked(
 
 
 def test_a_project_may_build_the_schema_its_own_way(project: pytest.Pytester) -> None:
-    """What a suite running migrations against a server of its own does."""
+    """A suite running migrations against a server of its own does this."""
     (project.path / "conftest.py").write_text(
         CONFTEST
         + """
@@ -498,7 +498,7 @@ def sqlakit_base():
 def test_a_project_may_name_the_database_instead_of_the_base(
     project: pytest.Pytester,
 ) -> None:
-    """What a suite with migrations of its own does: no base, no metadata."""
+    """A suite with migrations of its own: no base, no metadata."""
     (project.path / "conftest.py").write_text(
         """
 import pytest
@@ -646,7 +646,7 @@ def sqlakit_base():
 def test_metadata_serves_a_project_with_no_model_layer(
     project: pytest.Pytester,
 ) -> None:
-    """What `SQLModel`, or any plain mapped class, needs."""
+    """`SQLModel`, or any plain mapped class, needs this."""
     (project.path / "app.py").write_text(
         """
 import sqlalchemy as sa

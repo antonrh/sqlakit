@@ -57,15 +57,32 @@ class Records:
     def __init__(self, history: int = HISTORY) -> None:
         self._lock = threading.Lock()
         self._records: deque[dict[str, Any]] = deque(maxlen=history)
+        self._held: set[str] = set()
         self._watchers: list[queue.Queue[dict[str, Any]]] = []
 
     def add(self, record: dict[str, Any]) -> None:
-        """Keep a recording, and hand it to every page that is watching."""
+        """Keep a recording, and hand it to every page that is watching.
+
+        A recording is kept once. Several blocks may report one recording,
+        and each of them sends it, which is how databases outside a registry
+        report under a single label.
+        """
         with self._lock:
+            sent = record.get("id")
+            if sent is not None:
+                if sent in self._held:
+                    return
+                self._held.add(sent)
+            if len(self._records) == self._records.maxlen:
+                self._forget(self._records[0])
             self._records.append(record)
             watchers = list(self._watchers)
         for watcher in watchers:
             watcher.put(record)
+
+    def _forget(self, record: dict[str, Any]) -> None:
+        """Drop the id of a recording the history no longer holds."""
+        self._held.discard(record.get("id", ""))
 
     def all(self) -> list[dict[str, Any]]:
         """Every recording held, oldest first."""
@@ -76,6 +93,7 @@ class Records:
         """Forget them."""
         with self._lock:
             self._records.clear()
+            self._held.clear()
 
     def watch(self) -> queue.Queue[dict[str, Any]]:
         """Return a queue that every later recording arrives on."""
@@ -93,7 +111,7 @@ class Records:
 
 @dataclass(frozen=True, slots=True)
 class DebugServer:
-    """Where recordings go, and who is sending them.
+    """The address recordings go to, and the application sending them.
 
     A server watches several applications at once, so a recording says which
     one it came from:
@@ -134,6 +152,7 @@ def as_payload(
 ) -> dict[str, Any]:
     """Return what travels: the recording, flattened to what a page shows."""
     return {
+        "id": recording.id,
         "app": app,
         "tags": list(tags),
         "label": recording.label,
@@ -160,6 +179,10 @@ def send_recording(recording: Recording, to: DebugServer | tuple[str, int]) -> N
 
     A thread of its own does the sending, so the block that recorded pays
     nothing for a server that is slow, or down, or not there at all.
+
+    A recording carries an id, and a server keeps the first that arrives under
+    it. Two blocks writing into one recording, which is how several databases
+    report under a single label, would otherwise show up twice.
     """
     server = DebugServer.of(to)
     body = json.dumps(

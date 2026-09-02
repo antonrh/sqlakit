@@ -37,8 +37,8 @@ class Databases(_DatabaseRegistryMixin[Database], Database):
     ) -> AsyncIterator[None]:
         """Open a transaction on every database, not the default one alone.
 
-        What a test harness with more than one database needs, in the place a
-        single database needs `transaction(rollback=True)`.
+        A test harness with more than one database needs this, where a single
+        database needs `transaction(rollback=True)`.
         """
         async with AsyncExitStack() as stack:
             for alias in self.aliases:

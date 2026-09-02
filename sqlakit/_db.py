@@ -281,7 +281,7 @@ class Database(BaseDatabase[sa.Connection, Session]):
                 let them reach the database on their own, seeing nothing of this
                 block and surviving its rollback.
             rollback: Roll back on the way out rather than commit. Implies
-                ``savepoint``, and is what wraps a test.
+                ``savepoint``, and wraps a test.
             commit_on_error: Exception types whose escape still commits. The
                 exception propagates; what was written before it stays.
             retry_on: Exception types, or a predicate over the exception, worth
@@ -375,7 +375,7 @@ class Database(BaseDatabase[sa.Connection, Session]):
     ) -> Iterator[None]:
         """Create these tables here, and drop them when the block ends.
 
-        What a test session opens once, around everything that needs a schema:
+        A test session opens this once, around everything that needs a schema:
 
         ```python
         @pytest.fixture(scope="session")
@@ -384,8 +384,8 @@ class Database(BaseDatabase[sa.Connection, Session]):
                 yield
         ```
 
-        Every table of the metadata unless ``tables`` names fewer, which is what a
-        second database wants.
+        Every table of the metadata unless ``tables`` names fewer, as a second
+        database wants.
         """
         with self.transaction() as connection:
             metadata.create_all(connection, tables=tables)
@@ -434,10 +434,10 @@ def _owned(
 
 
 class Transaction(ContextDecorator, AbstractContextManager["sa.Connection"]):
-    """What [`Database.transaction`][sqlakit.Database.transaction] returns.
+    """[`Database.transaction`][sqlakit.Database.transaction] returns this.
 
     A class rather than a generator, so that it works as a decorator and can be
-    entered more than once, which is what decorating a function does.
+    entered more than once, as decorating a function does.
     """
 
     def __init__(
@@ -595,8 +595,8 @@ class Transaction(ContextDecorator, AbstractContextManager["sa.Connection"]):
 class RetryingTransaction(BaseRetryingTransaction):
     """A transaction that runs its block again.
 
-    What [`Database.transaction`][sqlakit.Database.transaction] returns when it is
-    given ``retry_on``.
+    [`Database.transaction`][sqlakit.Database.transaction] returns this when
+    it is given ``retry_on``.
     """
 
     def __call__(self, func: _FuncT) -> _FuncT:

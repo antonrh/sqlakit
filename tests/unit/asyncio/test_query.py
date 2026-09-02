@@ -239,7 +239,7 @@ async def test_page_mapping(db: Database) -> None:
 
         assert page.map(lambda user: user.name).items == ["a", "b"]
 
-        # What an awaited transform does: map the items, keep the counts.
+        # An awaited transform maps the items and keeps the counts.
         names = [user.name.upper() for user in page.items]
 
         assert page.with_items(names).total == page.total

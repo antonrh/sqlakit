@@ -4,6 +4,7 @@ import logging
 import sys
 import sysconfig
 import traceback
+import uuid
 from dataclasses import dataclass, field
 from itertools import islice
 from pathlib import Path
@@ -106,7 +107,7 @@ class Statement:
 class Recording:
     """The statements of a block, and what they add up to.
 
-    What `Database.recording()` hands back:
+    `Database.recording()` hands this back:
 
     ```python
     with db.recording() as record:
@@ -118,6 +119,8 @@ class Recording:
 
     label: str | None = None
     statements: list[Statement] = field(default_factory=list)
+    id: str = field(default_factory=lambda: uuid.uuid4().hex, repr=False, compare=False)
+    """A unique id, so a recording several blocks sent is kept once."""
 
     @property
     def count(self) -> int:
@@ -261,7 +264,7 @@ class Recording:
     def pretty(self) -> str:
         """The statements, numbered, each laid out over several lines.
 
-        What `print()` shows when the one-line listing has run out of room.
+        `print()` shows this when the one-line listing has run out of room.
         """
         if not self.statements:
             return "no queries"
@@ -360,7 +363,7 @@ def check(
     at_most: int | None,
     duplicates: bool,
 ) -> None:
-    """Fail unless the recording is what the block said it would be.
+    """Fail unless the recording matches what the block said.
 
     Args:
         recording: What the block ran.
@@ -402,8 +405,8 @@ def resolved(paths: Sequence[str | PathLike[str]]) -> tuple[str, ...]:
 def caller_stack(skip: Sequence[str] = (), keep: int = KEEP) -> tuple[str, ...]:
     """Return the frames of your own code that led to a statement.
 
-    Ours and SQLAlchemy's are left out by directory rather than by name: a
-    project of yours may well live in a path that has our name in it. So is
+    This library's and SQLAlchemy's are left out by directory rather than by
+    name: a project may well live in a path carrying the library's name. So is
     generated code, `<string>`: SQLAlchemy builds wrappers that way, and the
     line numbers lead nowhere.
 

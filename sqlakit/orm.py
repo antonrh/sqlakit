@@ -544,7 +544,7 @@ class ModelMixin(BaseModel[Database]):
     def provisioned_tables(cls, alias: str | None = None) -> Iterator[None]:
         """Create the tables that belong on this model's database, and drop them after.
 
-        What a test session opens once, around everything that needs a schema:
+        A test session opens this once, around everything that needs a schema:
 
         ```python
         @pytest.fixture(scope="session")

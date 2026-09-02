@@ -13,8 +13,8 @@ BLOCK = re.compile(r"^```python\n(.*?)^```", re.MULTILINE | re.DOTALL)
 def _steps() -> tuple[dict[str, str], str]:
     """Return the page's files, and the rest of it as one script.
 
-    A block whose first line names a file is that file; the others are what a
-    reader types as they follow along, in the order the page gives them.
+    A block whose first line names a file is that file. The others are the
+    lines a reader types as they follow along, in the order the page gives them.
     """
     files: dict[str, str] = {}
     script: list[str] = []

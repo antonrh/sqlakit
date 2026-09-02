@@ -161,7 +161,7 @@ def test_sql_written_out_here(db: Database) -> None:
 
 def test_a_list_is_a_list_to_the_database(db: Database) -> None:
     with db.connect():
-        # A bare list expands on our side, `| inclause` on the template's.
+        # A bare list expands on this side, `| inclause` on the template's.
         assert db.sql("users/by_ids.sql", ids=[1, 3]).scalars().all() == ["a", "c"]
         assert db.sql("users/in_clause.sql", teams=["red"]).scalars().all() == [
             "b",
@@ -363,7 +363,7 @@ def test_a_writing_template_commits_when_no_transaction_is_open(db: Database) ->
 
 
 def test_a_value_is_never_escaped_on_its_way_to_the_database(db: Database) -> None:
-    # The templates are Jinja, which escapes what it renders — but a value is
+    # The templates are Jinja, which escapes what it renders, but a value is
     # bound rather than rendered, so it reaches the database as it was.
     with db.connect():
         value = "a & b <c> 'd'"

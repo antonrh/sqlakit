@@ -287,6 +287,19 @@ warehouse = Database(WAREHOUSE_URL, alias="warehouse")
 A registry names the databases it holds after the aliases they are registered
 under, so this is for a database you keep yourself.
 
+Two databases outside a registry report together by writing into one
+recording, which carries the label:
+
+```python
+record = Recording(label="GET /users")
+
+with db1.recording(into=record, debugserver=SERVER), db2.recording(into=record):
+    handle_request()
+```
+
+The debug server gets that recording once, whether one block names it or both
+do.
+
 ## In a test
 
 `assert_queries` is the same recorder with an assertion around it, and it

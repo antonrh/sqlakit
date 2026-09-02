@@ -325,7 +325,7 @@ def _named(node: pytest.Item) -> str:
 
 @contextmanager
 def _entered(blocks: list[Any]) -> Iterator[None]:
-    """Hold these blocks open, awaiting them when that is what they need.
+    """Hold these blocks open, awaiting the ones that need it.
 
     An `asyncio` database builds its schema in a coroutine, and this fixture is
     not one: a session of its own runs it, which the tests never touch. They
