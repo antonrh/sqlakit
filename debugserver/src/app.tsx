@@ -181,9 +181,9 @@ export function App() {
         >
           <ResizablePanel
             id="list"
-            defaultSize="40"
-            minSize={320}
-            maxSize="65"
+            defaultSize={360}
+            minSize={260}
+            maxSize="55"
             className="flex min-h-0 flex-col"
           >
             <List runs={runs} shown={shown} picked={open?.id ?? null} onPick={setPicked} />
