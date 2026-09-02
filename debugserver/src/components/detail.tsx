@@ -1,6 +1,6 @@
 /** The recording the reader picked: what it ran, in the order it ran it. */
 
-import { Code2, FoldVertical, Variable } from "lucide-react"
+import { Code2, FoldVertical, IndentIncrease, Variable } from "lucide-react"
 
 import { Statement } from "@/components/statement"
 import { Waterfall } from "@/components/waterfall"
@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils"
 const REPEATS = 3
 
 export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boolean) | null }) {
-  const { fold, values, set, toggleTag } = useStore((state) => state)
+  const { fold, values, pretty, set, toggleTag } = useStore((state) => state)
   const seen = repeats(run)
   const matching = narrow ? run.statements.filter(narrow) : run.statements
   const listed = fold
@@ -141,6 +141,20 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
                 <TooltipContent>
                   a statement that ran more than once, listed once
                 </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Toggle
+                    size="sm"
+                    variant="outline"
+                    pressed={pretty}
+                    onPressedChange={(on) => set("pretty", on)}
+                    className="size-7 px-0"
+                  >
+                    <IndentIncrease className="size-3.5" />
+                  </Toggle>
+                </TooltipTrigger>
+                <TooltipContent>laid out in full, a column to a line</TooltipContent>
               </Tooltip>
             </span>
           </TooltipProvider>

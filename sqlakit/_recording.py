@@ -68,6 +68,9 @@ class Statement:
     database: str = DEFAULT_ALIAS
     """Which database ran it, for a recording that covers more than one."""
 
+    dialect: str = ""
+    """What ran it: `postgresql`, `mysql`, `sqlite`, as SQLAlchemy names them."""
+
     stack: tuple[str, ...] = ()
     """Where it came from, when the recording was asked for stacks."""
 

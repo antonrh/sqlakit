@@ -314,6 +314,18 @@ def test_assert_queries_watches_every_database_by_default(registry: None) -> Non
     assert "default" in sql.pretty  # which database ran what
 
 
+def test_every_statement_says_what_ran_it(registry: None) -> None:
+    with sqlakit.db.recording() as sql:
+        with sqlakit.db.connect() as conn:
+            conn.execute(sa.text("SELECT 1"))
+        with sqlakit.db["warehouse"].connect() as conn:
+            conn.execute(sa.text("SELECT 1"))
+
+    # A recording over several databases carries the dialect per statement, so
+    # a page reads each one with the grammar that ran it.
+    assert [one.dialect for one in sql.statements] == ["sqlite", "sqlite"]
+
+
 def test_assert_queries_watches_the_database_it_is_given(registry: None) -> None:
     with assert_queries(1, using="warehouse") as sql:
         with sqlakit.db.connect() as conn:

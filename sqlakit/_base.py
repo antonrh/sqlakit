@@ -446,6 +446,7 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
             parameters=parameters,
             duration=time.perf_counter() - started,
             database=self._name,
+            dialect=connection.dialect.name,
             stack=frames[:KEEP] if stacks else (),
         )
         for recording in recordings:

@@ -148,6 +148,7 @@ def as_payload(
                 "parameters": _printable(statement.parameters),
                 "milliseconds": statement.milliseconds,
                 "database": statement.database,
+                "dialect": statement.dialect,
                 "stack": list(statement.stack),
             }
             for statement in recording.statements
