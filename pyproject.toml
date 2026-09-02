@@ -25,6 +25,9 @@ dependencies = [
     "sqlalchemy>=2.0.22",
 ]
 
+[project.scripts]
+sqlakit = "sqlakit._cli:main"
+
 [project.entry-points.pytest11]
 sqlakit = "sqlakit.pytest_plugin"
 

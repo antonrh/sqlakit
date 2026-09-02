@@ -111,6 +111,85 @@ ERROR    POST /import: 240 queries in 1841.2ms (238 repeated, slowest 612.4ms)
 When a line like the last one appears, turn on `stacks=True`, and the
 recording will include the line of your code that issued the repeated query.
 
+## The debug server
+
+A log line says a request ran 14 queries. The debug server shows which ones.
+`sqlakit debugserver` serves a page that fills as the recordings arrive:
+
+```console
+$ sqlakit debugserver
+SQLAKit debug server on http://localhost:5555
+```
+
+`debugserver=` sends a block there:
+
+```python
+with db.recording("GET /users", stacks=True, debugserver=("localhost", 5555)):
+    list_users()
+```
+
+![The debug server](assets/debugserver.png)
+
+Every recording is a card: the statements it ran, how long each took, how
+often each repeated, and the line of your code behind it. The bar across the
+card is the block's time, one segment per statement, coloured by what the
+statement was.
+
+The search reads fields as well as words: `table:users`, `kind:insert`,
+`ms:>50`, `queries:>10`, `repeated:>0`, `trace:views.py`, `app:web`,
+`tag:api`. A field about statements narrows the statements inside a card, not
+only which cards are listed. The panel on the left counts what there is to
+narrow by, and clicking a count writes the field into the search.
+
+`with values` puts the parameters into the SQL, ready to paste into a client.
+`fold repeats` lists a repeated statement once, with a count of the times it
+ran.
+
+One server watches several applications, and a recording says which one it
+came out of:
+
+```python
+from sqlakit import DebugServer
+
+with db.recording(
+    "GET /users",
+    debugserver=DebugServer("localhost", 5555, app="web", tags=("api",)),
+):
+    list_users()
+```
+
+The server holds the last 200 recordings, in memory, and writes nothing to
+disk. Sending runs on a thread of its own, so a block never waits on it, and a
+recording that cannot be delivered is dropped rather than raised: a debug
+server that is down is not the application's problem.
+
+### The queries a test run made
+
+`--sqlakit-report` writes the same page as a file, with the recordings inside
+it, so it opens without a server:
+
+```console
+$ pytest --sqlakit-report
+sqlakit wrote /app/sqlakit-20260901-224817.html
+```
+
+Every test marked `db` becomes a card. The test is the label, the file it
+lives in is the application, and its other markers are the tags. Stacks are
+on, so each statement carries the line of the test, or of the code under test,
+that issued it. `--sqlakit-report=build/queries.html` writes where you say
+instead.
+
+A suite that builds its rows through one factory has every statement pointing
+at that factory. Name the file, and the traces point past it:
+
+```toml
+[tool.pytest.ini_options]
+sqlakit = true
+sqlakit_skip_frames = ["tests/helpers.py"]
+```
+
+The marker and the fixtures behind it are on the [testing](testing.md) page.
+
 ## Reading the SQL
 
 `echo=True` prints the block's statements when it ends. That's useful in a
@@ -173,7 +252,7 @@ That turns "this ran 40 times" into a line number. `SQLAKit` collects the
 stack with `traceback.extract_stack()` on every statement, which is expensive
 enough to be off by default. Turn it on when you're chasing an N+1.
 
-## More than one database
+## Multiple databases
 
 `db.recording()` on the registry covers every database it holds, and each
 statement records which one ran it:

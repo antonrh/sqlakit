@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import logging
+import sys
+import sysconfig
 import traceback
 from dataclasses import dataclass, field
+from itertools import islice
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -11,7 +14,7 @@ import sqlalchemy as sa
 from .exceptions import DEFAULT_ALIAS
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
     from typing import TextIO
 
     import sqlparse
@@ -29,6 +32,21 @@ _LIBRARIES = (
     str(Path(__file__).parent),
     str(Path(sa.__file__ or "").parent),
 )
+
+_INSTALLED = tuple(
+    {
+        sysconfig.get_paths()[where]
+        for where in ("stdlib", "purelib", "platlib", "scripts")
+        if sysconfig.get_paths().get(where)
+    }
+)
+"""Where the code you did not write lives: the runner, the loop, the script."""
+
+_WALK = 100
+"""How far back a stack is read before the search for your own frames gives up."""
+
+_KEEP = 3
+"""How many of your frames a statement remembers."""
 
 _TRUNCATE = 120
 
@@ -372,14 +390,55 @@ def caller_stack(skip: Sequence[str] = ()) -> tuple[str, ...]:
     """Return the frames of your own code that led to a statement.
 
     Ours and SQLAlchemy's are left out by directory rather than by name: a
-    project of yours may well live in a path that has our name in it.
+    project of yours may well live in a path that has our name in it. So is
+    generated code, `<string>`: SQLAlchemy builds wrappers that way, and the
+    line numbers lead nowhere.
+
+    Installed packages go too, the test runner and the event loop among them,
+    which leaves the lines you wrote. A caller with none of its own, a library
+    calling from `site-packages`, gets them back rather than nothing.
+
+    ``skip`` names more to leave out, a file or a directory, so that the frames
+    point past a factory of yours at whoever called it.
     """
-    skipped = (*_LIBRARIES, *skip)
-    frames = []
-    for frame in reversed(traceback.extract_stack()[:-1]):
-        if frame.filename.startswith(skipped):
+    skipped = (*_LIBRARIES, *(str(Path(one).resolve()) for one in skip))
+    frames = list(islice(_frames(), _WALK))
+    return _yours(frames, (*skipped, *_INSTALLED)) or _yours(frames, skipped)
+
+
+def _yours(
+    frames: Sequence[traceback.FrameSummary], skipped: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Return the first few frames that none of these directories hold."""
+    kept = []
+    for frame in frames:
+        if frame.filename.startswith(skipped) or frame.filename.startswith("<"):
             continue
-        frames.append(f"{frame.filename}:{frame.lineno} in {frame.name}")
-        if len(frames) == 3:  # noqa: PLR2004
+        kept.append(f"{frame.filename}:{frame.lineno} in {frame.name}")
+        if len(kept) == _KEEP:
             break
-    return tuple(frames)
+    return tuple(kept)
+
+
+def _frames() -> Iterator[traceback.FrameSummary]:
+    """Every frame that led here, innermost first.
+
+    An `asyncio` driver runs the statement in a greenlet of its own, and the
+    application's frames are on the greenlet waiting for it: without those,
+    an async project's statements come from nowhere.
+    """
+    yield from reversed(traceback.extract_stack()[:-1])
+    for frame in _waiting():
+        yield from reversed(traceback.extract_stack(frame))
+
+
+def _waiting() -> Iterator[Any]:
+    """Return the frame each greenlet above this one waits at, nearest first."""
+    greenlet = sys.modules.get("greenlet")  # imported by SQLAlchemy, for asyncio
+    if greenlet is None:
+        return
+    current = greenlet.getcurrent()
+    while (current := getattr(current, "parent", None)) is not None:
+        frame = getattr(current, "gr_frame", None)
+        if frame is not None:
+            yield frame

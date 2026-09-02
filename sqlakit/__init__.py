@@ -1,5 +1,6 @@
 from ._base import DEFAULT_ENGINE_ARGS, DEFAULT_SESSION_ARGS
 from ._db import Database, RetryingTransaction, Transaction
+from ._debugserver import DebugServer
 from ._discovery import import_models, import_string
 from ._query import (
     CASE_INSENSITIVE_COLLATIONS,
@@ -77,6 +78,7 @@ __all__ = [
     "DatabaseConfig",
     "DatabaseNotConfiguredError",
     "Databases",
+    "DebugServer",
     "DefaultAliasError",
     "DetachedInstanceError",
     "EngineArgs",

@@ -1,0 +1,1354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SQLAKit</title>
+<style>
+  :root {
+    --ground: #f6f6f4; --card: #fff; --line: #e4e4e0; --ink: #16161a;
+    --soft: #6c6c68; --faint: #9a9a95; --accent: #0f7a82; --warn: #a8551f;
+    --hot: #b3341f; --pick: #e6f1f1; --flash: #fff6d8;
+    --select: #0f7a82; --insert: #2f7a3e; --update: #a8551f; --delete: #b3341f;
+    --other: #9a9a95;
+    --kw: #7a3ea3; --str: #2f7a3e; --num: #a8551f; --par: #0f7a82; --com: #9a9a95;
+  }
+  :root[data-theme="dark"], :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --ground: #101317; --card: #191d22; --line: #272c33; --ink: #e9ebee;
+      --soft: #99a0a8; --faint: #6b737c; --accent: #55d6cc; --warn: #e2a06a;
+      --hot: #f08a70; --pick: #1c2b2c; --flash: #2c2a1c;
+      --select: #55d6cc; --insert: #94d69a; --update: #e2a06a; --delete: #f08a70;
+      --other: #6b737c;
+      --kw: #c99bf0; --str: #94d69a; --num: #e2a06a; --par: #55d6cc; --com: #6b737c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #101317; --card: #191d22; --line: #272c33; --ink: #e9ebee;
+    --soft: #99a0a8; --faint: #6b737c; --accent: #55d6cc; --warn: #e2a06a;
+    --hot: #f08a70; --pick: #1c2b2c; --flash: #2c2a1c;
+    --select: #55d6cc; --insert: #94d69a; --update: #e2a06a; --delete: #f08a70;
+    --other: #6b737c;
+    --kw: #c99bf0; --str: #94d69a; --num: #e2a06a; --par: #55d6cc; --com: #6b737c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font: 14px/1.55 ui-sans-serif, -apple-system, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono, pre, code { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  header {
+    position: sticky; top: 0; z-index: 2; padding: .7rem 1.25rem .6rem;
+    background: color-mix(in srgb, var(--ground) 88%, transparent);
+    backdrop-filter: saturate(1.4) blur(10px);
+    border-bottom: 1px solid var(--line);
+    box-shadow: 0 1px 0 color-mix(in srgb, var(--ink) 4%, transparent);
+  }
+  .bar { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; }
+  .bar + .bar { margin-top: .55rem; }
+  h1 {
+    margin: 0; font-size: 1.02rem; font-weight: 700; letter-spacing: -.01em;
+    font-family: ui-monospace, Menlo, monospace; color: var(--ink);
+  }
+  h1 span { color: var(--accent); }
+  .live {
+    font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; font-weight: 600;
+    color: var(--accent); display: inline-flex; align-items: center; gap: .45em;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    border-radius: 999px; padding: .1rem .55rem; cursor: pointer;
+  }
+  .live::before {
+    content: ""; width: .45em; height: .45em; border-radius: 50%; background: currentColor;
+    box-shadow: 0 0 0 0 currentColor; animation: beat 2.4s ease-out infinite;
+  }
+  @keyframes beat {
+    0% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+    70% { box-shadow: 0 0 0 .35em transparent; opacity: .75; }
+    100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
+  }
+  .live[data-on="paused"] {
+    color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent);
+    border-color: color-mix(in srgb, var(--warn) 35%, transparent);
+  }
+  .live[data-on="paused"]::before { animation: none; }
+  .live[data-on="no"] {
+    color: var(--hot); background: color-mix(in srgb, var(--hot) 10%, transparent);
+    border-color: color-mix(in srgb, var(--hot) 35%, transparent);
+  }
+  .live[data-on="kept"] {
+    color: var(--soft); background: none; border-color: var(--line); cursor: default;
+    text-transform: none; letter-spacing: 0; font-weight: 500;
+  }
+  .live[data-on="kept"]::before { animation: none; background: var(--faint); }
+  .totals { display: flex; gap: 1.1rem; align-items: baseline; }
+  .totals span { display: inline-flex; align-items: baseline; gap: .3em; }
+  .totals b {
+    color: var(--ink); font-weight: 650; font-size: 1rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .totals em {
+    color: var(--faint); font-style: normal; font-size: .68rem; letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  input, select, button {
+    padding: .3rem .55rem; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--card); color: inherit; font: inherit; font-size: .85rem;
+  }
+  .find { position: relative; }
+  .find::before {
+    content: "⌕"; position: absolute; left: .5rem; top: 50%; transform: translateY(-52%);
+    color: var(--faint); font-size: 1rem;
+  }
+  #search { width: 100%; padding-left: 1.6rem; padding-right: 2rem; }
+  #help {
+    position: absolute; right: .25rem; top: 50%; transform: translateY(-50%);
+    border: 0; background: none; color: var(--faint); padding: 0 .35rem;
+  }
+  #help:hover, #help[data-on="yes"] { color: var(--accent); }
+  .apart { margin-left: auto; }
+  .quiet {
+    border: 0; background: none; color: var(--faint); padding: .2rem .45rem;
+    font-size: .95rem; line-height: 1;
+  }
+  .quiet:hover { color: var(--accent); background: var(--pick); }
+  .quiet[data-on="yes"] {
+    color: var(--hot); background: color-mix(in srgb, var(--hot) 12%, transparent);
+  }
+  .quiet svg { display: block; }
+  #search:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+  button, select { cursor: pointer; }
+  button:hover, select:hover { border-color: var(--faint); }
+  .seg { display: flex; }
+  .seg > * { border-radius: 0; margin-left: -1px; }
+  .seg > :first-child { border-radius: 7px 0 0 7px; margin-left: 0; }
+  .seg > :last-child { border-radius: 0 7px 7px 0; }
+  .seg > :hover { position: relative; z-index: 1; }
+  button[data-on="yes"] {
+    background: var(--pick); border-color: var(--accent); color: var(--accent);
+    position: relative; z-index: 1;
+  }
+  .page {
+    display: grid; grid-template-columns: var(--rail, 15rem) minmax(0, 1fr);
+    min-height: calc(100vh - var(--top, 4rem)); position: relative;
+  }
+  .grip {
+    position: absolute; top: 0; bottom: 0; left: calc(var(--rail, 15rem) - 3px);
+    width: 6px; cursor: col-resize; z-index: 1; touch-action: none;
+  }
+  .grip:hover::after, .grip[data-held="yes"]::after {
+    content: ""; position: absolute; inset: 0 2px; background: var(--accent);
+    opacity: .55;
+  }
+  .side {
+    position: sticky; top: var(--top, 4rem); align-self: start; padding: 1rem .75rem 2rem;
+    max-height: calc(100vh - var(--top, 4rem));
+    overflow-y: auto; display: flex; flex-direction: column; gap: .35rem;
+  }
+  .pick { display: flex; align-items: baseline; gap: .25rem; padding: 0 .4rem; }
+  .pick > span {
+    width: 3.6rem; flex: none; font-size: .62rem; text-transform: uppercase;
+    letter-spacing: .09em; color: var(--faint);
+  }
+  .pick button, .pick select {
+    border: 0; background: none; padding: .05rem .3rem; border-radius: 5px;
+    color: var(--soft); font-size: .82rem;
+  }
+  .pick button:hover, .pick select:hover { background: var(--pick); color: var(--accent); }
+  .pick button[data-on="yes"] { color: var(--accent); font-weight: 600; background: var(--pick); }
+  .chev { position: relative; display: inline-flex; }
+  .chev::after {
+    content: "▾"; position: absolute; right: .35rem; top: 50%; color: var(--faint);
+    transform: translateY(-52%); pointer-events: none; font-size: .68rem;
+  }
+  .chev select { appearance: none; padding-right: 1.1rem; }
+  .side h2, .part > summary {
+    font-size: .64rem; text-transform: uppercase; letter-spacing: .09em; font-weight: 600;
+    color: var(--faint); margin: .95rem 0 .1rem; padding: 0 .4rem; cursor: pointer;
+    display: flex; align-items: baseline; gap: .4rem; list-style: none;
+  }
+  .part > summary:hover { color: var(--soft); }
+  .part > summary::after { content: "−"; margin-left: auto; opacity: .7; }
+  .part:not([open]) > summary::after { content: "+"; }
+  .part > summary em {
+    font-style: normal; text-transform: none; letter-spacing: 0; opacity: .8;
+  }
+  .part:first-of-type > summary { margin-top: .35rem; }
+  .facet.more { color: var(--faint); font-size: .76rem; padding-left: .4rem; }
+  .facet.more:hover { color: var(--accent); }
+  .facet.cleared {
+    color: var(--warn); font-size: .78rem; margin-top: .35rem;
+  }
+  .facet.cleared::before { content: "×"; margin-right: .35em; }
+  .facet {
+    display: flex; width: 100%; align-items: baseline; gap: .45rem; border: 0;
+    background: none; padding: .12rem .4rem; border-radius: 5px; color: var(--soft);
+    font-size: .82rem; line-height: 1.55; text-align: left;
+  }
+  .facet:hover { background: var(--pick); border-color: transparent; }
+  .facet[data-on="yes"] { background: var(--pick); color: var(--accent); font-weight: 600; }
+  .facet em {
+    margin-left: auto; font-style: normal; color: var(--faint); font-size: .76rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .facet .dot {
+    width: .5em; height: .5em; border-radius: 1px; display: inline-block;
+    background: currentColor;
+  }
+  .facet .mono {
+    font-size: .8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .facet > .mono { min-width: 0; }
+  .legend {
+    color: var(--faint); font-size: .74rem; line-height: 1.7; padding: 0 .4rem;
+    font-family: ui-monospace, Menlo, monospace;
+  }
+  .legend b { color: var(--soft); font-weight: 600; display: inline-block; margin-top: .3rem; }
+  @media (max-width: 860px) {
+    .page { grid-template-columns: minmax(0, 1fr); }
+    .grip { display: none; }
+    .side { position: static; max-height: none; border-bottom: 1px solid var(--line); }
+    .stream { border-left: 0; }
+  }
+  .strip {
+    display: flex; align-items: flex-end; gap: 1px; height: 20px; margin-left: .2rem;
+  }
+  .strip:empty { display: none; }
+  .strip i { width: 3px; background: var(--accent); opacity: .35; border-radius: 1px; }
+  .strip i[data-now="yes"] { opacity: .9; }
+
+  main { padding: 1rem 1.25rem 1rem; display: flex; flex-direction: column; gap: .6rem; }
+
+  .stream { min-width: 0; border-left: 1px solid var(--line); }
+  footer {
+    padding: 0 1.25rem 3rem; display: flex; gap: .8rem; align-items: center;
+    color: var(--soft); font-size: .82rem;
+  }
+
+  .group { border: 1px solid var(--line); border-radius: 9px; background: var(--card); }
+  .group > summary {
+    padding: .6rem .9rem; cursor: pointer; display: flex; gap: .6rem;
+    align-items: center; flex-wrap: wrap; list-style: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  .group > summary::before {
+    content: "▸"; color: var(--faint); font-size: .8rem; transition: transform .12s;
+  }
+  .group[open] > summary::before { transform: rotate(90deg); }
+  .app {
+    font-family: ui-monospace, Menlo, monospace; font-size: .74rem; color: var(--accent);
+    border: 1px solid currentColor; border-radius: 4px; padding: 0 .35em;
+  }
+  .label { font-weight: 600; }
+  .tag { color: var(--faint); font-size: .74rem; cursor: pointer; }
+  .tag:hover { color: var(--accent); }
+  .badges { margin-left: auto; display: flex; gap: .5rem; align-items: baseline; }
+  .badge { color: var(--soft); font-size: .8rem; white-space: nowrap; }
+  .badge b { color: var(--ink); font-weight: 600; }
+  .badge.warn { color: var(--warn); }
+  .badge.hot { color: var(--hot); }
+  .spark { display: flex; gap: 1px; align-items: flex-end; height: 1.1rem; }
+  .spark i { width: 3px; background: var(--accent); opacity: .5; border-radius: 1px; }
+  .spark i:last-child { opacity: 1; }
+
+  .waterfall { display: flex; gap: 1px; width: 100%; padding: .1rem .9rem .5rem; }
+  .waterfall i { height: 8px; border-radius: 2px; cursor: pointer; min-width: 2px; }
+  .waterfall i:hover { outline: 1px solid var(--ink); }
+  .waterfall i.dim { opacity: .22; }
+  .of-select { background: var(--select); }
+  .of-insert { background: var(--insert); }
+  .of-update { background: var(--update); }
+  .of-delete { background: var(--delete); }
+  .of-other { background: var(--other); }
+
+  .about {
+    padding: 0 .9rem .5rem; display: flex; gap: .5rem; flex-wrap: wrap;
+    color: var(--faint); font-size: .78rem; align-items: baseline;
+  }
+  .about .kind { color: var(--soft); }
+  .about .only { color: var(--accent); }
+  .about .kind::before {
+    content: ""; display: inline-block; width: .5em; height: .5em; border-radius: 1px;
+    margin-right: .35em; background: currentColor;
+  }
+  .about .of-select { background: none; color: var(--select); }
+  .about .of-insert { background: none; color: var(--insert); }
+  .about .of-update { background: none; color: var(--update); }
+  .about .of-delete { background: none; color: var(--delete); }
+  .about .of-other { background: none; color: var(--other); }
+  .about .table {
+    font-family: ui-monospace, Menlo, monospace; cursor: pointer; color: var(--faint);
+  }
+  .about .table:hover { color: var(--accent); }
+  .note { color: var(--warn); }
+  .note button {
+    border: 0; background: none; padding: 0; color: var(--accent); font-size: inherit;
+    text-decoration: underline; cursor: pointer;
+  }
+
+  .run { border-top: 1px solid var(--line); }
+  .run > summary {
+    padding: .45rem .9rem; cursor: pointer; color: var(--soft); font-size: .82rem;
+    display: flex; gap: .7rem; align-items: baseline; list-style: none;
+  }
+  .run > summary b { color: var(--ink); font-weight: 600; }
+  .run > summary .when { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .more {
+    display: block; width: 100%; text-align: left; border: 0; border-top: 1px solid var(--line);
+    border-radius: 0; background: none; color: var(--soft); padding: .45rem .9rem;
+    font-size: .82rem;
+  }
+  .more:hover { color: var(--accent); }
+
+  .statement { border-top: 1px solid var(--line); display: flex; padding: .5rem .9rem .55rem 0; }
+  .statement.repeat { background: color-mix(in srgb, var(--warn) 6%, transparent); }
+  .statement.flash { animation: flash 1.4s ease-out; }
+  @keyframes flash { from { background: var(--flash); } to { background: transparent; } }
+  .gutter {
+    width: 8.5rem; flex: none; padding-left: .9rem; color: var(--soft); font-size: .78rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .took { color: var(--ink); font-weight: 600; }
+  .took.slow { color: var(--warn); }
+  .took.hot { color: var(--hot); }
+  .share {
+    display: block; height: 2px; margin: .3rem 0; border-radius: 1px; opacity: .7;
+  }
+  .where {
+    color: var(--faint); font-family: ui-monospace, Menlo, monospace;
+    font-size: 11.5px; word-break: break-all;
+  }
+  .body { flex: 1; min-width: 0; position: relative; }
+  .copy {
+    position: absolute; top: -.15rem; right: 0; opacity: 0; font-size: .72rem;
+    padding: .1rem .4rem;
+  }
+  .statement:hover .copy { opacity: 1; }
+  pre.sql { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12.5px; }
+  .kw { color: var(--kw); font-weight: 600; }
+  .str { color: var(--str); }
+  .num { color: var(--num); }
+  .par { color: var(--par); }
+  .com { color: var(--com); font-style: italic; }
+  .params {
+    color: var(--soft); font-size: 11.5px; margin-top: .3rem;
+    font-family: ui-monospace, Menlo, monospace; word-break: break-all;
+  }
+  details.params > summary { cursor: pointer; color: var(--faint); list-style: none; }
+  details.params > summary::before { content: "▸ "; }
+  details.params[open] > summary::before { content: "▾ "; }
+  details.params > summary:hover { color: var(--soft); }
+  .trace { margin-top: .3rem; font-size: 11.5px; }
+  .trace > summary { cursor: pointer; list-style: none; }
+  .trace > summary::after { content: " ▸"; opacity: .6; }
+  .trace[open] > summary::after { content: " ▾"; }
+  .trace > summary:hover { color: var(--soft); }
+  .frame {
+    display: block; margin-top: .2rem; color: var(--faint);
+    font-family: ui-monospace, Menlo, monospace;
+  }
+  .frame b { color: var(--soft); font-weight: 600; }
+
+  .empty { color: var(--faint); text-align: center; padding: 3rem 0; }
+  .empty p { margin: 0 0 1rem; }
+  .empty .hint {
+    display: inline-block; text-align: left; margin: 0; padding: 1rem 1.2rem;
+    border: 1px solid var(--line); border-radius: 9px; background: var(--card);
+    color: var(--ink); font-size: 12.5px; line-height: 1.6; max-width: 100%;
+    overflow-x: auto;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1><span>SQLA</span>Kit</h1>
+    <button class="live" id="live" data-on="yes" title="pause the stream">live</button>
+    <span class="strip" id="strip" title="recordings a second, over the last minute"></span>
+    <span class="totals" id="totals"></span>
+    <button class="quiet apart" id="cards"></button>
+    <button class="quiet" id="theme"></button>
+    <button class="quiet" id="clear" title="forget everything, here and on the server">
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor"
+           stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9.2a1 1 0 0 0 1 .8h4.6a1 1 0 0 0 1-.8L12 4
+                 M6.6 6.9v4.4M9.4 6.9v4.4"/>
+      </svg>
+    </button>
+  </div>
+</header>
+<div class="page">
+  <aside class="side" id="side">
+    <div class="find">
+      <input id="search" placeholder="search, or press /">
+      <button id="help" title="what the search understands">?</button>
+    </div>
+    <div class="pick"><span>sort</span>
+      <label class="chev">
+        <select id="sort">
+          <option value="recent">newest</option>
+          <option value="slow">slowest</option>
+          <option value="many">most queries</option>
+          <option value="repeated">most repeats</option>
+          <option value="label">label</option>
+        </select>
+      </label>
+    </div>
+    <div class="pick" id="sqls"><span>sql</span>
+      <button data-sql="raw" title="the statement as the database ran it">as run</button>
+      <button data-sql="values" title="the parameters put into the SQL">with values</button>
+    </div>
+    <div class="pick"><span>show</span>
+      <button id="fold" title="a statement that ran more than once, listed once">
+        fold repeats</button>
+    </div>
+    <div id="facets"></div>
+  </aside>
+  <div class="grip" id="grip" title="drag to resize, double-click to reset"></div>
+  <div class="stream">
+    <main id="main"></main>
+    <footer id="footer"></footer>
+  </div>
+</div>
+<script>
+const PER_PAGE = 25      // recordings on one page
+const SHOWN = 6          // rows of a rail section before the rest go behind a button
+const SLOW = 10           // ms, from where a statement is worth a colour
+const HOT = 100           // ms, from where it is worth alarm
+const REPEATS = 3         // identical statements before the card says so
+
+const state = {
+  runs: [], app: "", tags: new Set(), search: "", sort: "recent", page: 0, rail: 0,
+  open: new Set(), closed: new Set(),
+  help: false, values: false, fold: false, paused: false, missed: 0, collapsed: false,
+  folded: new Set(), opened: new Set(),
+}
+
+const main = document.getElementById("main")
+const footer = document.getElementById("footer")
+const side = document.getElementById("side")
+const facets = document.getElementById("facets")
+const totals = document.getElementById("totals")
+const strip = document.getElementById("strip")
+const search = document.getElementById("search")
+const sort = document.getElementById("sort")
+const sqls = document.getElementById("sqls")
+const folder = document.getElementById("fold")
+const cards = document.getElementById("cards")
+const live = document.getElementById("live")
+const grip = document.getElementById("grip")
+const theme = document.getElementById("theme")
+
+// Sub-millisecond statements are the common case on a warm database, and
+// rounding them all to "0.0 ms" hides which one cost anything.
+// One drawing each, so the buttons are the same width whichever state they are in.
+const icon = (name, path) =>
+  `<svg data-icon="${name}" viewBox="0 0 16 16" width="14" height="14" fill="none"
+        stroke="currentColor" stroke-width="1.4" stroke-linecap="round"
+        stroke-linejoin="round"><path d="${path}"/></svg>`
+
+const ICONS = {
+  collapse: icon("collapse", "M4 3.5 8 7l4-3.5M4 12.5 8 9l4 3.5"),
+  expand: icon("expand", "M4 6.5 8 3l4 3.5M4 9.5 8 13l4-3.5"),
+  moon: icon("moon", "M13.2 9.7A5.6 5.6 0 0 1 6.3 2.8a5.6 5.6 0 1 0 6.9 6.9z"),
+  sun: icon(
+    "sun",
+    "M8 5.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6M8 1.4v1.4M8 13.2v1.4" +
+      "M2.8 8H1.4M14.6 8h-1.4M4.3 4.3 3.3 3.3M12.7 12.7l-1-1M4.3 11.7l-1 1" +
+      "M12.7 3.3l-1 1"
+  ),
+}
+
+const ms = (value) =>
+  (value < 1 ? value.toFixed(2) : value < 10 ? value.toFixed(1) : Math.round(value)) + " ms"
+const safe = (value) => String(value).replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))
+const toggle = (set, value) => set.has(value) ? set.delete(value) : set.add(value)
+
+// -- when it ran ------------------------------------------------------------
+
+const clock = (at) => {
+  const when = new Date(at)
+  const pad = (number) => String(when[number]()).padStart(2, "0")
+  return `${pad("getHours")}:${pad("getMinutes")}:${pad("getSeconds")}`
+}
+
+const exactly = (at) => `${new Date(at).toLocaleString()}.${
+  String(new Date(at).getMilliseconds()).padStart(3, "0")}`
+
+const ago = (at) => {
+  const seconds = Math.max(0, (Date.now() - at) / 1000)
+  if (seconds < 5) return "just now"
+  if (seconds < 90) return `${Math.round(seconds)}s ago`
+  if (seconds < 5400) return `${Math.round(seconds / 60)}m ago`
+  return `${Math.round(seconds / 3600)}h ago`
+}
+
+// -- what a statement is ----------------------------------------------------
+
+const KINDS = ["select", "insert", "update", "delete"]
+
+const kindOf = (sql) => {
+  const word = sql.replace(/^\s*(\/\*[\s\S]*?\*\/)?\s*/, "").split(/\s+/, 1)[0].toLowerCase()
+  return KINDS.includes(word) ? word : "other"
+}
+
+const TABLE = /\b(?:FROM|JOIN|INTO|UPDATE)\s+("?[a-zA-Z_][\w.]*"?)/gi
+
+const tablesIn = (sql) =>
+  [...sql.matchAll(TABLE)].map((found) => found[1].replace(/"/g, ""))
+
+// -- the SQL itself ---------------------------------------------------------
+
+const BREAK = new RegExp(
+  "\\s+(FROM|WHERE|GROUP BY|ORDER BY|HAVING|LIMIT|OFFSET|VALUES|SET|RETURNING" +
+  "|UNION ALL|UNION|ON CONFLICT" +
+  "|(?:LEFT |RIGHT |FULL |INNER |CROSS )?(?:OUTER )?JOIN)\\b", "gi")
+
+const TOKEN = new RegExp(
+  "(/\\*[\\s\\S]*?\\*/)" +                                        // comment
+  "|('(?:[^']|'')*')" +                                           // string
+  "|(:[a-zA-Z_]\\w*|%\\([^)]*\\)s|\\$\\d+|\\?)" +                 // parameter
+  "|\\b(\\d+(?:\\.\\d+)?)\\b" +                                   // number
+  "|\\b(SELECT|INSERT INTO|INSERT|UPDATE|DELETE|FROM|WHERE|AND|OR|NOT|NULL|IS|IN|AS|ON" +
+  "|SET|VALUES|JOIN|LEFT|RIGHT|INNER|OUTER|FULL|CROSS|GROUP BY|ORDER BY|HAVING|LIMIT" +
+  "|OFFSET|DISTINCT|COUNT|EXISTS|BETWEEN|LIKE|ILIKE|CASE|WHEN|THEN|ELSE|END|UNION|ALL" +
+  "|WITH|RETURNING|ASC|DESC|NULLS FIRST|NULLS LAST|COLLATE|SAVEPOINT|RELEASE" +
+  "|PRAGMA)\\b", "gi")
+
+const CLASSES = ["com", "str", "par", "num", "kw"]
+
+// The SQL as it reads with the parameters in it. What ran is the statement with
+// the placeholders; this is for pasting into a client.
+function bound(sql, parameters) {
+  if (parameters == null) return sql
+  const first = Array.isArray(parameters) ? parameters[0] : null
+  const many = Array.isArray(first) || (first !== null && typeof first === "object")
+  const values = many ? parameters[0] : parameters
+  if (values == null) return sql
+  const literal = (value) => {
+    if (value === null || value === undefined) return "NULL"
+    if (typeof value === "boolean") return value ? "TRUE" : "FALSE"
+    if (typeof value === "number") return String(value)
+    return `'${String(value).replace(/'/g, "''")}'`
+  }
+  if (Array.isArray(values)) {
+    let next = 0
+    return sql.replace(/\?|\$(\d+)/g, (match, number) =>
+      literal(values[number ? Number(number) - 1 : next++]))
+  }
+  return sql.replace(/:([a-zA-Z_]\w*)|%\((\w+)\)s/g, (match, colon, percent) => {
+    const name = colon ?? percent
+    return name in values ? literal(values[name]) : match
+  })
+}
+
+const readable = (one) => state.values ? bound(one.sql, one.parameters) : one.sql
+
+// A row of parameters reads at a glance; a factory's forty of them do not.
+function params(parameters) {
+  if (parameters == null) return ""
+  const text = JSON.stringify(parameters)
+  if (text.length <= 110) return `<div class="params">${safe(text)}</div>`
+  const many = Array.isArray(parameters) ? parameters.length : Object.keys(parameters).length
+  return `<details class="params"><summary>${many} parameters</summary>${
+    safe(text)}</details>`
+}
+
+const laid = (sql) => sql.replace(/\s+/g, " ").trim().replace(BREAK, "\n$1")
+
+function highlight(sql) {
+  return safe(laid(sql)).replace(TOKEN, (match, ...groups) => {
+    const which = groups.slice(0, CLASSES.length).findIndex((group) => group !== undefined)
+    return which < 0 ? match : `<span class="${CLASSES[which]}">${match}</span>`
+  })
+}
+
+// -- where a statement came from --------------------------------------------
+
+const AT = /^(.*):(\d+) in (.*)$/
+
+const frame = (line) => {
+  const parts = line.match(AT)
+  if (!parts) return `<span class="frame">${safe(line)}</span>`
+  const [, path, number, name] = parts
+  const short = path.split("/").slice(-2).join("/")
+  return `<span class="frame"><b>${safe(name)}</b> ${safe(short)}:${number}</span>`
+}
+
+// `create_model:67`, or just the line when the function is the label above it.
+const called = (line, label) => {
+  const parts = line.match(AT)
+  if (!parts) return line
+  return parts[3] === label ? `line ${parts[2]}` : `${parts[3]}:${parts[2]}`
+}
+
+const trace = (stack, label) => {
+  if (!stack?.length) return ""
+  const rest = stack.slice(1)
+  const here = safe(called(stack[0], label))
+  if (!rest.length) return `<div class="trace"><span class="where">${here}</span></div>`
+  return `<details class="trace"><summary class="where">${here}</summary>${
+    rest.map(frame).join("")}</details>`
+}
+
+// -- what the search understands --------------------------------------------
+
+const TEXT_OF = {
+  app: (run) => run.app,
+  tag: (run) => (run.tags || []).join(" "),
+  label: (run) => run.label || "",
+  sql: (run) => run.statements.map((one) => one.sql).join(" "),
+  db: (run) => run.statements.map((one) => one.database).join(" "),
+  table: (run) => run.tables.join(" "),
+  kind: (run) => Object.keys(run.kinds).join(" "),
+  trace: (run) => run.statements.flatMap((one) => one.stack || []).join(" "),
+}
+
+const NUMBER_OF = {
+  queries: (run) => run.count,
+  ms: (run) => run.milliseconds,
+  repeated: (run) => run.duplicates,
+}
+
+const TERM = /(\w+):(>=|<=|>|<)?("[^"]*"|\S+)/g
+
+// The same words, read against one statement: a search for a table or a kind
+// narrows what a card lists, not only which cards are listed.
+const STATEMENT_OF = {
+  table: (one, wanted) => tablesIn(one.sql).some((table) => table.toLowerCase().includes(wanted)),
+  kind: (one, wanted) => kindOf(one.sql).includes(wanted),
+  sql: (one, wanted) => one.sql.toLowerCase().includes(wanted),
+  db: (one, wanted) => one.database.toLowerCase().includes(wanted),
+  trace: (one, wanted) => (one.stack || []).join(" ").toLowerCase().includes(wanted),
+}
+
+function asNarrowing(text) {
+  const tests = []
+  const words = text.replace(TERM, (match, field, operator, value) => {
+    const bare = value.replace(/^"|"$/g, "").toLowerCase()
+    if (field in STATEMENT_OF) {
+      tests.push((one) => STATEMENT_OF[field](one, bare))
+      return ""
+    }
+    return field in TEXT_OF || field in NUMBER_OF ? "" : match
+  }).trim().toLowerCase()
+  if (words) tests.push((one) => one.sql.toLowerCase().includes(words))
+  if (!tests.length) return null
+  return (one) => tests.every((test) => test(one))
+}
+
+function asQuery(text) {
+  const terms = []
+  const words = text.replace(TERM, (match, field, operator, value) => {
+    const bare = value.replace(/^"|"$/g, "")
+    if (field in TEXT_OF) {
+      terms.push((run) => TEXT_OF[field](run).toLowerCase().includes(bare.toLowerCase()))
+      return ""
+    }
+    if (field in NUMBER_OF) {
+      const wanted = Number(bare)
+      const test = {
+        ">": (had) => had > wanted, "<": (had) => had < wanted,
+        ">=": (had) => had >= wanted, "<=": (had) => had <= wanted,
+      }[operator || ">="]
+      if (!Number.isNaN(wanted)) terms.push((run) => test(NUMBER_OF[field](run)))
+      return ""
+    }
+    return match
+  }).trim().toLowerCase()
+
+  if (words) {
+    terms.push((run) => (run.label || "").toLowerCase().includes(words) ||
+      run.statements.some((one) => one.sql.toLowerCase().includes(words)))
+  }
+  return (run) => terms.every((term) => term(run))
+}
+
+const LEGEND = `
+  <div class="legend">
+    <b>label:</b>users<br><b>sql:</b>insert<br><b>table:</b>users<br>
+    <b>kind:</b>delete<br><b>db:</b>warehouse<br><b>trace:</b>views.py<br>
+    <b>queries:</b>&gt;5<br><b>ms:</b>&gt;50<br><b>repeated:</b>&gt;0
+    <p>Anything else matches the label or the SQL.</p>
+  </div>`
+
+// -- what is shown ----------------------------------------------------------
+
+function matching() {
+  const wanted = asQuery(state.search)
+  return state.runs.filter((run) =>
+    (!state.app || run.app === state.app) &&
+    (!state.tags.size || (run.tags || []).some((tag) => state.tags.has(tag))) &&
+    wanted(run))
+}
+
+const BY = {
+  recent: (a, b) => b.at - a.at,
+  slow: (a, b) => b.milliseconds - a.milliseconds,
+  many: (a, b) => b.count - a.count,
+  repeated: (a, b) => b.duplicates - a.duplicates,
+  label: (a, b) => a.key.localeCompare(b.key) || b.at - a.at,
+}
+
+const ordered = (runs) => runs.slice().sort(BY[state.sort])
+
+let narrow = null   // what the search leaves of a card's statements
+
+// Every statement of a run, as wide as it was slow, in the order they ran.
+const waterfall = (run) => `
+  <div class="waterfall">${run.statements.map((one, index) => `
+    <i class="of-${kindOf(one.sql)}${narrow && !narrow(one) ? " dim" : ""}"
+       data-goto="${run.id}-${index}"
+       style="flex:${Math.max(one.milliseconds, 0.001) /
+         Math.max(run.milliseconds, 0.001)}"
+       title="${index + 1}. ${kindOf(one.sql).toUpperCase()} ${ms(one.milliseconds)}"></i>`
+  ).join("")}</div>`
+
+const about = (run) => {
+  const kinds = Object.entries(run.kinds)
+    .map(([kind, many]) => `<span class="kind of-${kind}">${many} ${kind}</span>`)
+  const matching = narrow ? run.statements.filter(narrow).length : run.count
+  const only = matching < run.count
+    ? [`<span class="only">${matching} of ${run.count} match</span>`]
+    : []
+  const note = run.duplicates >= REPEATS && !state.fold
+    ? `<span class="note">${run.duplicates} repeat &mdash;
+        <button data-fold="yes">fold them</button></span>`
+    : ""
+  return `<div class="about">${[...only, ...kinds, note].join("")}</div>`
+}
+
+const statement = (one, run, index, repeats) => {
+  const took = one.milliseconds
+  return `
+  <div class="statement ${repeats > 1 ? "repeat" : ""}" id="s-${run.id}-${index}">
+    <div class="gutter">
+      <span class="took ${took >= HOT ? "hot" : took >= SLOW ? "slow" : ""}"
+            title="${state.fold && repeats > 1 ? "all " + repeats + " together" : ""}">${
+        ms(took)}</span>${repeats > 1 ? ` ×${repeats}` : ""}
+      <span class="share of-${kindOf(one.sql)}" style="width:${Math.max(2, Math.round(
+        took / Math.max(run.milliseconds, 0.001) * 100))}%"></span>
+      ${run.databases > 1 ? `<span class="where">${safe(one.database)}</span>` : ""}
+    </div>
+    <div class="body">
+      <button class="copy" data-copy="${run.id}-${index}">copy</button>
+      <pre class="sql">${highlight(readable(one))}</pre>
+      ${state.values ? "" : params(one.parameters)}
+      ${trace(one.stack, run.label)}
+    </div>
+  </div>`
+}
+
+function inside(run) {
+  const shown = narrow ? run.statements.filter(narrow) : run.statements
+  const seen = new Map()
+  for (const one of run.statements) seen.set(one.sql, (seen.get(one.sql) || 0) + 1)
+  if (!state.fold) {
+    return shown
+      .map((one) => statement(one, run, run.statements.indexOf(one), seen.get(one.sql)))
+      .join("")
+  }
+  const kept = []
+  const where = new Map()
+  shown.forEach((one) => {
+    const index = run.statements.indexOf(one)
+    const already = where.get(one.sql)
+    if (already !== undefined) {
+      kept[already].milliseconds += one.milliseconds
+      return
+    }
+    where.set(one.sql, kept.length)
+    kept.push({ ...one, index })
+  })
+  return kept.map((one) => statement(one, run, one.index, seen.get(one.sql))).join("")
+}
+
+function showCards() {
+  cards.innerHTML = state.collapsed ? ICONS.expand : ICONS.collapse
+  cards.title = state.collapsed ? "open every card" : "close every card"
+}
+
+// Collapsed holds: a recording that arrives while it is on arrives closed too.
+const opened = (run, newest) =>
+  state.open.has(run.id) ||
+  (!state.collapsed && newest && !state.closed.has(run.id))
+
+// One recording where it happened, for the feed: no history around it.
+function card(run, newest) {
+  return `
+    <details class="group" data-run="${run.id}" ${opened(run, newest) ? "open" : ""}>
+      <summary>
+        <span class="app">${safe(run.app)}</span>
+        <span class="label">${safe(run.label || "(no label)")}</span>
+        ${(run.tags || []).map((tag) =>
+          `<span class="tag" data-tag="${safe(tag)}">#${safe(tag)}</span>`).join("")}
+        <span class="badges">
+          <span class="badge"><b>${run.count}</b> queries</span>
+          <span class="badge"><b>${ms(run.milliseconds)}</b></span>
+          ${run.duplicates ? `<span class="badge ${run.duplicates > 4 ? "hot" : "warn"}">
+            <b>${run.duplicates}</b> repeated</span>` : ""}
+          <span class="badge when" title="${safe(exactly(run.at))}">
+            ${clock(run.at)} · ${ago(run.at)}</span>
+        </span>
+      </summary>
+      ${waterfall(run)}${about(run)}${inside(run)}
+    </details>`
+}
+
+const WAITING = `
+  <div class="empty">
+    <p>Waiting for the first recording.</p>
+    <pre class="hint"><span class="com"># the plain way: one application, this server</span>
+with db.recording(<span class="str">"GET /users"</span>, debugserver=(<span
+      class="str">"localhost"</span>, <span class="num">5555</span>)):
+    list_users()
+
+<span class="com"># named, so that several applications can send to the one page</span>
+from sqlakit import DebugServer
+
+with db.recording(
+    <span class="str">"GET /users"</span>,
+    stacks=<span class="kw">True</span>,   <span
+      class="com"># fills the trace under each statement</span>
+    logger=logger,  <span class="com"># a summary line when the block ends</span>
+    echo=<span class="kw">True</span>,     <span
+      class="com"># the statements, printed, coloured where rich is installed</span>
+    debugserver=DebugServer(<span class="str">"localhost"</span>, <span
+      class="num">5555</span>, app=<span class="str">"web"</span>, tags=(<span
+      class="str">"api"</span>,)),
+) as recording:
+    list_users()
+
+recording.count, recording.duplicates, recording.slowest</pre>
+  </div>`
+
+function drawStrip() {
+  const second = 1000
+  const now = Math.floor(Date.now() / second)
+  const buckets = new Array(60).fill(0)
+  for (const run of state.runs) {
+    const back = now - Math.floor(run.at / second)
+    if (back >= 0 && back < buckets.length) buckets[buckets.length - 1 - back] += 1
+  }
+  if (!buckets.some(Boolean)) {
+    strip.innerHTML = ""   // an empty minute is a row of dots, and reads as broken
+    return
+  }
+  const top = Math.max(...buckets, 1)
+  strip.innerHTML = buckets.map((many, index) => `
+    <i style="height:${Math.max(1, Math.round(many / top * 18))}px"
+       data-now="${index > buckets.length - 4 ? "yes" : "no"}"
+       title="${many} at ${60 - index}s ago"></i>`).join("")
+}
+
+// Everything the recordings can be narrowed by, counted, down the side.
+const tally = (of) => {
+  const counted = new Map()
+  for (const run of state.runs) {
+    for (const one of of(run)) counted.set(one, (counted.get(one) || 0) + 1)
+  }
+  return [...counted].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(b[0]))
+}
+
+const facet = (what, value, label, on, count, dot = "") => `
+  <button class="facet" data-${what}="${safe(value)}" data-on="${on ? "yes" : "no"}">
+    ${dot ? `<span class="dot of-${dot}"></span>` : ""}${label}<em>${count}</em>
+  </button>`
+
+const QUICK = [
+  ["repeated:>0", "repeats itself"],
+  ["ms:>50", "over 50 ms"],
+  ["queries:>10", "over 10 queries"],
+]
+
+// A section of the rail: shut away, or cut down to the busiest few.
+function section(name, title, rows) {
+  if (!rows.length) return ""
+  const all = state.opened.has(name)
+  const shown = all ? rows : rows.slice(0, SHOWN)
+  const rest = rows.length - shown.length
+  return `
+    <details class="part" data-part="${name}" ${state.folded.has(name) ? "" : "open"}>
+      <summary>${title}<em>${rows.length}</em></summary>
+      ${shown.join("")}
+      ${rest > 0 || all
+        ? `<button class="facet more" data-open="${name}">${
+            rest > 0 ? `${rest} more` : "fewer"}</button>`
+        : ""}
+    </details>`
+}
+
+function drawSide() {
+  const apps = tally((run) => [run.app])
+  const tags = tally((run) => run.tags || [])
+  const kinds = tally((run) => Object.keys(run.kinds))
+  const tables = tally((run) => run.tables)
+  // A test file is a path, and only its end tells the sections apart.
+  const mono = (name) => `<span class="mono" title="${safe(name)}">${
+    safe(name.split("/").slice(-2).join("/"))}</span>`
+  const parts = []
+
+  const picked = (state.app ? 1 : 0) + state.tags.size + terms().length
+  if (picked) {
+    parts.push(`<button class="facet cleared" data-clear="yes">clear ${
+      picked} filter${picked === 1 ? "" : "s"}</button>`)
+  }
+  parts.push(section("look", "worth a look", QUICK
+    .map(([term, label]) => [term, label, state.runs.filter(asQuery(term)).length])
+    .filter(([, , many]) => many)
+    .map(([term, label, many]) => facet("term", term, label, has(term), many))))
+  if (apps.length > 1) {
+    parts.push(section("app", "app", [
+      facet("app", "", "everything", !state.app, state.runs.length),
+      ...apps.map(([app, many]) =>
+        facet("app", app, mono(app), state.app === app, many)),
+    ]))
+  }
+  parts.push(section("tags", "tags", tags.map(([tag, many]) =>
+    facet("tag", tag, safe(tag), state.tags.has(tag), many))))
+  parts.push(section("kinds", "statements", kinds.map(([kind, many]) =>
+    facet("term", `kind:${kind}`, kind, has(`kind:${kind}`), many, kind))))
+  parts.push(section("tables", "tables", tables.map(([table, many]) =>
+    facet("term", `table:${table}`, mono(table), has(`table:${table}`), many))))
+  if (state.help) parts.push("<h2>search fields</h2>", LEGEND)
+  facets.innerHTML = parts.join("")
+}
+
+// A search term the side put there, taken back out when it is clicked again.
+const has = (term) => terms().includes(term)
+
+const terms = () => state.search.split(/\s+/).filter(Boolean)
+
+function switchTerm(term) {
+  const words = terms()
+  state.search = (has(term) ? words.filter((word) => word !== term) : [...words, term])
+    .join(" ")
+  search.value = state.search
+  state.page = 0
+  render()
+}
+
+function drawFooter(found, per) {
+  const pages = Math.max(1, Math.ceil(found.length / per))
+  if (pages === 1) {
+    footer.innerHTML = ""
+    return
+  }
+  const first = state.page * per
+  footer.innerHTML = `
+    <button ${state.page === 0 ? "disabled" : ""} data-page="${state.page - 1}">‹ newer</button>
+    <span>${first + 1}–${Math.min(first + per, found.length)} of ${found.length}</span>
+    <button ${state.page + 1 >= pages ? "disabled" : ""} data-page="${
+      state.page + 1}">older ›</button>`
+}
+
+function render() {
+  narrow = asNarrowing(state.search)
+  const shown = matching()
+  const found = ordered(shown)
+  const per = PER_PAGE
+  state.page = Math.min(state.page, Math.max(0, Math.ceil(found.length / per) - 1))
+  const here = found.slice(state.page * per, (state.page + 1) * per)
+  totals.innerHTML = `
+    <span><b>${shown.length}</b><em>recordings</em></span>
+    <span><b>${shown.reduce((sum, run) =>
+      sum + (narrow ? run.statements.filter(narrow).length : run.count), 0)
+      }</b><em>queries</em></span>
+`
+  drawStrip()
+  drawSide()
+  main.innerHTML = found.length
+    ? here.map((run, index) => card(run, state.page === 0 && index === 0)).join("")
+    : state.runs.length
+      ? `<div class="empty">Nothing matches that search.</div>`
+      : WAITING
+  drawFooter(found, per)
+  remember()
+}
+
+let waiting = false
+function draw() {
+  if (state.paused || waiting) return
+  waiting = true
+  requestAnimationFrame(() => {
+    waiting = false
+    render()
+  })
+}
+
+// -- what comes in ----------------------------------------------------------
+
+let counter = 0
+
+function keep(record) {
+  record.id = ++counter
+  record.at = record.at || Date.now()
+  record.key = `${record.app} · ${record.label || "(no label)"}`
+  record.databases = new Set(record.statements.map((one) => one.database)).size
+  record.kinds = {}
+  const tables = new Set()
+  for (const one of record.statements) {
+    const kind = kindOf(one.sql)
+    record.kinds[kind] = (record.kinds[kind] || 0) + 1
+    tablesIn(one.sql).forEach((table) => tables.add(table))
+  }
+  record.tables = [...tables]
+  state.runs.push(record)
+}
+
+// -- what the reader kept last time -----------------------------------------
+
+const KEPT = ["sort", "values", "fold", "theme", "rail", "collapsed"]
+
+const RAIL = { least: 170, most: 520, usual: 240 }
+
+function setRail(pixels) {
+  state.rail = Math.round(Math.min(Math.max(pixels, RAIL.least), RAIL.most))
+  document.documentElement.style.setProperty("--rail", `${state.rail}px`)
+}
+
+grip.addEventListener("pointerdown", (event) => {
+  event.preventDefault()
+  grip.setPointerCapture(event.pointerId)
+  grip.dataset.held = "yes"
+  const drag = (moved) => setRail(moved.clientX)
+  const drop = () => {
+    grip.removeEventListener("pointermove", drag)
+    grip.dataset.held = "no"
+    remember()
+  }
+  grip.addEventListener("pointermove", drag)
+  grip.addEventListener("pointerup", drop, { once: true })
+  grip.addEventListener("pointercancel", drop, { once: true })
+})
+
+grip.addEventListener("dblclick", () => {
+  setRail(RAIL.usual)
+  remember()
+})
+
+function remember() {
+  const held = { theme: document.documentElement.dataset.theme || "" }
+  for (const name of KEPT) if (name in state) held[name] = state[name]
+  try { localStorage.setItem("sqlakit", JSON.stringify(held)) } catch { /* private mode */ }
+
+  const query = new URLSearchParams()
+  if (state.search) query.set("q", state.search)
+  if (state.app) query.set("app", state.app)
+  if (state.tags.size) query.set("tags", [...state.tags].join(","))
+  if (state.sort !== "recent") query.set("sort", state.sort)
+  const hash = query.toString()
+  if (hash !== location.hash.slice(1)) history.replaceState(null, "", hash ? "#" + hash : "#")
+}
+
+function recall() {
+  let held = {}
+  try { held = JSON.parse(localStorage.getItem("sqlakit") || "{}") } catch { /* private mode */ }
+  if (held.theme) document.documentElement.dataset.theme = held.theme
+  for (const name of KEPT) if (name in held && name in state) state[name] = held[name]
+  if (state.rail) setRail(state.rail)
+
+  const query = new URLSearchParams(location.hash.slice(1))
+  if (query.has("q")) state.search = query.get("q")
+  if (query.has("app")) state.app = query.get("app")
+  if (query.has("tags")) state.tags = new Set(query.get("tags").split(",").filter(Boolean))
+  if (query.has("sort")) state.sort = query.get("sort")
+
+  search.value = state.search
+  sort.value = state.sort
+  pressed(sqls, "sql", state.values ? "values" : "raw")
+  folder.dataset.on = state.fold ? "yes" : "no"
+  showCards()
+  showTheme()
+}
+
+// -- what the reader does ---------------------------------------------------
+
+side.addEventListener("toggle", (event) => {
+  const part = event.target.dataset?.part
+  if (part) {
+    event.target.open ? state.folded.delete(part) : state.folded.add(part)
+  }
+}, true)
+
+side.addEventListener("click", (event) => {
+  const opened = event.target.closest("[data-open]")
+  if (opened) {
+    toggle(state.opened, opened.dataset.open)
+    render()
+    return
+  }
+  if (event.target.closest("[data-clear]")) {
+    state.app = ""
+    state.tags.clear()
+    search.value = state.search = ""
+    state.page = 0
+    render()
+    return
+  }
+  const chosen = event.target.closest("[data-sql]")
+  if (chosen) {
+    switchSql(chosen.dataset.sql === "values")
+    return
+  }
+  if (event.target.closest("#fold")) {
+    switchFold(!state.fold)
+    return
+  }
+  const picked = event.target.closest(".facet")
+  if (!picked) return
+  if (picked.dataset.term !== undefined) {
+    switchTerm(picked.dataset.term)
+    return
+  }
+  if (picked.dataset.app !== undefined) state.app = picked.dataset.app
+  if (picked.dataset.tag !== undefined) toggle(state.tags, picked.dataset.tag)
+  state.page = 0
+  render()
+})
+
+main.addEventListener("click", (event) => {
+  const target = event.target
+  const tag = target.closest(".tag")
+  const table = target.closest(".table")
+  if (tag || table) {
+    event.preventDefault()
+    if (tag) toggle(state.tags, tag.dataset.tag)
+    else search.value = state.search = `table:${table.dataset.table}`
+    state.page = 0
+    render()
+  } else if (target.dataset.fold) {
+    switchFold(true)
+  } else if (target.dataset.goto) {
+    show(target.dataset.goto)
+  } else if (target.dataset.copy) {
+    copy(target)
+  }
+})
+
+function show(where) {
+  const found = document.getElementById("s-" + where)
+  if (!found) return
+  found.scrollIntoView({ block: "center", behavior: "smooth" })
+  found.classList.remove("flash")
+  void found.offsetWidth
+  found.classList.add("flash")
+}
+
+function copy(button) {
+  const [id, index] = button.dataset.copy.split("-")
+  const run = state.runs.find((one) => one.id === Number(id))
+  const one = run?.statements[Number(index)]
+  if (!one) return
+  navigator.clipboard.writeText(laid(readable(one))).then(() => {
+    button.textContent = "copied"
+    setTimeout(() => { button.textContent = "copy" }, 1200)
+  }, () => { button.textContent = "no" })
+}
+
+main.addEventListener("toggle", (event) => {
+  const id = Number(event.target.dataset.run)
+  if (!id) return
+  event.target.open ? (state.open.add(id), state.closed.delete(id))
+                    : (state.closed.add(id), state.open.delete(id))
+}, true)
+
+cards.addEventListener("click", () => showAll(state.collapsed))
+
+footer.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-page]")
+  if (!button) return
+  state.page = Number(button.dataset.page)
+  render()
+  window.scrollTo({ top: 0 })
+})
+
+search.addEventListener("input", () => {
+  state.search = search.value
+  state.page = 0
+  draw()
+})
+sort.addEventListener("change", () => {
+  state.sort = sort.value
+  state.page = 0
+  render()
+})
+// Marks the chosen one of a row of choices.
+function pressed(box, name, value) {
+  for (const button of box.children) {
+    if (button.dataset[name] !== undefined) {
+      button.dataset.on = button.dataset[name] === value ? "yes" : "no"
+    }
+  }
+}
+
+// Every card at once, and every card that arrives after.
+function showAll(open) {
+  state.collapsed = !open
+  state.open.clear()
+  state.closed.clear()
+  if (open) matching().forEach((run) => state.open.add(run.id))
+  showCards()
+  render()
+}
+
+function switchSql(values) {
+  state.values = values
+  pressed(sqls, "sql", values ? "values" : "raw")
+  render()
+}
+
+function switchFold(folded) {
+  state.fold = folded
+  folder.dataset.on = folded ? "yes" : "no"
+  render()
+}
+
+document.getElementById("help").addEventListener("click", (event) => {
+  state.help = !state.help
+  event.target.dataset.on = state.help ? "yes" : "no"
+  render()
+})
+
+// What you are looking at, whether it was chosen or the system said so.
+function themeNow() {
+  const chosen = document.documentElement.dataset.theme
+  if (chosen) return chosen
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+}
+
+function showTheme() {
+  const dark = themeNow() === "dark"
+  theme.innerHTML = dark ? ICONS.sun : ICONS.moon
+  theme.title = `${dark ? "light" : "dark"} mode, or double-click to follow the system`
+}
+
+theme.addEventListener("click", () => {
+  document.documentElement.dataset.theme = themeNow() === "dark" ? "light" : "dark"
+  showTheme()
+  remember()
+})
+
+theme.addEventListener("dblclick", () => {
+  delete document.documentElement.dataset.theme
+  showTheme()
+  remember()
+})
+
+// An icon is easy to hit by accident, and this forgets the server's history too.
+const bin = document.getElementById("clear")
+let armed = false
+
+bin.addEventListener("click", () => {
+  if (!armed) {
+    armed = true
+    bin.dataset.on = "yes"
+    bin.title = "click again to forget everything"
+    setTimeout(() => {
+      armed = false
+      bin.dataset.on = "no"
+      bin.title = "forget everything, here and on the server"
+    }, 3000)
+    return
+  }
+  armed = false
+  bin.dataset.on = "no"
+  state.runs.length = 0
+  state.missed = 0
+  fetch("/records", { method: "DELETE" }).catch(() => {})
+  render()
+})
+
+live.addEventListener("click", () => {
+  if (SNAPSHOT) return
+  state.paused = !state.paused
+  if (!state.paused) state.missed = 0
+  liveSays()
+  if (!state.paused) render()
+})
+
+function liveSays() {
+  if (live.dataset.on === "no") return
+  live.dataset.on = state.paused ? "paused" : "yes"
+  live.textContent = state.paused
+    ? (state.missed ? `paused · ${state.missed} new` : "paused")
+    : "live"
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.metaKey || event.ctrlKey) return
+  if (event.key === "/" && document.activeElement !== search) {
+    event.preventDefault()
+    search.focus()
+  } else if (event.key === "Escape" && document.activeElement === search) {
+    search.value = state.search = ""
+    search.blur()
+    render()
+  }
+})
+
+function underHeader() {
+  const header = document.querySelector("header")
+  if (header) {
+    document.documentElement.style.setProperty("--top", header.offsetHeight + "px")
+  }
+}
+window.addEventListener("resize", underHeader)
+
+// -- where the recordings come from -----------------------------------------
+
+// A written report carries them; a served page asks the server and then listens.
+const SNAPSHOT = typeof window === "undefined" ? null : window.SQLAKIT
+
+recall()
+underHeader()
+
+if (SNAPSHOT) {
+  SNAPSHOT.records.forEach(keep)
+  live.dataset.on = "kept"
+  live.title = "a written report, not a running server"
+  live.textContent = SNAPSHOT.about || "report"
+  strip.style.display = "none"
+  bin.remove()
+  render()
+} else {
+  fetch("/records")
+    .then((response) => response.json())
+    .then((records) => {
+      records.forEach(keep)
+      render()
+    })
+
+  // After the page has loaded: an open stream never ends, and the browser
+  // would count the page as still loading for as long as it is held.
+  const listen = () => {
+    const stream = new EventSource("/stream")
+    stream.onmessage = (event) => {
+      keep(JSON.parse(event.data))
+      if (state.paused) {
+        state.missed += 1
+        liveSays()
+      } else {
+        draw()
+      }
+    }
+    stream.onerror = () => {
+      live.dataset.on = "no"
+      live.textContent = "disconnected"
+    }
+  }
+  if (document.readyState === "complete") listen()
+  else window.addEventListener("load", listen)
+
+  setInterval(draw, 15000)  // keeps "4m ago" and the strip honest
+  render()
+}
+</script>
+</body>
+</html>

@@ -214,6 +214,31 @@ You can spot the N+1 right away: one query for the users and two identical
 ones for the teams. Formatting needs the `sqlakit[debug]` extra, and if the
 project has `rich`, the output is colored too.
 
+### The debug server
+
+`sqlakit debugserver` serves a page that fills as the recordings arrive:
+
+```console
+$ sqlakit debugserver
+SQLAKit debug server on http://localhost:5555
+```
+
+```python
+with db.recording("GET /users", stacks=True, debugserver=("localhost", 5555)):
+    list_users()
+```
+
+![The SQLAKit debug server](assets/debugserver.png)
+
+One card per block: the SQL highlighted, the parameters ready to paste, the
+repeats counted, and the line of your code behind every statement. Search by
+`table:`, `kind:`, `ms:>50` or `repeated:>0`, and one server watches as many
+applications as you point at it.
+
+`pytest --sqlakit-report` writes the same page for a test run, as a file that
+opens without a server: the test is the label, and each statement carries the
+line of the test that ran it. The [debugging](debugging.md) page has both.
+
 ## The registry
 
 To avoid passing a `Database` from module to module, configure the registry
@@ -239,7 +264,7 @@ def list_users() -> list[User]:
     return db.query(User).order_by("name").all()
 ```
 
-## More than one database
+## Multiple databases
 
 The registry can hold several databases. Configure them under aliases, and pick
 one per block:
@@ -294,7 +319,7 @@ if saving belongs in your repositories or services, skip `sqlakit.orm`
 entirely. `SQLModel` classes are `SQLAlchemy` models, and work either way: the
 [examples](examples.md) show both.
 
-## The async API
+## Async
 
 The async API is identical: the same classes, the same methods. Only the import
 changes. It needs the `sqlakit[asyncio]` extra:
