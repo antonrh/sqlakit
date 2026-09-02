@@ -86,7 +86,7 @@ def test_save_inside_a_transaction_only_flushes(db: Database) -> None:
         1 / 0
 
     with db.connect() as conn:
-        # ...but the transaction is what decides whether it stays.
+        # ...but the transaction decides whether it stays.
         assert conn.scalar(sa.select(sa.func.count(User.id))) == 0
 
 

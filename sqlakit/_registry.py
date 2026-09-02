@@ -37,7 +37,7 @@ class Databases(_DatabaseRegistryMixin[Database], Database):
     ) -> Iterator[None]:
         """Open a transaction on every database, not the default one alone.
 
-        Where a single database needs `transaction(rollback=True)`, a test harness
+        A single database needs `transaction(rollback=True)`. A test harness
         with several needs this:
 
         ```python

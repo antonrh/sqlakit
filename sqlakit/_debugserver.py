@@ -111,7 +111,7 @@ class Records:
 
 @dataclass(frozen=True, slots=True)
 class DebugServer:
-    """Where recordings go, and who is sending them.
+    """The address recordings go to, and the application sending them.
 
     A server watches several applications at once, so a recording says which
     one it came from:

@@ -58,7 +58,7 @@ PathLike = str | Path
 
 
 class Templates:
-    """Where a database's SQL templates live, and how they are rendered.
+    """The directory a database's SQL templates live in, and how they render.
 
     A path is enough; the object is for the rest:
 
@@ -173,7 +173,7 @@ class Templates:
 
 
 class BaseSQLQuery(Generic[RowT, DatabaseT]):
-    """Where the SQL comes from, its context, and what its rows become.
+    """The source of the SQL, its context, and the type its rows become.
 
     Built by `db.sql(...)`. Nothing can be narrowed: what the SQL selects is
     what comes back.

@@ -193,7 +193,7 @@ class _Outer(Generic[ConnectionT]):
 
 
 class BaseDatabase(Generic[ConnectionT, SessionT]):
-    """What the sync and async databases share: everything that is not IO.
+    """The sync and async databases share this: everything that is not IO.
 
     Binding to the context lives here. Opening and closing connections and
     sessions is left to the subclass.
@@ -578,9 +578,9 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
     ) -> Iterator[_Outer[ConnectionT] | None]:
         """Make ``connection`` the outer one for this context. See `_Outer`.
 
-        ``None`` leaves this context without an outer transaction at all, which
-        is what ``autocommit()`` needs: blocks under it must not join a
-        transaction its own connection is not part of.
+        ``None`` leaves this context without an outer transaction at all, as
+        ``autocommit()`` needs: blocks under it must not join a transaction
+        its own connection is not part of.
         """
         outer = (
             _Outer(
@@ -605,9 +605,9 @@ DatabaseT = TypeVar("DatabaseT", bound="BaseDatabase[Any, Any]")
 class _Using:
     """A database standing in for the default one, while a block of it is open.
 
-    What `db.using(alias)` returns. Everything a database does, it does; what
-    it adds is the redirection: for as long as one of its blocks is open, a
-    model that lives on the default database resolves here instead.
+    `db.using(alias)` returns one of these. Everything a database does, it
+    does, and it adds the redirection: for as long as one of its blocks is
+    open, a model that lives on the default database resolves here instead.
     """
 
     def __init__(
@@ -726,7 +726,7 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
     def __getitem__(self, alias: str) -> Self | DatabaseT:
         """Return the database configured as ``alias``.
 
-        ``db["default"]`` is what the code reaches without an alias: this
+        ``db["default"]`` is the database the code reaches without an alias: this
         registry, or the database `register` was given for that name.
 
         Raises:
@@ -882,7 +882,7 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         """Say which database a model lives on, for models that do not say it.
 
         Each router takes a model and returns an alias, or None to leave the question
-        to the next one. A dotted path is imported, which is what settings hand over:
+        to the next one. A dotted path is imported, since settings carry paths:
 
         ```python
         db.route(lambda model: "warehouse" if is_report(model) else None)
@@ -1058,11 +1058,11 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
     if not TYPE_CHECKING:
         # Hidden from type checkers: seeing it, they would take every attribute
         # to exist and stop reporting typos. It is reached when normal lookup
-        # fails, which is what a registry with no database of its own looks
-        # like, from the outside and from its own methods.
+        # fails, as it does on a registry with no database of its own, from
+        # the outside and from its own methods.
         def __getattr__(self, name: str) -> object:
             # Only the database half is worth explaining. Anything else is a
-            # name that does not exist, and saying so is what lets `hasattr`,
+            # name that does not exist, and saying so lets `hasattr`,
             # `copy` and every library that introspects work.
             state = self.__dict__
             if "url" in state:
@@ -1078,9 +1078,9 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
 
 
 DATABASE_STATE = frozenset(
-    # What `BaseDatabase.__init__` sets. A registry has these once it has a
-    # database of its own, and reaching for one before then is the question
-    # `DatabaseNotConfiguredError` answers, whichever method asked.
+    # The attributes `BaseDatabase.__init__` sets. A registry has these once
+    # it has a database of its own, and reaching for one before then raises
+    # `DatabaseNotConfiguredError`, whichever method asked.
     {
         "url",
         "templates",
@@ -1164,7 +1164,7 @@ def lazy_session_class(base: type) -> type:
 
 
 class BaseRetryingTransaction:
-    """What ``transaction()`` returns when given ``retry_on``.
+    """``transaction()`` returns this when given ``retry_on``.
 
     A decorator, and deliberately not a context manager: retrying re-runs the
     block, which a ``with`` statement cannot do. Entering one is rejected by

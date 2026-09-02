@@ -1,4 +1,4 @@
-"""What the plugin needs from a project: the base its models share."""
+"""The one thing the plugin needs from a project: the base its models share."""
 
 import pytest
 from app import Model

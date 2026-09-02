@@ -1,4 +1,4 @@
-"""What every example test needs."""
+"""The fixtures every example test needs."""
 
 import pytest
 

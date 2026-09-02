@@ -221,7 +221,7 @@ class Page(Generic[ModelT, TotalT]):
     def with_items(self, items: Sequence[OtherT]) -> Page[OtherT, TotalT]:
         """Return the page carrying these rows instead, counts unchanged.
 
-        What an asynchronous transform needs: `page.with_items(await serialize(...))`.
+        An asynchronous transform needs this: `page.with_items(await serialize(...))`.
 
         Raises:
             PageItemsMismatchError: if there is not one item per row.
@@ -385,7 +385,7 @@ class BaseQuery(Generic[ModelT]):
     def with_select(self, select: sa.Select[Any]) -> Self:
         """Return a query like this one, over the given select.
 
-        This is what every builder is made of. Use it in a method of your own
+        Every builder is made of this. Use it in a method of your own
         when the statement needs SQLAlchemy the builders do not cover.
 
         Raises:
@@ -415,7 +415,7 @@ class BaseQuery(Generic[ModelT]):
     def is_ordered(self) -> bool:
         """Whether this query carries an ordering.
 
-        What a method of your own asks before it adds a default one, since
+        A method of your own asks this before it adds a default one, since
         `page` and `cursor_page` refuse a query with no ordering.
         """
         return bool(self._select._order_by_clauses)  # noqa: SLF001
@@ -458,7 +458,7 @@ class BaseQuery(Generic[ModelT]):
         ```
 
         Nothing can be added afterwards, and ``__query_filter__`` is not applied:
-        what the statement selects is what comes back.
+        the statement selects the rows that come back.
         """
         query = self._copy()
         query._statement = self._select.from_statement(  # noqa: SLF001
@@ -561,7 +561,7 @@ class BaseQuery(Generic[ModelT]):
         User.query.order_by(request.sort, ignore_case=["name"])
         ```
 
-        Which SQL that becomes is the dialect's to decide, and
+        The dialect decides which SQL that becomes, and
         `CASE_INSENSITIVE_COLLATIONS` names the collation. A cursor cannot page
         it: use it with `page`.
 
@@ -948,7 +948,7 @@ class BaseQuery(Generic[ModelT]):
 def orderable_columns(model: type[Any]) -> Mapping[str, Any]:
     """Return every mapped column of a model, by name.
 
-    What a model orders by when it declares no ``__orderable__``, and what an
+    A model orders by these when it declares no ``__orderable__``, and an
     ``__orderable__`` that adds to the columns rather than replacing them starts
     from:
 
@@ -1174,7 +1174,7 @@ def _join_for(
     """Return what to join for a field that is a plain column of another table.
 
     A relationship of the model that reaches that table is the join, condition
-    and all, which is what a view with no foreign key needs. Failing that, the
+    and all, as a view with no foreign key needs. Failing that, the
     table itself, and `SQLAlchemy` works the condition out from the key.
 
     An expression may name several tables or none, so it is left alone:
@@ -1409,7 +1409,7 @@ def _from_json(value: Any, type_: sa.types.TypeEngine[Any]) -> Any:  # noqa: ANN
 
 
 class _Rows(Protocol[RowT_co]):
-    """What the helpers below need of a result: one row, or none."""
+    """The helpers below take one row of a result, or none."""
 
     def one(self) -> RowT_co: ...
 

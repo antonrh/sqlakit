@@ -1,4 +1,4 @@
-"""What the tests of both APIs share."""
+"""The fixtures the tests of both APIs share."""
 
 import inspect
 from collections.abc import Callable

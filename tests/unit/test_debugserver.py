@@ -147,8 +147,8 @@ def test_a_recording_reaches_a_server(
 def test_a_recording_two_blocks_report_arrives_once(
     server: ThreadingHTTPServer, records: Records
 ) -> None:
-    # What several databases writing into one recording would otherwise send
-    # twice, once for each block that names the server.
+    # Several databases writing into one recording each send it, and the
+    # server keeps one.
     recording = a_recording()
     at = ("localhost", int(server.server_address[1]))
 

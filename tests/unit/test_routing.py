@@ -1,4 +1,4 @@
-"""Which database a model uses, and who decides."""
+"""The database a model uses, and who decides."""
 
 from collections.abc import Iterator
 from typing import Any, ClassVar
@@ -326,7 +326,7 @@ def test_configure_takes_them_by_name() -> None:
 
 def test_a_name_that_leads_nowhere_says_so() -> None:
     # A module of this project's own: a name like `app.db` is one a working
-    # tree may hold, and importing it is what the check does.
+    # tree may hold, and the check imports it.
     path = "tests.unit.test_routing.no_such_router"
 
     with pytest.raises(UnknownImportPathError, match=path.replace(".", r"\.")):

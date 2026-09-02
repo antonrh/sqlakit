@@ -1,4 +1,4 @@
-"""What ran, how long it took, and how many times."""
+"""The statements that ran, how long they took, and how many times."""
 
 import logging
 import sys

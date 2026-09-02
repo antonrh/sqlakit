@@ -1,4 +1,4 @@
-"""What SQLite cannot answer: real savepoints, locks, and a second dialect."""
+"""The questions SQLite cannot answer: savepoints, locks, a second dialect."""
 
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta

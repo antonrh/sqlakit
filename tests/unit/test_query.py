@@ -1113,7 +1113,7 @@ def test_a_plain_get_costs_nothing_for_a_row_in_the_session(
     db: Database,
 ) -> None:
     with db.connect():
-        # Holding the instance is what keeps it in the identity map, which
+        # Holding the instance keeps it in the identity map, which
         # references its rows weakly.
         user = User.query.get(1)
 
@@ -1573,7 +1573,7 @@ class Ticket2(PlainBase):
 
 
 class TicketRepository:
-    """What a query looks like when the models know nothing about sqlakit."""
+    """A query over models that know nothing about sqlakit."""
 
     def __init__(self, db: Database) -> None:
         self.db = db
