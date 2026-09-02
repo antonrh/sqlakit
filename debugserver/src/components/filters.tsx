@@ -1,7 +1,16 @@
-/** What there is to narrow by, counted, behind one button. */
+/** What there is to narrow by, one input for each of them, behind one button. */
 
-import { Filter, X } from "lucide-react"
+import { ChevronDown, Filter, X } from "lucide-react"
+import { Command as CommandPrimitive } from "cmdk"
+import { useRef, useState } from "react"
 
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { asQuery, termsOf, withTerm } from "@/lib/search"
 import type { Run } from "@/lib/records"
@@ -16,6 +25,15 @@ const WORTH = [
   ["queries:>10", "over 10 queries"],
 ] as const
 
+/** One choice of an input: what it says, what it costs, and where it lives. */
+type Choice = {
+  value: string
+  name: string
+  count: number
+  under?: string
+  dot?: Kind
+}
+
 function tally(runs: Run[], of: (run: Run) => string[]): [string, number][] {
   const counted = new Map<string, number>()
   for (const run of runs) {
@@ -24,59 +42,8 @@ function tally(runs: Run[], of: (run: Run) => string[]): [string, number][] {
   return [...counted].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
 }
 
-function Row({
-  label,
-  count,
-  on,
-  onPick,
-  dot,
-}: {
-  label: React.ReactNode
-  count: number
-  on: boolean
-  onPick: () => void
-  dot?: Kind
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onPick}
-      className={cn(
-        "flex w-full items-baseline gap-2 rounded-md px-2 py-1 text-left text-[13px]",
-        "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-        on && "bg-accent font-medium text-teal-700 dark:text-teal-300",
-      )}
-    >
-      {dot && <span className={cn("size-1.5 shrink-0 rounded-xs", TONE[dot].fill)} />}
-      <span className="truncate">{label}</span>
-      <span className="ml-auto shrink-0 text-xs tabular-nums opacity-70">{count}</span>
-    </button>
-  )
-}
-
-function Group({ title, rows }: { title: string; rows: React.ReactNode[] }) {
-  if (!rows.length) return null
-  return (
-    <div className="mb-2">
-      <div
-        className="px-2 pb-0.5 text-[11px] font-semibold uppercase tracking-wider
-                      text-muted-foreground/70"
-      >
-        {title}
-      </div>
-      {rows}
-    </div>
-  )
-}
-
-export function Filters({ runs }: { runs: Run[] }) {
-  const { search, app, tags, set, search_, toggleTag } = useStore((state) => state)
-  const terms = termsOf(search)
-  const picked = (app ? 1 : 0) + tags.length + terms.length
-  const apps = tally(runs, (run) => [run.app])
-  const short = (name: string) => name.split("/").slice(-2).join("/")
-  const databases = new Set(runs.flatMap((run) => run.databases)).size
-  // The tables of each database, counted, so a long name has the row to itself.
+/** The tables of each database, counted, for a page that has more than one. */
+function tablesOn(runs: Run[]): Map<string, Map<string, number>> {
   const touched = new Map<string, Map<string, number>>()
   for (const run of runs) {
     for (const [table, on] of Object.entries(run.tablesOn)) {
@@ -87,22 +54,182 @@ export function Filters({ runs }: { runs: Run[] }) {
       }
     }
   }
-  const tables = (rows: Iterable<[string, number]>) =>
-    [...rows]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .map(([table, many]) => (
-        <Row
-          key={table}
-          label={
-            <span className="font-mono" title={table}>
-              {table}
+  return touched
+}
+
+type FieldProps = {
+  title: string
+  choices: Choice[]
+  chosen: string[]
+  onPick: (value: string) => void
+  mono?: boolean
+}
+
+/**
+ * One field to narrow by: what is picked sits in the box, the rest is under it.
+ *
+ * The box is an input, so a field with two hundred tables is typed at rather
+ * than scrolled through. `cmdk` does the narrowing and the arrow keys.
+ */
+function Field({ title, choices, chosen, onPick, mono }: FieldProps) {
+  const [look, setLook] = useState("")
+  const [open, setOpen] = useState(false)
+  const box = useRef<HTMLInputElement>(null)
+  if (choices.length < 2) return null
+
+  const named = (value: string) => choices.find((one) => one.value === value)?.name ?? value
+  const groups = [...new Set(choices.map((one) => one.under ?? ""))]
+
+  const take = (value: string) => {
+    onPick(value)
+    setLook("")
+    box.current?.focus()
+  }
+
+  return (
+    <div>
+      <div
+        className="px-0.5 pb-1 text-[11px] font-semibold uppercase tracking-wider
+                   text-muted-foreground/70"
+      >
+        {title}
+      </div>
+      <Command loop className="overflow-visible bg-transparent">
+        <div
+          onClick={() => box.current?.focus()}
+          className={cn(
+            "flex flex-wrap items-center gap-1 rounded-md border px-1.5 py-1",
+            "cursor-text focus-within:border-teal-600/50",
+          )}
+        >
+          {chosen.map((value) => (
+            <span
+              key={value}
+              className={cn(
+                "flex max-w-full items-center gap-1 rounded-sm bg-teal-500/15 py-0.5 pl-1.5 pr-1",
+                "text-[11px] text-teal-700 dark:text-teal-300",
+                mono && "font-mono",
+              )}
+            >
+              <span className="truncate">{named(value)}</span>
+              <button
+                type="button"
+                title="drop this one"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onPick(value)
+                }}
+              >
+                <X className="size-3 opacity-70 hover:opacity-100" />
+              </button>
             </span>
-          }
-          count={many}
-          on={terms.includes(`table:${table}`)}
-          onPick={() => search_(withTerm(search, `table:${table}`))}
-        />
-      ))
+          ))}
+          <CommandPrimitive.Input
+            ref={box}
+            value={look}
+            onValueChange={setLook}
+            onFocus={() => setOpen(true)}
+            onBlur={() => setTimeout(() => setOpen(false), 120)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setOpen(false)
+              if (event.key === "Backspace" && !look && chosen.length) {
+                onPick(chosen[chosen.length - 1]!)
+              }
+            }}
+            placeholder={chosen.length ? "" : "any"}
+            className="min-w-16 flex-1 bg-transparent text-[12px] outline-none
+                       placeholder:text-muted-foreground/70"
+          />
+          <span className="ml-auto flex shrink-0 items-center gap-1 self-center pl-1">
+            {chosen.length > 0 && (
+              <button
+                type="button"
+                title={`clear ${title}`}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  chosen.forEach(onPick)
+                }}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-3.5" />
+              </button>
+            )}
+            <ChevronDown className="size-3.5 text-muted-foreground/70" />
+          </span>
+        </div>
+
+        {open && (
+          <CommandList className="mt-1 max-h-44 rounded-md border">
+            <CommandEmpty className="py-2 text-center text-[12px] text-muted-foreground">
+              Nothing under that.
+            </CommandEmpty>
+            {groups.map((group) => (
+              <CommandGroup key={group} heading={group || undefined}>
+                {choices
+                  .filter((one) => (one.under ?? "") === group)
+                  .map((one) => (
+                    <CommandItem
+                      key={one.value}
+                      value={`${one.name} ${one.under ?? ""}`}
+                      onSelect={() => take(one.value)}
+                      className={cn(
+                        "gap-2 text-[13px] text-muted-foreground",
+                        chosen.includes(one.value) &&
+                          "font-medium text-teal-700 dark:text-teal-300",
+                      )}
+                    >
+                      {one.dot && (
+                        <span
+                          className={cn("size-1.5 shrink-0 rounded-xs", TONE[one.dot].fill)}
+                        />
+                      )}
+                      <span className={cn("truncate", mono && "font-mono")} title={one.name}>
+                        {one.name}
+                      </span>
+                      <span className="ml-auto shrink-0 text-xs tabular-nums opacity-70">
+                        {one.count}
+                      </span>
+                    </CommandItem>
+                  ))}
+              </CommandGroup>
+            ))}
+          </CommandList>
+        )}
+      </Command>
+    </div>
+  )
+}
+
+export function Filters({ runs }: { runs: Run[] }) {
+  const { search, tags, set, search_, toggleTag } = useStore((state) => state)
+  const terms = termsOf(search)
+  const picked = tags.length + terms.length
+  const databases = new Set(runs.flatMap((run) => run.databases)).size
+
+  /** The terms of one field that are on, as the values they name. */
+  const on = (field: string) =>
+    terms
+      .filter((term) => term.startsWith(`${field}:`))
+      .map((term) => term.slice(field.length + 1))
+  const pick = (field: string) => (value: string) =>
+    search_(withTerm(search, `${field}:${value}`))
+
+  const short = (name: string) => name.split("/").slice(-2).join("/")
+  const worth = WORTH.map(([term, said]) => ({
+    value: term,
+    name: said,
+    count: runs.filter(asQuery(term)).length,
+  })).filter((one) => one.count > 0)
+  const tables = [...tablesOn(runs)].flatMap(([database, held]) =>
+    [...held]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([table, many]) => ({
+        value: table,
+        name: table,
+        count: many,
+        under: databases > 1 ? database : undefined,
+      })),
+  )
 
   return (
     <Popover>
@@ -118,118 +245,79 @@ export function Filters({ runs }: { runs: Run[] }) {
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className="max-h-[70vh] w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-2"
+        className="flex max-h-[70vh] w-[22rem] max-w-[calc(100vw-2rem)] flex-col gap-3
+                   overflow-y-auto p-3"
       >
+        <Field
+          title="worth a look"
+          choices={worth}
+          chosen={worth.filter((one) => terms.includes(one.value)).map((one) => one.value)}
+          onPick={(value) => search_(withTerm(search, value))}
+        />
+        <Field
+          title="app"
+          mono
+          choices={tally(runs, (run) => [run.app]).map(([name, many]) => ({
+            value: name,
+            name: short(name),
+            count: many,
+          }))}
+          chosen={on("app")}
+          onPick={pick("app")}
+        />
+        <Field
+          title="database"
+          mono
+          choices={tally(runs, (run) => run.databases).map(([name, many]) => ({
+            value: name,
+            name,
+            count: many,
+          }))}
+          chosen={on("db")}
+          onPick={pick("db")}
+        />
+        <Field
+          title="tags"
+          choices={tally(runs, (run) => run.tags).map(([tag, many]) => ({
+            value: tag,
+            name: tag,
+            count: many,
+          }))}
+          chosen={tags}
+          onPick={toggleTag}
+        />
+        <Field
+          title="statements"
+          choices={tally(runs, (run) => Object.keys(run.kinds)).map(([kind, many]) => ({
+            value: kind,
+            name: kind,
+            count: many,
+            dot: kind as Kind,
+          }))}
+          chosen={on("kind")}
+          onPick={pick("kind")}
+        />
+        <Field
+          title="tables"
+          mono
+          choices={tables}
+          chosen={on("table")}
+          onPick={pick("table")}
+        />
+
         {picked > 0 && (
           <button
             type="button"
             onClick={() => {
-              set("app", "")
               set("tags", [])
               search_("")
             }}
-            className="mb-2 flex w-full items-center gap-1 rounded-md px-2 py-1 text-[13px]
-                       text-amber-600 hover:bg-accent dark:text-amber-400"
+            className="flex items-center gap-1 self-start rounded-md px-1.5 py-1 text-[12px]
+                       text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             <X className="size-3" />
             clear {picked} filter{picked === 1 ? "" : "s"}
           </button>
-        )}
-
-        <Group
-          title="worth a look"
-          rows={WORTH.map(([term, label]) => {
-            const many = runs.filter(asQuery(term)).length
-            return many === 0 ? null : (
-              <Row
-                key={term}
-                label={label}
-                count={many}
-                on={terms.includes(term)}
-                onPick={() => search_(withTerm(search, term))}
-              />
-            )
-          }).filter(Boolean)}
-        />
-
-        <Group
-          title="app"
-          rows={
-            apps.length > 1
-              ? [
-                  <Row
-                    key="all"
-                    label="everything"
-                    count={runs.length}
-                    on={!app}
-                    onPick={() => set("app", "")}
-                  />,
-                  ...apps.map(([name, many]) => (
-                    <Row
-                      key={name}
-                      label={
-                        <span className="font-mono" title={name}>
-                          {short(name)}
-                        </span>
-                      }
-                      count={many}
-                      on={app === name}
-                      onPick={() => set("app", name)}
-                    />
-                  )),
-                ]
-              : []
-          }
-        />
-
-        {databases > 1 && (
-          <Group
-            title="databases"
-            rows={tally(runs, (run) => run.databases).map(([name, many]) => (
-              <Row
-                key={name}
-                label={<span className="font-mono">{name}</span>}
-                count={many}
-                on={terms.includes(`db:${name}`)}
-                onPick={() => search_(withTerm(search, `db:${name}`))}
-              />
-            ))}
-          />
-        )}
-
-        <Group
-          title="tags"
-          rows={tally(runs, (run) => run.tags).map(([tag, many]) => (
-            <Row
-              key={tag}
-              label={tag}
-              count={many}
-              on={tags.includes(tag)}
-              onPick={() => toggleTag(tag)}
-            />
-          ))}
-        />
-
-        <Group
-          title="statements"
-          rows={tally(runs, (run) => Object.keys(run.kinds)).map(([kind, many]) => (
-            <Row
-              key={kind}
-              label={kind}
-              dot={kind as Kind}
-              count={many}
-              on={terms.includes(`kind:${kind}`)}
-              onPick={() => search_(withTerm(search, `kind:${kind}`))}
-            />
-          ))}
-        />
-
-        {databases > 1 ? (
-          [...touched].map(([name, rows]) => (
-            <Group key={name} title={`tables in ${name}`} rows={tables(rows)} />
-          ))
-        ) : (
-          <Group title="tables" rows={tables([...touched.values()][0] ?? [])} />
         )}
       </PopoverContent>
     </Popover>
