@@ -37,7 +37,21 @@ const BREAK = new RegExp(
  * reader is looking for, so those are what the lines are.
  */
 export function laid(sql: string): string {
-  return sql.replace(/\s+/g, " ").trim().replace(BREAK, "\n$1")
+  return flat(sql).replace(BREAK, "\n$1")
+}
+
+/**
+ * The statement on one line, except where a line comment ends one.
+ *
+ * A template names itself in a `--` comment, and joining that line to the next
+ * would comment the statement out.
+ */
+export function flat(sql: string): string {
+  return sql
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .reduce((held, line) => held + (/--[^\n]*$/.test(held) ? "\n" : " ") + line)
 }
 
 /**
@@ -72,7 +86,7 @@ export function shown(sql: string, dialect?: string, how: Layout = LAYOUT): stri
 }
 
 export function formatted(sql: string, dialect?: string, how: Layout = LAYOUT): string {
-  const one = sql.replace(/\s+/g, " ").trim()
+  const one = flat(sql)
   try {
     return format(one, {
       language: languageOf(dialect) as never,
