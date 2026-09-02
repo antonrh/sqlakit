@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.6
+
+### Changed
+
+- The width chosen on the debug server's page is the width a statement laid out
+  by clauses wraps at. It reached the formatter alone, and the clauses broke at
+  a hundred characters however it was set.
+- A part still too long has its brackets opened, so an `IN` list of fifty ids
+  reads as fifty lines rather than as one.
+
 ## 0.10.5
 
 ### Changed
