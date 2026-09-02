@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.7
+
+### Changed
+
+- The filters on the debug server's page are an input for each field: the
+  application, the database, the tags, the kind of statement and the table.
+  Each carries what is picked, and types down to what is asked for.
+- Two terms of one field are read as either of them, so a second table widens
+  the list rather than emptying it. Terms of different fields are read as both.
+
 ## 0.10.6
 
 ### Changed
