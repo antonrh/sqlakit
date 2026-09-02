@@ -1,4 +1,4 @@
-[# Debugging
+# Debugging
 
 `recording()` shows what queries a block ran, how long they took, and which
 ones ran more than once:
@@ -24,7 +24,7 @@ A recording skips transaction control. `BEGIN` and `COMMIT` reach a cursor on
 some drivers and not on others, so counting them would give the same code
 different numbers on `SQLite` and `PostgreSQL`.
 
-## In a log
+## One line per block
 
 ```python
 import logging
@@ -111,6 +111,86 @@ ERROR    POST /import: 240 queries in 1841.2ms (238 repeated, slowest 612.4ms)
 When a line like the last one appears, turn on `stacks=True`, and the
 recording will include the line of your code that issued the repeated query.
 
+## The debug server
+
+`sqlakit debugserver` serves a page that fills as the recordings arrive:
+
+```console
+$ sqlakit debugserver
+SQLAKit debug server on http://localhost:5555
+
+Send recordings to it:
+
+  │  with db.recording("GET /users", debugserver=("localhost", 5555)):
+  │      list_users()
+```
+
+![The debug server](assets/debugserver.png)
+
+The recordings are listed on the left, newest first. The one you pick opens on
+the right: every statement, how long it took, how often it repeated, and the
+line of your code behind it. The bar across the top is the block's time, a
+segment per statement, coloured by what the statement was.
+
+The search reads fields as well as words: `app:web`, `tag:api`, `label:users`,
+`table:users`, `kind:insert`, `db:warehouse`, `trace:views.py`, `queries:>10`,
+`ms:>50`, `repeated:>0`. A field about statements narrows the statements
+shown, not only which recordings are listed. `filter` counts what there is to
+narrow by, and picking a count writes the field into the search.
+
+Three buttons sit above the statements. The first shows the SQL as the
+database ran it, or with the parameters in it, ready to paste into a client.
+The second lists a repeated statement once, with a count of the times it ran.
+The third is the layout: by clause, or by a formatter, with the indent and the
+case of the keywords beside it.
+
+One server watches several applications, and a recording says which one ran
+it:
+
+```python
+from sqlakit import DebugServer
+
+with db.recording(
+    "GET /users",
+    debugserver=DebugServer("localhost", 5555, app="web", tags=("api",)),
+):
+    list_users()
+```
+
+The server holds the last 200 recordings in memory and writes nothing to disk.
+Sending runs on a thread of its own, so a block never waits on it, and a
+recording that cannot be delivered is dropped rather than raised.
+
+### The queries a test run made
+
+`--sqlakit-report` writes the same page as a file, with the recordings inside
+it, so it opens without a server:
+
+```console
+$ pytest --sqlakit-report
+sqlakit wrote /app/sqlakit-20260901-224817.html
+```
+
+Every test marked `db` is one recording in the list. The test is the label,
+the file it lives in is the application, and its other markers are its tags.
+Stacks are on, so each statement carries the line of the test, or of the code
+under test, that issued it. `--sqlakit-report=build/queries.html` writes where
+you say instead.
+
+A suite writes rows to set the scene, and those writes are not what the test
+is about. Name the file that writes them, and the queries it runs stay out of
+the report, which then holds what the code under test ran:
+
+```toml
+[tool.pytest.ini_options]
+sqlakit = true
+sqlakit_skip_queries_from = ["tests/factories.py"]
+```
+
+`db.recording(..., skip_queries_from=[...])` does the same outside a test.
+
+The marker and the fixtures behind it are on the [testing](testing.md) page.
+
 ## Reading the SQL
 
 `echo=True` prints the block's statements when it ends. That's useful in a
@@ -173,7 +253,7 @@ That turns "this ran 40 times" into a line number. `SQLAKit` collects the
 stack with `traceback.extract_stack()` on every statement, which is expensive
 enough to be off by default. Turn it on when you're chasing an N+1.
 
-## More than one database
+## Multiple databases
 
 `db.recording()` on the registry covers every database it holds, and each
 statement records which one ran it:

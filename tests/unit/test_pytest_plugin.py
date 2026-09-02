@@ -801,3 +801,92 @@ def test_a_class_may_seed_rows_of_its_own(project: pytest.Pytester) -> None:
     )
 
     project.runpytest_subprocess().assert_outcomes(passed=3)
+
+
+def test_a_report_holds_a_card_for_each_marked_test(project: pytest.Pytester) -> None:
+    project.makepyfile(
+        test_one="""
+        import pytest
+
+        from app import User
+
+
+        @pytest.mark.db
+        class TestUsers:
+            def test_a_user_can_be_written(self):
+                User(name="ada").save()
+                assert User.query.count() == 1
+
+
+        def test_this_one_needs_no_database():
+            assert True
+        """
+    )
+    report = project.path / "report.html"
+    result = project.runpytest_subprocess(f"--sqlakit-report={report}")
+
+    result.assert_outcomes(passed=2)
+    held = report.read_text()
+
+    assert f"sqlakit wrote {report}" in result.stdout.str()
+    # The test is the label, the class with it, and the file is the application.
+    assert "TestUsers::test_a_user_can_be_written" in held
+    assert "test_one.py" in held
+    assert "test_this_one_needs_no_database" not in held
+
+
+def test_a_report_leaves_out_the_queries_a_named_file_runs(
+    project: pytest.Pytester,
+) -> None:
+    (project.path / "factory.py").write_text(
+        "from app import User\n\n\ndef make(name):\n    return User(name=name).save()\n"
+    )
+    (project.path / "pytest.ini").write_text(
+        "[pytest]\nsqlakit = true\nsqlakit_skip_queries_from = factory.py\n"
+    )
+    project.makepyfile(
+        test_one="""
+        import pytest
+
+        from app import User
+        from factory import make
+
+
+        @pytest.mark.db
+        def test_the_report_holds_what_the_test_ran():
+            make("ada")
+            assert User.query.count() == 1
+        """
+    )
+    report = project.path / "report.html"
+
+    project.runpytest_subprocess(f"--sqlakit-report={report}").assert_outcomes(passed=1)
+
+    held = report.read_text()
+
+    assert "SELECT count" in held
+    assert "INSERT INTO users" not in held
+
+
+def test_a_report_needs_somewhere_to_go(project: pytest.Pytester) -> None:
+    result = project.runpytest_subprocess(f"--sqlakit-report={project.path}")
+
+    assert "is a directory" in result.stderr.str() + result.stdout.str()
+
+
+def test_a_report_names_itself_after_the_clock(project: pytest.Pytester) -> None:
+    project.makepyfile(
+        test_one="""
+        import pytest
+
+        from app import User
+
+
+        @pytest.mark.db
+        def test_a_query_runs():
+            assert User.query.count() == 0
+        """
+    )
+    project.runpytest_subprocess("--sqlakit-report").assert_outcomes(passed=1)
+
+    assert list(project.path.glob("sqlakit-*.html"))

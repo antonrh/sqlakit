@@ -95,7 +95,7 @@ def test_nothing_is_watched_once_the_block_ends(db: Database) -> None:
         Player.query.count()
 
     with db.connect():
-        Player.query.count()
+        Team.query.count()
 
     assert sql.count == 1
 
@@ -183,6 +183,28 @@ def test_a_recording_can_remember_where_a_query_came_from(db: Database) -> None:
         Player.query.count()
 
     assert sql.statements[0].stack
+    assert "test_recording.py" in sql.statements[0].stack[0]
+
+
+def test_a_recording_leaves_out_what_a_named_file_ran(db: Database) -> None:
+    from tests.projects.factory import factory
+
+    with db.recording(skip_queries_from=[factory.__file__]) as sql, db.transaction():
+        factory.make(Team, name="red")
+        Player.query.count()
+
+    assert sql.count == 1
+    assert "SELECT" in sql.statements[0].sql
+
+
+def test_a_recording_keeps_what_the_code_under_test_ran(db: Database) -> None:
+    from tests.projects.factory import factory
+
+    with db.recording(stacks=True, skip_queries_from=[factory.__file__]) as sql:
+        with db.transaction():
+            factory.make(Team, name="blue")
+            Team.query.count()
+
     assert "test_recording.py" in sql.statements[0].stack[0]
 
 
@@ -290,6 +312,18 @@ def test_assert_queries_watches_every_database_by_default(registry: None) -> Non
 
     assert sql.databases == ("default", "warehouse")
     assert "default" in sql.pretty  # which database ran what
+
+
+def test_every_statement_says_what_ran_it(registry: None) -> None:
+    with sqlakit.db.recording() as sql:
+        with sqlakit.db.connect() as conn:
+            conn.execute(sa.text("SELECT 1"))
+        with sqlakit.db["warehouse"].connect() as conn:
+            conn.execute(sa.text("SELECT 1"))
+
+    # A recording over several databases carries the dialect per statement, so
+    # a page reads each one with the grammar that ran it.
+    assert [one.dialect for one in sql.statements] == ["sqlite", "sqlite"]
 
 
 def test_assert_queries_watches_the_database_it_is_given(registry: None) -> None:

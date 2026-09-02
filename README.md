@@ -214,6 +214,33 @@ You can spot the N+1 right away: one query for the users and two identical
 ones for the teams. Formatting needs the `sqlakit[debug]` extra, and if the
 project has `rich`, the output is colored too.
 
+### The debug server
+
+`sqlakit debugserver` serves a page that fills as the recordings arrive:
+
+```console
+$ sqlakit debugserver
+
+SQLAKit debug server on http://localhost:5555
+
+Send recordings to it:
+
+  │  with db.recording("GET /users", debugserver=("localhost", 5555)):
+  │      list_users()
+```
+
+![The SQLAKit debug server](docs/assets/debugserver.png)
+
+The recordings are listed on the left, the one you pick opens on the right:
+the SQL highlighted, the parameters ready to paste, the repeats counted, and
+the line of your code behind every statement. Search by `table:`, `kind:`,
+`ms:>50` or `repeated:>0`, and one server watches as many applications as you
+point at it.
+
+`pytest --sqlakit-report` writes the same page for a test run, as a file that
+opens without a server: the test is the label, and each statement carries the
+line of the test that ran it.
+
 ## The registry
 
 To avoid passing a `Database` from module to module, configure the registry

@@ -505,7 +505,7 @@ as it does in production. Inside it:
 The point of all this is that your tests behave the way production does.
 
 Next: [debugging](debugging.md), for watching the same queries outside a test.
-## More than one database
+## Multiple databases
 
 Pass the alias, and each database gets the tables of the models that point at
 it. An association table lands on the same database as the rows it joins:

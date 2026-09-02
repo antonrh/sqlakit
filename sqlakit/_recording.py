@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import logging
+import sys
+import sysconfig
 import traceback
 from dataclasses import dataclass, field
+from itertools import islice
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -11,7 +14,8 @@ import sqlalchemy as sa
 from .exceptions import DEFAULT_ALIAS
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
+    from os import PathLike
     from typing import TextIO
 
     import sqlparse
@@ -25,10 +29,29 @@ else:
 
 __all__ = ["Recording", "Statement"]
 
+
 _LIBRARIES = (
     str(Path(__file__).parent),
     str(Path(sa.__file__ or "").parent),
 )
+
+_INSTALLED = tuple(
+    {
+        sysconfig.get_paths()[where]
+        for where in ("stdlib", "purelib", "platlib", "scripts")
+        if sysconfig.get_paths().get(where)
+    }
+)
+"""Where the code you did not write lives: the runner, the loop, the script."""
+
+_WALK = 100
+"""How far back a stack is read before the search for your own frames gives up."""
+
+KEEP = 3
+"""How many of your frames a statement remembers."""
+
+WIDE = 8
+"""How many to read when some of them are about to be left out."""
 
 _TRUNCATE = 120
 
@@ -44,6 +67,9 @@ class Statement:
 
     database: str = DEFAULT_ALIAS
     """Which database ran it, for a recording that covers more than one."""
+
+    dialect: str = ""
+    """What ran it: `postgresql`, `mysql`, `sqlite`, as SQLAlchemy names them."""
 
     stack: tuple[str, ...] = ()
     """Where it came from, when the recording was asked for stacks."""
@@ -368,18 +394,66 @@ def _formatted(sql: str) -> str:
     return sqlparse.format(sql, reindent=True, keyword_case="upper").strip()
 
 
-def caller_stack(skip: Sequence[str] = ()) -> tuple[str, ...]:
+def resolved(paths: Sequence[str | PathLike[str]]) -> tuple[str, ...]:
+    """Return these paths as they are on disk, for comparing with a frame."""
+    return tuple(str(Path(one).resolve()) for one in paths)
+
+
+def caller_stack(skip: Sequence[str] = (), keep: int = KEEP) -> tuple[str, ...]:
     """Return the frames of your own code that led to a statement.
 
     Ours and SQLAlchemy's are left out by directory rather than by name: a
-    project of yours may well live in a path that has our name in it.
+    project of yours may well live in a path that has our name in it. So is
+    generated code, `<string>`: SQLAlchemy builds wrappers that way, and the
+    line numbers lead nowhere.
+
+    Installed packages go too, the test runner and the event loop among them,
+    which leaves the lines you wrote. A caller with none of its own, a library
+    calling from `site-packages`, gets them back rather than nothing.
+
+    ``skip`` names more to leave out, a file or a directory, so that the frames
+    point past a factory of yours at whoever called it.
     """
-    skipped = (*_LIBRARIES, *skip)
-    frames = []
-    for frame in reversed(traceback.extract_stack()[:-1]):
-        if frame.filename.startswith(skipped):
+    skipped = (*_LIBRARIES, *resolved(skip))
+    frames = list(islice(_frames(), _WALK))
+    return _yours(frames, (*skipped, *_INSTALLED), keep) or _yours(
+        frames, skipped, keep
+    )
+
+
+def _yours(
+    frames: Sequence[traceback.FrameSummary], skipped: tuple[str, ...], keep: int
+) -> tuple[str, ...]:
+    """Return the first few frames that none of these directories hold."""
+    kept = []
+    for frame in frames:
+        if frame.filename.startswith(skipped) or frame.filename.startswith("<"):
             continue
-        frames.append(f"{frame.filename}:{frame.lineno} in {frame.name}")
-        if len(frames) == 3:  # noqa: PLR2004
+        kept.append(f"{frame.filename}:{frame.lineno} in {frame.name}")
+        if len(kept) == keep:
             break
-    return tuple(frames)
+    return tuple(kept)
+
+
+def _frames() -> Iterator[traceback.FrameSummary]:
+    """Every frame that led here, innermost first.
+
+    An `asyncio` driver runs the statement in a greenlet of its own, and the
+    application's frames are on the greenlet waiting for it: without those,
+    an async project's statements come from nowhere.
+    """
+    yield from reversed(traceback.extract_stack()[:-1])
+    for frame in _waiting():
+        yield from reversed(traceback.extract_stack(frame))
+
+
+def _waiting() -> Iterator[Any]:
+    """Return the frame each greenlet above this one waits at, nearest first."""
+    greenlet = sys.modules.get("greenlet")  # imported by SQLAlchemy, for asyncio
+    if greenlet is None:
+        return
+    current = greenlet.getcurrent()
+    while (current := getattr(current, "parent", None)) is not None:
+        frame = getattr(current, "gr_frame", None)
+        if frame is not None:
+            yield frame

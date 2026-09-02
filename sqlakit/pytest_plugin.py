@@ -36,12 +36,15 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import pathlib
+import time
 import warnings
 from contextlib import AsyncExitStack, ExitStack, contextmanager
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from ._debugserver import as_payload, write_report
 from ._registry import db as importable_db
 
 if TYPE_CHECKING:
@@ -52,6 +55,10 @@ if TYPE_CHECKING:
 MARKER = "db"
 SYNC_FIXTURE = "_sqlakit_transaction"
 ASYNC_FIXTURE = "_sqlakit_async_transaction"
+REPORT = pytest.StashKey[list[dict[str, Any]]]()
+WHERE = pytest.StashKey["pathlib.Path | None"]()
+NAMED_BY_THE_CLOCK = ""
+"""What `--sqlakit-report` with no path means."""
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -61,11 +68,68 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         type="bool",
         default=False,
     )
+    parser.addini(
+        "sqlakit_skip_queries_from",
+        "the queries these files run stay out of the report: a factory, a helper",
+        type="paths",
+        default=[],
+    )
+    parser.addoption(
+        "--sqlakit-report",
+        metavar="PATH",
+        nargs="?",
+        const=NAMED_BY_THE_CLOCK,
+        default=None,
+        help=(
+            "write a page of every statement the marked tests ran; "
+            "on its own the name carries the time the run finished"
+        ),
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
     if config.getini("sqlakit"):
         config.addinivalue_line("markers", f"{MARKER}: the test needs a database")
+    config.stash[REPORT] = []
+    config.stash[WHERE] = _report_path(config)  # named now, so a bad path fails now
+
+
+def pytest_terminal_summary(
+    terminalreporter: Any,  # noqa: ANN401 - the reporter of whichever pytest runs
+    config: pytest.Config,
+) -> None:
+    """Write the report at the end, and say where it went."""
+    where = config.stash.get(WHERE, None)
+    records = config.stash.get(REPORT, [])
+    if where is None or not records:
+        return
+    tests = len({record["app"] + record["label"] for record in records})
+    queries = sum(record["count"] for record in records)
+    written = write_report(where, records, about=f"{tests} tests · {queries} queries")
+    terminalreporter.write_line(f"sqlakit wrote {written}")
+
+
+def _report_path(config: pytest.Config) -> pathlib.Path | None:
+    """Return where the report goes, if one was asked for.
+
+    ``--sqlakit-report`` on its own names the file after the clock, so a run
+    keeps the one before it.
+    """
+    asked = config.getoption("--sqlakit-report", default=None)
+    if asked is None:
+        return None
+    if asked == NAMED_BY_THE_CLOCK:
+        return config.rootpath / time.strftime("sqlakit-%Y%m%d-%H%M%S.html")
+    where = pathlib.Path(asked)
+    if where.is_dir():
+        # `--sqlakit-report tests/unit` reads as the path to write to.
+        message = (
+            f"--sqlakit-report was given `{asked}`, which is a directory. "
+            f"Write `--sqlakit-report=PATH` for a file, or the flag on its own "
+            f"for a name with the time in it."
+        )
+        raise pytest.UsageError(message)
+    return where
 
 
 def pytest_collection_modifyitems(
@@ -205,7 +269,8 @@ def _sqlakit_transaction(
     with ExitStack() as stack:
         for block in _rolled_back(sqlakit_db, _asked_for(request)):
             stack.enter_context(block)
-        yield
+        with _reported(request, sqlakit_db):
+            yield
 
 
 @pytest.fixture
@@ -217,7 +282,36 @@ async def _sqlakit_async_transaction(
     async with AsyncExitStack() as stack:
         for block in _rolled_back(sqlakit_db, _asked_for(request)):
             await stack.enter_async_context(block)
+        with _reported(request, sqlakit_db):
+            yield
+
+
+@contextmanager
+def _reported(request: pytest.FixtureRequest, db: Any) -> Iterator[None]:  # noqa: ANN401
+    """Record what the test runs, for the report, when one was asked for.
+
+    The recording is named after the test and filed under the file it lives in,
+    so the page groups a run the way the suite is laid out.
+    """
+    if request.config.stash.get(WHERE, None) is None:
         yield
+        return
+    node = request.node
+    skip = request.config.getini("sqlakit_skip_queries_from")
+    with db.recording(_named(node), stacks=True, skip_queries_from=skip) as recording:
+        yield
+    request.config.stash[REPORT].append(
+        as_payload(
+            recording,
+            app=str(node.path.relative_to(request.config.rootpath)),
+            tags=[mark.name for mark in node.iter_markers() if mark.name != MARKER],
+        )
+    )
+
+
+def _named(node: pytest.Item) -> str:
+    """Return the test as the suite names it, the class it is in included."""
+    return "::".join(node.nodeid.split("::")[1:]) or node.name
 
 
 @contextmanager

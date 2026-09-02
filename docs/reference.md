@@ -60,7 +60,7 @@ flushes on its own.
 db = Database(DB_URL, session_args={"autoflush": False})
 ```
 
-## The async API {#async}
+## Async {#async}
 
 `sqlakit.asyncio` mirrors `sqlakit`. Calls that reach the database are
 awaited. Reading the context is not. Requires the `sqlakit[asyncio]` extra.

@@ -25,6 +25,9 @@ dependencies = [
     "sqlalchemy>=2.0.22",
 ]
 
+[project.scripts]
+sqlakit = "sqlakit._cli:main"
+
 [project.entry-points.pytest11]
 sqlakit = "sqlakit.pytest_plugin"
 
@@ -150,6 +153,7 @@ ignore = [
     "PLW0108",  # a lambda in a parameter table is deliberate
     "DTZ005",   # naive datetimes are fine as fixtures
     "S106",     # the passwords here are fake, and the point of the test
+    "S310",     # the URLs here are the tests' own server
 ]
 "tools/**/*.py" = [
     "INP001",   # a script, not a package
@@ -206,4 +210,4 @@ default_item_type = "cmd"
 [tool.codespell]
 # `froms` is SQLAlchemy's own word for what a SELECT selects from.
 ignore-words-list = "froms"
-skip = "./.venv,./site,./uv.lock,./.git"
+skip = "./.venv,./site,./uv.lock,./.git,./debugserver/node_modules,./debugserver/bun.lock,./sqlakit/debugserver.html"

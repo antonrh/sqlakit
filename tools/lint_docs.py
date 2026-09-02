@@ -130,6 +130,8 @@ def prose(page: Path) -> list[str]:
         where = f"{page.relative_to(DOCS.parent)}:{number}"
         # Inline code is quoted, not spoken, so the prose rules leave it alone.
         spoken = re.sub(r"`[^`]*`", "", line)
+        # An image is markup rather than a sentence, and its `!` is not a shout.
+        spoken = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", spoken)
         for pattern, said in PROSE:
             if re.search(pattern, spoken, re.IGNORECASE):
                 found.append(f"{where}  {said}")

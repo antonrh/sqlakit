@@ -24,13 +24,17 @@ import sqlalchemy as sa
 import sqlalchemy.event
 from typing_extensions import Unpack
 
+from ._debugserver import DebugServer, send_recording
 from ._discovery import import_string
 from ._recording import (
+    KEEP,
+    WIDE,
     Recording,
     Statement,
     caller_stack,
     check,
     require_expectation,
+    resolved,
 )
 from ._routing import Router, as_router
 from .exceptions import (
@@ -51,6 +55,7 @@ from .exceptions import (
 if TYPE_CHECKING:
     import logging
     from collections.abc import Iterator, Sequence
+    from os import PathLike
 
     from sqlalchemy.engine import Engine
 
@@ -95,6 +100,12 @@ RetryOn = (
 """Exception types, or a predicate over the exception."""
 
 _random = random.SystemRandom()
+
+
+def _elsewhere(frames: tuple[str, ...], skipped: tuple[str, ...]) -> bool:
+    """Whether one of the files a recording leaves out ran this statement."""
+    return bool(skipped) and bool(frames) and frames[0].startswith(skipped)
+
 
 ConnectionT = TypeVar("ConnectionT")
 SessionT = TypeVar("SessionT")
@@ -241,7 +252,11 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         self._stacks: ContextVar[bool] = ContextVar(
             f"{type(self).__name__}.stacks", default=False
         )
+        self._skipped: ContextVar[tuple[str, ...]] = ContextVar(
+            f"{type(self).__name__}.skipped", default=()
+        )
         self._listening = 0
+        self._listened: Any = None
         self._listening_lock = threading.Lock()
         self._name = DEFAULT_ALIAS
 
@@ -286,14 +301,16 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         return scope.session
 
     @contextmanager
-    def recording(
+    def recording(  # noqa: PLR0913 - what a recording may report to, one each
         self,
         label: str | None = None,
         *,
         logger: logging.Logger | None = None,
         echo: bool = False,
         stacks: bool = False,
+        skip_queries_from: Sequence[str | PathLike[str]] = (),
         into: Recording | None = None,
+        debugserver: DebugServer | tuple[str, int] | None = None,
     ) -> Iterator[Recording]:
         """Record the statements of this block, and what they add up to.
 
@@ -308,8 +325,13 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
 
         ``logger`` writes a summary when the block ends, at a level the numbers
         choose. ``echo`` prints the statements instead, coloured where `rich` is
-        installed. ``stacks`` has every statement remember the frames that led to it,
-        at the cost of a stack walk each time.
+        installed. ``debugserver`` sends the recording to a `sqlakit debugserver`
+        listening there, and says nothing when none is. ``stacks`` has every
+        statement remember the frames that led to it, at the cost of a stack walk
+        each time. ``skip_queries_from`` names the files whose statements are none of
+        your business: what those run is not recorded at all, which leaves a test's
+        report showing the code under test rather than the rows a factory of the tests
+        wrote to set the scene.
 
         Blocks nest, each recording what runs inside it, and the listeners come off
         after. `with` is right on either side, awaited or not: it listens, it does
@@ -319,9 +341,13 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         self._listen()
         recordings = self._recordings.set((*self._recordings.get(), recording))
         asked = self._stacks.set(stacks or self._stacks.get())
+        skipped = self._skipped.set(
+            (*self._skipped.get(), *resolved(skip_queries_from))
+        )
         try:
             yield recording
         finally:
+            self._skipped.reset(skipped)
             self._stacks.reset(asked)
             self._recordings.reset(recordings)
             self._silence()
@@ -329,6 +355,8 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
                 recording.log(logger)
             if echo:
                 recording.echo()
+            if debugserver is not None:
+                send_recording(recording, debugserver)
 
     @contextmanager
     def assert_queries(
@@ -377,13 +405,16 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
                 engine = getattr(self.engine, "sync_engine", self.engine)
                 sa.event.listen(engine, "before_cursor_execute", self._statement_began)
                 sa.event.listen(engine, "after_cursor_execute", self._statement_ended)
+                # Held, rather than looked up again: a block that disposes the
+                # database gets a new engine, and the listeners are on the old.
+                self._listened = engine
             self._listening += 1
 
     def _silence(self) -> None:
         with self._listening_lock:
             self._listening -= 1
-            if self._listening == 0:
-                engine = getattr(self.engine, "sync_engine", self.engine)
+            if self._listening == 0 and self._listened is not None:
+                engine, self._listened = self._listened, None
                 sa.event.remove(engine, "before_cursor_execute", self._statement_began)
                 sa.event.remove(engine, "after_cursor_execute", self._statement_ended)
 
@@ -407,12 +438,19 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         recordings = self._recordings.get()
         if not recordings or statement.split(None, 1)[0].upper() in _CONTROL:
             return
+        stacks = self._stacks.get()
+        skipped = self._skipped.get()
+        frames = caller_stack(keep=WIDE) if stacks or skipped else ()
+        if _elsewhere(frames, skipped):
+            # A row a factory of the tests wrote, not what the block is about.
+            return
         record = Statement(
             sql=statement,
             parameters=parameters,
             duration=time.perf_counter() - started,
             database=self._name,
-            stack=caller_stack() if self._stacks.get() else (),
+            dialect=connection.dialect.name,
+            stack=frames[:KEEP] if stacks else (),
         )
         for recording in recordings:
             recording.statements.append(record)
@@ -721,14 +759,16 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         self._aliased[alias] = self._named(alias, db)
 
     @contextmanager
-    def recording(
+    def recording(  # noqa: PLR0913 - what a recording may report to, one each
         self,
         label: str | None = None,
         *,
         logger: logging.Logger | None = None,
         echo: bool = False,
         stacks: bool = False,
+        skip_queries_from: Sequence[str | PathLike[str]] = (),
         into: Recording | None = None,
+        debugserver: DebugServer | tuple[str, int] | None = None,
     ) -> Iterator[Recording]:
         """Record every database this registry has, not the default one alone.
 
@@ -747,7 +787,13 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         with ExitStack() as stack:
             for db in databases:
                 stack.enter_context(
-                    BaseDatabase.recording(db, label, stacks=stacks, into=together)
+                    BaseDatabase.recording(
+                        db,
+                        label,
+                        stacks=stacks,
+                        skip_queries_from=skip_queries_from,
+                        into=together,
+                    )
                 )
             try:
                 yield together
@@ -756,6 +802,8 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
                     together.log(logger)
                 if echo:
                     together.echo()
+                if debugserver is not None:
+                    send_recording(together, debugserver)
 
     @staticmethod
     def _named(alias: str, db: DatabaseT) -> DatabaseT:

@@ -1,0 +1,55 @@
+@import "../styles/globals.css";
+
+.code {
+  margin: 0;
+  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  font-size: 12.5px;
+  line-height: 1.5;
+  /* A statement is as wide as its widest clause, and the pane is not. */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tok-keyword {
+  color: #b02a5b;
+  font-weight: 600;
+}
+.tok-string {
+  color: #0a7f52;
+}
+.tok-number {
+  color: #b45309;
+}
+.tok-parameter {
+  color: #7c4dcc;
+}
+.tok-comment {
+  color: #7b8794;
+  font-style: italic;
+}
+
+.dark .tok-keyword {
+  color: #ff7b9c;
+}
+.dark .tok-string {
+  color: #6ee7b7;
+}
+.dark .tok-number {
+  color: #fbbf24;
+}
+.dark .tok-parameter {
+  color: #c4b5fd;
+}
+.dark .tok-comment {
+  color: #8b98a5;
+}
+
+/* Tailwind v4 leaves buttons with the default cursor, and everything here
+   that can be clicked is a button. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+}

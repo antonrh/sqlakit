@@ -54,6 +54,31 @@ jobs:
       - name: Build
         run: uv run mkdocs build --strict
 
+  page:
+    name: The debug server's page
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        working-directory: debugserver
+      - name: Check the types
+        run: bunx tsc --noEmit
+        working-directory: debugserver
+      - name: Run tests
+        run: bun test
+        working-directory: debugserver
+      # The package ships the built page, so what is committed has to be what
+      # the source builds.
+      - name: Build
+        run: bun run dist
+        working-directory: debugserver
+      - name: Say whether the built page is out of date
+        run: git diff --exit-code --stat sqlakit/debugserver.html
+
   tests:
     name: Tests on ${{ matrix.python }}
     runs-on: ubuntu-latest
