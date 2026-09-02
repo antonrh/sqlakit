@@ -72,6 +72,12 @@ def _say(text: str) -> None:
     print(text, flush=True)  # noqa: T201
 
 
+def _block(*lines: str) -> str:
+    """Return these lines set off by a rule, the way a page sets off code."""
+    rule = _paint("│", DIM)
+    return "".join(f"\n  {rule}  {line}" for line in lines) + "\n"
+
+
 def _greeting(host: str, port: int) -> None:
     """Print where the page is, and the block that fills it."""
     where = _paint(f"http://{host}:{port}", TEAL, BOLD)
@@ -84,8 +90,10 @@ def _greeting(host: str, port: int) -> None:
             "Send recordings to it:\n",
             DIM,
         )
-        + f"\n    with db.recording({label}, debugserver=({named}, {number})):\n"
-        + "        list_users()\n"
+        + _block(
+            f"with db.recording({label}, debugserver=({named}, {number})):",
+            "    list_users()",
+        )
     )
 
 

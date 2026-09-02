@@ -220,12 +220,13 @@ project has `rich`, the output is colored too.
 
 ```console
 $ sqlakit debugserver
-SQLAKit debug server on http://localhost:5555
-```
 
-```python
-with db.recording("GET /users", stacks=True, debugserver=("localhost", 5555)):
-    list_users()
+SQLAKit debug server on http://localhost:5555
+
+Send recordings to it:
+
+  │  with db.recording("GET /users", debugserver=("localhost", 5555)):
+  │      list_users()
 ```
 
 ![The SQLAKit debug server](docs/assets/debugserver.png)

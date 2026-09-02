@@ -113,43 +113,39 @@ recording will include the line of your code that issued the repeated query.
 
 ## The debug server
 
-A log line says a request ran 14 queries. The debug server shows which ones.
 `sqlakit debugserver` serves a page that fills as the recordings arrive:
 
 ```console
 $ sqlakit debugserver
 SQLAKit debug server on http://localhost:5555
-```
 
-`debugserver=` sends a block there:
+Send recordings to it:
 
-```python
-with db.recording("GET /users", stacks=True, debugserver=("localhost", 5555)):
-    list_users()
+  │  with db.recording("GET /users", debugserver=("localhost", 5555)):
+  │      list_users()
 ```
 
 ![The debug server](assets/debugserver.png)
 
-The recordings are listed on the left, newest first, each with the shape of
-what it ran. The one you pick opens on the right: every statement, how long it
-took, how often it repeated, and the line of your code behind it. The bar
-across the top is the block's time, one segment per statement, coloured by
-what the statement was.
+The recordings are listed on the left, newest first. The one you pick opens on
+the right: every statement, how long it took, how often it repeated, and the
+line of your code behind it. The bar across the top is the block's time, a
+segment per statement, coloured by what the statement was.
 
-The search reads fields as well as words: `table:users`, `kind:insert`,
-`ms:>50`, `queries:>10`, `repeated:>0`, `trace:views.py`, `app:web`,
-`tag:api`. A field about statements narrows the statements shown, not only
-which recordings are listed. `filter` counts what there is to narrow by, and
-picking a count writes the field into the search.
+The search reads fields as well as words: `app:web`, `tag:api`, `label:users`,
+`table:users`, `kind:insert`, `db:warehouse`, `trace:views.py`, `queries:>10`,
+`ms:>50`, `repeated:>0`. A field about statements narrows the statements
+shown, not only which recordings are listed. `filter` counts what there is to
+narrow by, and picking a count writes the field into the search.
 
-Above the statements: the SQL as the database ran it or with the parameters
-in it, ready to paste into a client, a fold that lists a repeated statement
-once with a count of the times it ran, and how the SQL is laid out, by clause
-or by a formatter, with the indent and the case of the keywords to go with
-it.
+Three buttons sit above the statements. The first shows the SQL as the
+database ran it, or with the parameters in it, ready to paste into a client.
+The second lists a repeated statement once, with a count of the times it ran.
+The third is the layout: by clause, or by a formatter, with the indent and the
+case of the keywords beside it.
 
-One server watches several applications, and a recording says which one it
-came out of:
+One server watches several applications, and a recording says which one ran
+it:
 
 ```python
 from sqlakit import DebugServer
@@ -161,10 +157,9 @@ with db.recording(
     list_users()
 ```
 
-The server holds the last 200 recordings, in memory, and writes nothing to
-disk. Sending runs on a thread of its own, so a block never waits on it, and a
-recording that cannot be delivered is dropped rather than raised: a debug
-server that is down is not the application's problem.
+The server holds the last 200 recordings in memory and writes nothing to disk.
+Sending runs on a thread of its own, so a block never waits on it, and a
+recording that cannot be delivered is dropped rather than raised.
 
 ### The queries a test run made
 
@@ -177,11 +172,10 @@ sqlakit wrote /app/sqlakit-20260901-224817.html
 ```
 
 Every test marked `db` is one recording in the list. The test is the label,
-the file it lives in is the application, and its other markers are its
-tags. Stacks are
-on, so each statement carries the line of the test, or of the code under test,
-that issued it. `--sqlakit-report=build/queries.html` writes where you say
-instead.
+the file it lives in is the application, and its other markers are its tags.
+Stacks are on, so each statement carries the line of the test, or of the code
+under test, that issued it. `--sqlakit-report=build/queries.html` writes where
+you say instead.
 
 A suite writes rows to set the scene, and those writes are not what the test
 is about. Name the file that writes them, and the queries it runs stay out of
