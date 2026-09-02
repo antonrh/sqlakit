@@ -153,6 +153,7 @@ ignore = [
     "PLW0108",  # a lambda in a parameter table is deliberate
     "DTZ005",   # naive datetimes are fine as fixtures
     "S106",     # the passwords here are fake, and the point of the test
+    "S310",     # the URLs here are the tests' own server
 ]
 "tools/**/*.py" = [
     "INP001",   # a script, not a package

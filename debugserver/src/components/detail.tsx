@@ -267,7 +267,13 @@ export function Detail({ run, narrow }: { run: Run; narrow: ((one: One) => boole
       </div>
 
       {listed.map(({ one, at }) => (
-        <Statement key={at} one={one} run={run} index={at} repeats={seen.get(one.sql) ?? 1} />
+        <Statement
+          key={`${run.id}-${at}`}
+          one={one}
+          run={run}
+          index={at}
+          repeats={seen.get(one.sql) ?? 1}
+        />
       ))}
     </>
   )
