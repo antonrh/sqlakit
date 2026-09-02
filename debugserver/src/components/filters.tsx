@@ -30,15 +30,12 @@ function Row({
   on,
   onPick,
   dot,
-  note,
 }: {
   label: React.ReactNode
   count: number
   on: boolean
   onPick: () => void
   dot?: Kind
-  /** Where the thing lives, for a page with more than one database. */
-  note?: string
 }) {
   return (
     <button
@@ -52,12 +49,7 @@ function Row({
     >
       {dot && <span className={cn("size-1.5 shrink-0 rounded-xs", TONE[dot].fill)} />}
       <span className="truncate">{label}</span>
-      {note && (
-        <span className="ml-auto truncate font-mono text-[11px] opacity-70" title={note}>
-          {note}
-        </span>
-      )}
-      <span className={cn("text-xs tabular-nums opacity-70", !note && "ml-auto")}>{count}</span>
+      <span className="ml-auto shrink-0 text-xs tabular-nums opacity-70">{count}</span>
     </button>
   )
 }
@@ -83,15 +75,34 @@ export function Filters({ runs }: { runs: Run[] }) {
   const picked = (app ? 1 : 0) + tags.length + terms.length
   const apps = tally(runs, (run) => [run.app])
   const short = (name: string) => name.split("/").slice(-2).join("/")
-  // Which database each table was read or written on, over every recording.
-  const touched = new Map<string, string[]>()
+  const databases = new Set(runs.flatMap((run) => run.databases)).size
+  // The tables of each database, counted, so a long name has the row to itself.
+  const touched = new Map<string, Map<string, number>>()
   for (const run of runs) {
     for (const [table, on] of Object.entries(run.tablesOn)) {
-      const known = touched.get(table) ?? []
-      touched.set(table, [...known, ...on.filter((one) => !known.includes(one))])
+      for (const name of on) {
+        const held = touched.get(name) ?? new Map<string, number>()
+        held.set(table, (held.get(table) ?? 0) + 1)
+        touched.set(name, held)
+      }
     }
   }
-  const databases = new Set(runs.flatMap((run) => run.databases)).size
+  const tables = (rows: Iterable<[string, number]>) =>
+    [...rows]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([table, many]) => (
+        <Row
+          key={table}
+          label={
+            <span className="font-mono" title={table}>
+              {table}
+            </span>
+          }
+          count={many}
+          on={terms.includes(`table:${table}`)}
+          onPick={() => search_(withTerm(search, `table:${table}`))}
+        />
+      ))
 
   return (
     <Popover>
@@ -213,19 +224,13 @@ export function Filters({ runs }: { runs: Run[] }) {
           ))}
         />
 
-        <Group
-          title="tables"
-          rows={tally(runs, (run) => run.tables).map(([table, many]) => (
-            <Row
-              key={table}
-              label={<span className="font-mono">{table}</span>}
-              note={databases > 1 ? (touched.get(table) ?? []).join(" · ") : undefined}
-              count={many}
-              on={terms.includes(`table:${table}`)}
-              onPick={() => search_(withTerm(search, `table:${table}`))}
-            />
-          ))}
-        />
+        {databases > 1 ? (
+          [...touched].map(([name, rows]) => (
+            <Group key={name} title={`tables in ${name}`} rows={tables(rows)} />
+          ))
+        ) : (
+          <Group title="tables" rows={tables([...touched.values()][0] ?? [])} />
+        )}
       </PopoverContent>
     </Popover>
   )
