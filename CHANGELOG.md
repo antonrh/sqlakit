@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.10.0
+
+### Added
+
+- `Database(url, alias="warehouse")` names a database built by hand. The name
+  is what a recorded statement carries, so two databases in one recording, or
+  two recordings under one label, can be told apart. A registry still names the
+  databases it holds after the aliases they are registered under.
+- `db.recording(using=...)` on a registry records only the databases named, by
+  alias or in person, as `assert_queries` already took them.
+
+### Changed
+
+- The debug server's page names the databases a recording covered: on the row,
+  beside the label of the open recording, beside each statement, and beside
+  each table in the filters. A page with one database says nothing about
+  databases at all.
+- A row on that page says how many of its statements were slow, and its time is
+  amber over 10 ms and red over 100 ms. Slow statements were marked only inside
+  the recording that was open.
+
+### Fixed
+
+- The page finds the server again after it is restarted. An error on the stream
+  set the page to disconnected and nothing cleared it, so a server that came
+  back was never picked up.
+
 ## 0.9.1
 
 ### Fixed
