@@ -10,6 +10,9 @@ export type Sort = "recent" | "slow" | "many" | "repeated" | "label"
 
 export const PER_PAGE = 25
 
+/** How much a pause holds before it forgets the oldest of it. */
+export const HELD = 100
+
 type State = {
   runs: Run[]
   /** What arrived while paused, which the list gets when it runs again. */
@@ -23,7 +26,6 @@ type State = {
   fold: boolean
   layout: Layout
   paused: boolean
-  missed: number
   live: "yes" | "no" | "kept"
   about: string
 }
@@ -51,7 +53,6 @@ export const useStore = create<State & Actions>()(
       fold: false,
       layout: LAYOUT,
       paused: false,
-      missed: 0,
       live: "yes",
       about: "",
 
@@ -59,7 +60,7 @@ export const useStore = create<State & Actions>()(
         const run = received(recording)
         const { paused, held, runs } = get()
         // Paused holds what arrives, so the list the reader is on stays still.
-        if (paused) set({ held: [...held, run], missed: held.length + 1 })
+        if (paused) set({ held: [...held, run].slice(-HELD) })
         else set({ runs: [...runs, run] })
       },
       set: (what, value) => set({ [what]: value, page: 0 } as never),
@@ -71,11 +72,11 @@ export const useStore = create<State & Actions>()(
             : [...get().tags, tag],
           page: 0,
         }),
-      clear: () => set({ runs: [], held: [], missed: 0, page: 0 }),
+      clear: () => set({ runs: [], held: [], page: 0 }),
       pause: () => {
         const { paused, runs, held } = get()
-        if (paused) set({ paused: false, runs: [...runs, ...held], held: [], missed: 0 })
-        else set({ paused: true, missed: 0 })
+        if (paused) set({ paused: false, runs: [...runs, ...held], held: [] })
+        else set({ paused: true })
       },
     }),
     {

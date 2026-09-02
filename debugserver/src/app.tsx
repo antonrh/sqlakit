@@ -65,7 +65,7 @@ function Bin() {
 
 export function App() {
   const state = useStore((one) => one)
-  const { runs, search, sort, app, tags, live, about, paused, missed } = state
+  const { runs, held, search, sort, app, tags, live, about, paused } = state
   const [now, setNow] = useState(() => Date.now())
   const [picked, setPicked] = useState<number | null>(null)
   // The reader's own split, kept between visits.
@@ -108,6 +108,12 @@ export function App() {
   // The newest, until the reader picks one to stay on.
   const open = shown.find((run) => run.id === picked) ?? shown[0]
 
+  /** Pausing stays on the recording being read, which running again keeps. */
+  const pause = () => {
+    if (!paused && picked === null) setPicked(open?.id ?? null)
+    state.pause()
+  }
+
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       <header className="flex flex-wrap items-center gap-3 border-b px-4 py-2">
@@ -120,9 +126,13 @@ export function App() {
 
         <button
           type="button"
-          onClick={live === "kept" ? undefined : state.pause}
+          onClick={live === "kept" ? undefined : pause}
           title={
-            live === "kept" ? "a written report, not a running server" : "pause the stream"
+            live === "kept"
+              ? "a written report, not a running server"
+              : paused
+                ? "run again, and show what arrived"
+                : "pause: what arrives waits, and the list stays where it is"
           }
           className={cn(
             "flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]",
@@ -142,8 +152,8 @@ export function App() {
             : live === "no"
               ? "disconnected"
               : paused
-                ? missed
-                  ? `paused · ${missed} new`
+                ? held.length
+                  ? `paused · ${held.length} new`
                   : "paused"
                 : "live"}
         </button>

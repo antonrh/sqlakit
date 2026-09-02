@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from "bun:test"
 
 import type { Recording } from "@/lib/records"
-import { useStore } from "@/lib/store"
+import { HELD, useStore } from "@/lib/store"
 
 // A browser keeps what the reader chose; the runner has nowhere to keep it.
 const kept = new Map<string, string>()
@@ -26,7 +26,7 @@ const arriving = (label: string): Recording => ({
 })
 
 beforeEach(() => {
-  useStore.setState({ runs: [], held: [], missed: 0, paused: false })
+  useStore.setState({ runs: [], held: [], paused: false })
 })
 
 test("a recording joins the list as it arrives", () => {
@@ -35,15 +35,25 @@ test("a recording joins the list as it arrives", () => {
   expect(useStore.getState().runs.map((run) => run.label)).toEqual(["GET /users"])
 })
 
-test("paused holds what arrives, and says how much is waiting", () => {
+test("paused holds what arrives, and keeps the list as it was", () => {
   useStore.getState().pause()
   useStore.getState().keep(arriving("GET /users"))
   useStore.getState().keep(arriving("POST /posts"))
 
-  const { runs, missed } = useStore.getState()
+  const { runs, held } = useStore.getState()
 
   expect(runs).toEqual([])
-  expect(missed).toBe(2)
+  expect(held.map((run) => run.label)).toEqual(["GET /users", "POST /posts"])
+})
+
+test("a long pause holds the newest of what arrived", () => {
+  useStore.getState().pause()
+  for (let number = 0; number <= HELD; number++) useStore.getState().keep(arriving(`${number}`))
+
+  const { held } = useStore.getState()
+
+  expect(held).toHaveLength(HELD)
+  expect(held[0]?.label).toBe("1") // the first of them is forgotten
 })
 
 test("running again shows what was held, in the order it arrived", () => {
@@ -51,11 +61,10 @@ test("running again shows what was held, in the order it arrived", () => {
   useStore.getState().keep(arriving("GET /users"))
   useStore.getState().pause()
 
-  const { runs, held, missed, paused } = useStore.getState()
+  const { runs, held, paused } = useStore.getState()
 
   expect(runs.map((run) => run.label)).toEqual(["GET /users"])
   expect(held).toEqual([])
-  expect(missed).toBe(0)
   expect(paused).toBe(false)
 })
 
