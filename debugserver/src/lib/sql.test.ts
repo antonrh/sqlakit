@@ -114,6 +114,12 @@ describe("the parameters put into the SQL", () => {
 })
 
 describe("a statement whose template named itself in a comment", () => {
+  test("is the kind of statement past the comment, of either kind", () => {
+    expect(kindOf("/* this is comment */ select 1")).toBe("select")
+    expect(kindOf("-- users.sql\nSELECT count(*) FROM users")).toBe("select")
+    expect(kindOf("/* a */\n-- b\nINSERT INTO users VALUES (1)")).toBe("insert")
+  })
+
   const sql = "-- users.sql\nSELECT users.id\nFROM users\nWHERE users.id = :id"
 
   test("keeps the comment on a line of its own", () => {
@@ -132,9 +138,17 @@ describe("a statement whose template named itself in a comment", () => {
     expect(held).toContain("FROM\n  users")
   })
 
-  test("a block comment travels on the line it opens", () => {
+  test("a block comment keeps a line of its own, wherever it arrived", () => {
     expect(laid("/* users.sql */ SELECT 1 FROM users")).toBe(
-      "/* users.sql */ SELECT 1\nFROM users",
+      "/* users.sql */\nSELECT 1\nFROM users",
     )
+    expect(laid("/* users.sql */\nSELECT 1 FROM users")).toBe(
+      "/* users.sql */\nSELECT 1\nFROM users",
+    )
+  })
+
+  test("a comment further in stays where it is", () => {
+    expect(laid("SELECT /* mid */ 1 FROM users")).toBe("SELECT /* mid */ 1\nFROM users")
+    expect(laid("SELECT 1 /* trailing */")).toBe("SELECT 1 /* trailing */")
   })
 })
