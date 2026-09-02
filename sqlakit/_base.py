@@ -39,6 +39,7 @@ from ._recording import (
 from ._routing import Router, as_router
 from .exceptions import (
     DEFAULT_ALIAS,
+    REGISTERED_DEFAULT,
     AliasInUseError,
     ConflictingDatabaseUrlError,
     DatabaseAlreadyConfiguredError,
@@ -703,6 +704,7 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
 
     def __init__(self) -> None:
         """Leave everything to [`configure`][sqlakit.Databases.configure]."""
+        self._default: DatabaseT | None = None
         self._aliased: dict[str, DatabaseT] = {}
         self._routers: tuple[Any, ...] = ()
         self._using: ContextVar[str | None] = ContextVar(
@@ -717,14 +719,15 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
     def __getitem__(self, alias: str) -> Self | DatabaseT:
         """Return the database configured as ``alias``.
 
-        ``db["default"]`` is this one: what the code reaches without an alias.
+        ``db["default"]`` is what the code reaches without an alias: this
+        registry, or the database `register` was given for that name.
 
         Raises:
             UnknownDatabaseError: if nothing is configured under that alias.
 
         """
         if alias == DEFAULT_ALIAS:
-            return self
+            return self if self._default is None else self._default
         try:
             return self._aliased[alias]
         except KeyError:
@@ -744,16 +747,25 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         db.register("shard-7", Database(SHARD_URL))
         ```
 
+        `default` is the alias the code reaches without naming one, and a
+        database registered under it stands where `configure` would have built
+        one. The registry itself is then a registry alone: reach that database
+        as `db["default"]`, or through the models that live on it.
+
         The alias has to be free. Replacing one under a name already in use
         would leave the code that holds the old database talking to it.
 
         Raises:
             AliasInUseError: if another database holds that alias.
-            DefaultAliasError: if the alias is `default`, which this registry is.
+            DefaultAliasError: if `default` is asked for and the registry
+                already has one.
 
         """
         if alias == DEFAULT_ALIAS:
-            raise DefaultAliasError
+            if self.is_configured:
+                raise DefaultAliasError
+            self._default = self._named(alias, db)
+            return
         if alias in self._aliased:
             raise AliasInUseError(alias)
         self._aliased[alias] = self._named(alias, db)
@@ -783,7 +795,7 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         that one on its own.
         """
         together = Recording(label=label) if into is None else into
-        databases = (self, *self._aliased.values())
+        databases = tuple(self[alias] for alias in self.aliases)
         with ExitStack() as stack:
             for db in databases:
                 stack.enter_context(
@@ -888,7 +900,12 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
 
     @property
     def is_configured(self) -> bool:
-        """Whether [`configure`][sqlakit.Databases.configure] has been called."""
+        """Whether this registry has a default database to reach."""
+        return "url" in self.__dict__ or self._default is not None
+
+    @property
+    def _built_its_own(self) -> bool:
+        """Whether the default database is this registry, `configure` having built it."""
         return "url" in self.__dict__
 
     @overload
@@ -963,6 +980,8 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
                 ``InvalidDatabaseConfigError``.
 
         """
+        if self._default is not None:
+            raise DefaultAliasError
         if not isinstance(url, Mapping):
             self._reject_if_connected()
             super().__init__(url, engine_args, session_args, templates, **parts)
@@ -997,7 +1016,7 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         self.route(*routers)
 
     def _reject_if_connected(self) -> None:
-        connected = self.is_configured and self._engine is not None
+        connected = self._built_its_own and self._engine is not None
         if connected or any(
             db._engine is not None  # noqa: SLF001
             for db in self._aliased.values()
@@ -1007,19 +1026,47 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
     if not TYPE_CHECKING:
         # Hidden from type checkers: seeing it, they would take every attribute
         # to exist and stop reporting typos. It is reached when normal lookup
-        # fails, which is what an unconfigured database looks like.
+        # fails, which is what a registry with no database of its own looks
+        # like, from the outside and from its own methods.
         def __getattr__(self, name: str) -> object:
-            # Only the database's own attributes are worth explaining. Anything
-            # else is a name that does not exist, and saying so is what lets
-            # `hasattr`, `copy` and every library that introspects work.
-            if (
-                not name.startswith("_")
-                and hasattr(type(self), name)
-                and not self.is_configured
-            ):
-                raise DatabaseNotConfiguredError from None
-            raise AttributeError(name)
+            # Only the database half is worth explaining. Anything else is a
+            # name that does not exist, and saying so is what lets `hasattr`,
+            # `copy` and every library that introspects work.
+            state = self.__dict__
+            if "url" in state:
+                raise AttributeError(name)
+            asked_as_a_database = name in DATABASE_STATE or (
+                not name.startswith("_") and hasattr(type(self), name)
+            )
+            if not asked_as_a_database:
+                raise AttributeError(name)
+            if state.get("_default") is not None:
+                raise DatabaseNotConfiguredError(REGISTERED_DEFAULT) from None
+            raise DatabaseNotConfiguredError from None
 
+
+DATABASE_STATE = frozenset(
+    # What `BaseDatabase.__init__` sets. A registry has these once it has a
+    # database of its own, and reaching for one before then is the question
+    # `DatabaseNotConfiguredError` answers, whichever method asked.
+    {
+        "url",
+        "templates",
+        "engine_args",
+        "session_args",
+        "_sessionmaker",
+        "_engine_lock",
+        "_scope",
+        "_outer",
+        "_recordings",
+        "_stacks",
+        "_skipped",
+        "_listening",
+        "_listened",
+        "_listening_lock",
+        "_name",
+    }
+)
 
 _CONTROL = frozenset(
     # Transaction control is not a query, and which of these reach a cursor

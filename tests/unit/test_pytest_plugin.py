@@ -9,15 +9,26 @@ from pathlib import Path
 import pytest
 
 PROJECT = Path(__file__).parent.parent / "projects" / "plugin"
+REGISTERED = Path(__file__).parent.parent / "projects" / "registered"
 CONFTEST = (PROJECT / "conftest.py").read_text()
+
+
+def _copied(pytester: pytest.Pytester, project: Path) -> pytest.Pytester:
+    for name in ("app.py", "conftest.py"):
+        (pytester.path / name).write_text((project / name).read_text())
+    (pytester.path / "pytest.ini").write_text("[pytest]\nsqlakit = true\n")
+    return pytester
 
 
 @pytest.fixture
 def project(pytester: pytest.Pytester) -> pytest.Pytester:
-    for name in ("app.py", "conftest.py"):
-        (pytester.path / name).write_text((PROJECT / name).read_text())
-    (pytester.path / "pytest.ini").write_text("[pytest]\nsqlakit = true\n")
-    return pytester
+    return _copied(pytester, PROJECT)
+
+
+@pytest.fixture
+def registered(pytester: pytest.Pytester) -> pytest.Pytester:
+    """A project whose databases were registered rather than configured."""
+    return _copied(pytester, REGISTERED)
 
 
 def test_the_marker_alone_opens_every_database(project: pytest.Pytester) -> None:
@@ -37,6 +48,39 @@ def test_the_marker_alone_opens_every_database(project: pytest.Pytester) -> None
     )
 
     project.runpytest_subprocess().assert_outcomes(passed=1)
+
+
+def test_databases_registered_rather_than_configured(
+    registered: pytest.Pytester,
+) -> None:
+    """Every alias gets its tables and its transaction, the registered default too."""
+    registered.makepyfile(
+        test_registered="""
+        import pytest
+
+        from app import Event, Model, User
+
+
+        @pytest.mark.db
+        def test_writes_to_both():
+            User(name="ada").save()
+            Event(what="signup").save()
+            assert (User.query.count(), Event.query.count()) == (1, 1)
+
+
+        @pytest.mark.db
+        def test_both_rolled_back():
+            assert (User.query.count(), Event.query.count()) == (0, 0)
+
+
+        @pytest.mark.db(using="warehouse")
+        def test_one_of_them_by_name():
+            Event(what="signup").save()
+            assert Event.query.count() == 1
+        """
+    )
+
+    registered.runpytest_subprocess().assert_outcomes(passed=3)
 
 
 def test_the_marker_opens_the_databases_using_names(project: pytest.Pytester) -> None:

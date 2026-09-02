@@ -52,8 +52,10 @@ class Databases(_DatabaseRegistryMixin[Database], Database):
 
     def dispose(self, *, close: bool = True) -> None:
         """Dispose of every configured database, not just the default one."""
-        if self.is_configured:
+        if self._built_its_own:
             super().dispose(close=close)
+        elif self._default is not None:
+            self._default.dispose(close=close)
         for db in self._aliased.values():
             db.dispose(close=close)
 

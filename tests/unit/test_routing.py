@@ -465,9 +465,20 @@ def test_an_alias_another_database_holds(own: type[Any]) -> None:
         own.register_db(Database("sqlite://"), alias="db2")
 
 
-def test_the_default_alias_is_the_registry_itself(own: type[Any]) -> None:
+def test_a_default_the_registry_did_not_build(own: type[Any]) -> None:
+    default = Database("sqlite://")
+    own.register_db(default, alias=DEFAULT_ALIAS)
+
+    assert own.dbs[DEFAULT_ALIAS] is default
+    assert own.db is default
+    assert own.dbs.is_configured
+
+
+def test_a_second_default_is_refused(own: type[Any]) -> None:
+    own.register_db(Database("sqlite://"))
+
     with pytest.raises(DefaultAliasError, match=DEFAULT_ALIAS):
-        own.register_db(Database("sqlite://"), alias=DEFAULT_ALIAS)
+        own.register_db(Database("sqlite://"))
 
 
 def test_a_model_under_one_registers_into_the_same_registry(own: type[Any]) -> None:
@@ -476,7 +487,7 @@ def test_a_model_under_one_registers_into_the_same_registry(own: type[Any]) -> N
     assert own.dbs.aliases == (DEFAULT_ALIAS, "db1", "db2", "db3")
 
 
-def test_register_db_with_no_alias_points_the_model_at_it() -> None:
+def test_register_db_with_no_alias_registers_the_default() -> None:
     class OneBase(ModelMixin, DeclarativeBase):
         pass
 
@@ -489,6 +500,7 @@ def test_register_db_with_no_alias_points_the_model_at_it() -> None:
     OneBase.register_db(one)
 
     assert Note.db is one
-    assert OneBase.dbs is sqlakit.db  # no registry of its own was built
+    assert OneBase.dbs is not sqlakit.db  # the importable one is left alone
+    assert OneBase.dbs[DEFAULT_ALIAS] is one
 
     one.dispose()
