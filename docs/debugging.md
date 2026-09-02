@@ -265,11 +265,27 @@ with db.recording() as record:
 record.databases  # ("default", "warehouse")
 ```
 
-`db["warehouse"].recording()` watches that one alone.
+`db["warehouse"].recording()` watches that one alone, and `using` names the
+ones to watch when there are more than two:
+
+```python
+with db.recording(using=["default", "warehouse"]) as record:
+    move_the_reports()
+```
 
 One block covers them all, so a middleware opens one, not one per database.
 A block per database sends the debug server a recording per database, each
 under the same label, and each holding a part of what the request ran.
+
+A database you build yourself is called `default` in a recording until you
+name it. Name it, and two of them are told apart:
+
+```python
+warehouse = Database(WAREHOUSE_URL, alias="warehouse")
+```
+
+A registry names the databases it holds after the aliases they are registered
+under, so this is for a database you keep yourself.
 
 ## In a test
 

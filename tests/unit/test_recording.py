@@ -3,6 +3,7 @@
 import logging
 import sys
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 import sqlalchemy as sa
@@ -11,7 +12,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 import sqlakit
 import sqlakit.asyncio
-from sqlakit import Database, Recording, Statement, UnknownDatabaseError
+from sqlakit import Database, Databases, Recording, Statement, UnknownDatabaseError
 from sqlakit import _recording as recording_module
 from sqlakit.orm import ModelMixin
 from sqlakit.testing import assert_queries
@@ -301,6 +302,45 @@ def registry() -> Iterator[None]:
     )
     yield
     sqlakit.db.dispose()
+
+
+def test_a_database_of_its_own_says_which_one_it_is() -> None:
+    warehouse = Database("sqlite://", alias="warehouse")
+    together = Recording(label="GET /users")
+
+    with warehouse.recording(into=together), warehouse.connect() as conn:
+        conn.execute(sa.text("SELECT 1"))
+
+    assert together.databases == ("warehouse",)
+
+    # A registry names them after the alias they are registered under.
+    registry = Databases()
+    registry.register("audit", warehouse)
+
+    assert registry["audit"]._name == "audit"
+
+    warehouse.dispose()
+
+
+def test_a_recording_watches_the_databases_it_was_given(registry: None) -> None:
+    def run(where: Any) -> None:
+        with where.connect() as conn:
+            conn.execute(sa.text("SELECT 1"))
+
+    with sqlakit.db.recording(using="warehouse") as named:
+        run(sqlakit.db)
+        run(sqlakit.db["warehouse"])
+
+    with sqlakit.db.recording(using=[sqlakit.db["warehouse"], "default"]) as both:
+        run(sqlakit.db)
+        run(sqlakit.db["warehouse"])
+
+    assert named.databases == ("warehouse",)
+    assert both.databases == ("default", "warehouse")
+
+    with pytest.raises(UnknownDatabaseError, match="reporting"):
+        with sqlakit.db.recording(using="reporting"):
+            pass
 
 
 def test_assert_queries_watches_every_database_by_default(registry: None) -> None:
