@@ -275,7 +275,7 @@ note.delete(force=True)  # actually deletes the row
 
 Reads don't see marked rows, `get()` included, so you can't reach a marked
 row by key either. Two builders lift that filter, and neither touches the
-model's own [`__query_filter__`](queries.md#hiding-rows-for-good):
+model's own [`__query_filter__`](queries.md#soft-deletes):
 
 ```python
 Note.query.with_deleted()  # marked rows as well

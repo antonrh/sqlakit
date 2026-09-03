@@ -539,7 +539,7 @@ def test_a_signup_is_recorded() -> None:
     assert Event.query.count() == 1  # `Event.__db__` is "warehouse"
 ```
 
-### What a rollback on every database does not do
+### What a rollback does not cover
 
 Each database rolls back its own transaction, on its own connection. Two
 consequences follow:

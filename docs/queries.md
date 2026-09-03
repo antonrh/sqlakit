@@ -709,7 +709,7 @@ argument, so you don't need an annotation there.
 An async query is the same class from `sqlakit.asyncio.orm`, subclassed the
 same way. Only the methods that run the statement are awaited.
 
-## Hiding rows for good {#hiding-rows-for-good}
+## Soft deletes {#soft-deletes}
 
 A model that hides rows, most often soft-deleted ones, declares the rule once:
 
@@ -798,7 +798,7 @@ query: the SQL decides what is selected, so a `where` or a `page` raises
 [SQL templates](sql.md) for details, including rows that belong to no model.
 
 `__query_filter__` does not apply in either case. See
-[Hiding rows for good](#hiding-rows-for-good).
+[Soft deletes](#soft-deletes).
 
 ## Queries under `asyncio`
 

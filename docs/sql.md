@@ -154,7 +154,7 @@ User.query.from_statement(
 ```
 
 One caveat: `SQLAKit` does not apply a model's
-[`__query_filter__`](queries.md#hiding-rows-for-good) to your statement. If
+[`__query_filter__`](queries.md#soft-deletes) to your statement. If
 you rely on that hook to hide soft-deleted rows or another tenant's rows,
 repeat the condition in the template's own `WHERE`.
 
