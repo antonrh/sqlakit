@@ -155,7 +155,7 @@ path, so the `app` package can be imported. `provisioned_tables()` drops the
 schema when the run ends, so you don't need a prepared database and there's
 nothing to clean up in between.
 
-## What you have now
+## Summary
 
 - A database that any code inside a block can use, without a session argument
   in every function.
@@ -163,7 +163,7 @@ nothing to clean up in between.
   exception.
 - A test that writes rows and leaves the database as it found it.
 
-## Next
+## Next steps
 
 - [Context](context.md): the available blocks, what each one commits, and how
   they nest.

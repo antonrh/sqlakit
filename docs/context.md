@@ -103,7 +103,7 @@ def import_users(rows: list[Row]) -> None: ...
 
 `db.in_transaction()` returns whether a transaction is open.
 
-### Nesting
+### Nested blocks
 
 A nested block reuses the connection that is already bound instead of opening
 a second one:
@@ -137,7 +137,7 @@ own, so wrapping a helper in `transaction()` costs nothing. Each nested block
 still opens its own session, so code you call can't close or roll back the
 session of the block above it.
 
-### Letting a nested block fail on its own
+### Nested block failures
 
 Without a savepoint a nested block cannot undo only its own work: if it fails,
 the whole transaction rolls back. `savepoint=True` changes that:
@@ -157,7 +157,7 @@ is a second cost. Past 64 subtransactions the backend's `subxid` cache
 overflows, reads start going to `pg_subtrans`, and that slows down the whole
 cluster, not just the one transaction.
 
-### Running outside the surrounding transaction
+### Independent nested blocks
 
 `join_nested=False` does the opposite. Set it on a block, and its nested
 blocks open connections of their own instead of joining it. They don't see
@@ -176,7 +176,7 @@ even when the attempt fails. The cost is a second connection from the pool and
 a second transaction that can deadlock with the first, so only set the flag on
 the blocks that need it.
 
-### Committing despite a known error
+### Commits despite an error
 
 ```python
 @db.transaction(commit_on_error=ContentBlockedError)
@@ -218,7 +218,7 @@ jitter, so workers that collided once don't all retry at the same moment. If
 you need longer waits, pass a function of your own. In tests, `lambda _: 0.0`
 skips the waiting.
 
-### Rolling back at the end
+### End-of-block rollbacks
 
 `rollback=True` rolls back at the end of the block instead of committing, and
 turns `savepoint` on, so a nested block can still fail on its own:
@@ -285,7 +285,7 @@ Call them outside any transaction. **Inside a transaction the block joins it**
 and uses the same connection, so the statement fails with the database's own
 error, such as `cannot VACUUM from within a transaction`.
 
-### What survives an exception
+### Rows kept after an exception
 
 Every statement is already committed, so after an exception the database keeps
 everything that ran before it:
@@ -320,7 +320,7 @@ Inside another block it runs on the connection already bound, like
 `connect()`. It also commits nothing by itself: commit on the session, or use
 `transaction()`.
 
-## Blocks under `asyncio` {#async}
+## Async blocks {#async}
 
 `sqlakit.asyncio` has the same blocks, and needs the `sqlakit[asyncio]` extra.
 Opening a block is awaited, reading the context is not:
@@ -376,7 +376,7 @@ async def notify() -> None:
         ...
 ```
 
-## Blocks in a worker thread
+## Worker-thread blocks
 
 `FastAPI` runs a `def` endpoint in a worker thread, and the thread gets a copy
 of the context. A block opened outside it, in a middleware or an async

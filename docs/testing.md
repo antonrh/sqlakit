@@ -104,7 +104,7 @@ Write it either way. Without it `anyio` runs each async test once per backend
 it finds installed, and `SQLAlchemy`'s async drivers need `asyncio`. The plugin
 needs nothing else: it awaits what has to be awaited.
 
-### Choosing databases
+### Database selection
 
 The schema is created once for the session, on every database. A transaction is
 opened for every test, on every database, and `using` narrows that:
@@ -119,7 +119,7 @@ takes an alias, a list of them, or a database itself, the same as
 `assert_queries(using=...)`. A test that reaches for a database its marker
 leaves out raises `MissingSessionError`.
 
-### Creating the schema
+### Schema creation
 
 `sqlakit_schema` is the `provisioned_tables()` call. A suite with a schema of
 its own replaces the fixture:
@@ -136,7 +136,7 @@ def sqlakit_schema() -> Iterator[None]:
 
 Migrations go here, and so does waiting for a server the tests start.
 [Migrations instead of `create_all`](#migrations-instead-of-create_all) writes
-that fixture out, and [starting a server](#starting-a-server) brings one up
+that fixture out, and [starting a server](#server-startup) brings one up
 with `pytest-docker`. An `asyncio` project writes it as an async fixture, under
 the same name.
 
@@ -150,7 +150,7 @@ def sqlakit_db() -> Database:
     return db
 ```
 
-### Without the model layer
+### Projects without a model layer
 
 A project on plain mapped classes, `SQLModel` among them, has no base to hand
 over. Name the database and the metadata instead:
@@ -190,7 +190,7 @@ def test_a_user_is_written() -> None:
     assert db.query(User).count() == 1
 ```
 
-## Seeding data
+## Seed data
 
 A fixture that writes rows for one test is like any other: it runs inside the
 test's transaction and rolls back with it.
@@ -247,7 +247,7 @@ def _db_schema() -> Iterator[None]:
         yield
 ```
 
-## Starting a server
+## Server startup
 
 Migrations are usually written for the database you deploy on, not for
 `SQLite`. `pytest-docker` starts one for the session, and the schema fixture
@@ -400,7 +400,7 @@ async def sqlakit_schema(
 `run_sync` passes the function the underlying synchronous connection.
 `Alembic` requires a synchronous one, and `env.py` reads it as shown above.
 
-## Counting queries
+## Query counting
 
 `assert_queries` is a [recorder](debugging.md) with an assertion around it. It
 counts the same way and prints the same statements on failure. It lives on the
@@ -466,7 +466,7 @@ recording only listens and runs nothing itself. When you want the numbers
 themselves rather than an assertion, use `db.recording()`, the recorder this
 is created on.
 
-## Reading what the code changed
+## Rows the code changed
 
 The code under test writes on the test's connection, so the rows are already
 in the database. The instance your test holds, though, still carries the
@@ -482,7 +482,7 @@ def test_revoking_a_token(token: Token) -> None:
     assert token.is_revoked
 ```
 
-## What the test's block changes
+## Behaviour inside the test's block
 
 A rolled-back block is an ordinary transaction, so the code under test behaves
 as it does in production. Inside it:
@@ -539,7 +539,7 @@ def test_a_signup_is_recorded() -> None:
     assert Event.query.count() == 1  # `Event.__db__` is "warehouse"
 ```
 
-### What a rollback on every database does not do
+### Rollback limits
 
 Each database rolls back its own transaction, on its own connection. Two
 consequences follow:
@@ -574,7 +574,7 @@ def test_reads_go_to_the_replica() -> None:
     assert User.db is db["replica"]
 ```
 
-### Counting queries across both
+### Query counts across databases
 
 The standalone `assert_queries` watches every database in the registry, so a
 block that touches two databases gets one combined count. To watch a single
@@ -603,7 +603,7 @@ with db.recording() as record:
 assert record.databases == ("default",)
 ```
 
-## Without the plugin
+## Tests without the plugin
 
 The same marker, written by hand:
 
@@ -642,7 +642,7 @@ def _db_transaction(_db_schema: None) -> Iterator[None]:
 An unmarked test never asks for `_db_transaction`, so nothing connects, and
 `_db_schema` runs only when some test does ask.
 
-### With await
+### Async tests without the plugin
 
 The fixtures become async, because the transaction has to open on the loop the
 test runs on. The marker and the hook are the same:

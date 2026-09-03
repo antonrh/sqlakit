@@ -3,114 +3,92 @@ name: docs
 description: "Write or review SQLAKit's documentation. Use when editing anything under docs/, README.md or a docstring that the reference renders, and before committing such a change. Covers the voice the docs are written in, what belongs on which page, and the checks that keep the examples true."
 ---
 
-# Writing SQLAKit's documentation
+# Writing SQLAKit's Documentation
 
-The documentation is read by people deciding whether to use the library and by
-people who already have. Both want the same thing: a plain sentence that says
-what happens, and an example that runs.
+The documentation serves both prospective users evaluating the library and active users building with it. Both require clear statements of behavior accompanied by runnable code.
 
-## The voice
+---
 
-Write the way you would explain it to a colleague. The Django tutorial is the
-benchmark: address the reader as "you", use contractions, keep one idea per
-sentence.
+## The Voice
 
-Do not write:
+Write as you would explain a concept to a peer. The Django tutorial is the benchmark: address the reader directly ("you"), use contractions, and keep one idea per sentence.
 
-- **Aphorisms and clever closers.** A paragraph ends when the point is made.
-- **Marketing adjectives**: seamless, powerful, blazing-fast, effortless. If
-  the library is fast, give the measurement instead.
-- **Filler**: simply, just, easily, obviously, of course. "Easily" tells the
-  reader their trouble is small, which they get to decide.
-- **The first person**: we, our, let's. The docs speak about the library.
-- **Personification**: the query does not "want", "know" or "say". It raises,
-  returns, holds.
-- **Passive voice where the library acts**: "`SQLAKit` reads the dialect", not
-  "the dialect is read".
-- **Cleft constructions**: say "the session owns the transaction", not "the
-  transaction is what the session owns".
-- **Phrasal verbs**: it ends, not ends up. It starts, not spins up.
-- **Em-dashes and semicolons in prose.** Use a full stop.
-- **Exclamation marks.**
+### Style Guide Rules
 
-Identifiers, library names and types go in backticks, including `SQLAKit`
-itself and every keyword a reader would type. Headings are sentence case, with
-no trailing colon. Prose wraps at 80 columns.
+* **Aphorisms and Closers:** Omit clever wrap-ups. End a section as soon as the technical point is complete.
+* **Marketing Language:** Avoid terms like *seamless*, *powerful*, *blazing-fast*, or *effortless*. Provide benchmark numbers or explicit performance characteristics instead.
+* **Filler Words:** Omit *simply*, *just*, *easily*, *obviously*, and *of course*.
+* **First Person:** Avoid *we*, *our*, or *let's*. Refer directly to the library or the user.
+* **Personification:** Code and queries do not "want" or "know". They *raise*, *return*, *yield*, or *hold*.
+* **Active Voice:** Write "`SQLAKit` parses the dialect", not "the dialect is parsed".
+* **Phrasal Verbs:** Use standard verbs (*starts*, *ends*) instead of phrasal variants (*spins up*, *ends up*).
+* **Punctuation:** Avoid em-dashes, semicolons, and exclamation marks in prose. Use periods.
 
-`tools/lint_docs.py` catches the mechanical half of this. The rest is
-judgement, and belongs to review.
+Identifiers, library names, types, and user-typed keywords must be enclosed in backticks (e.g., `SQLAKit`, `Database`, `asyncio`). Wrap prose at 80 columns.
 
-## A page is a reference
+---
 
-It answers "how do I" and "what happens", in the fewest lines that stay true.
-What went into the work stays out: the measurements, the dialect internals, the
-alternatives weighed, the reason a default is what it is. A reader looking
-something up wants the rule and an example, not the investigation behind them.
+## Headings Standard
 
-Two things to grep for after writing: three paragraphs where the API takes one
-argument, and a paragraph restating the table above it.
+A heading must reflect the user's search intent using appropriate phrasing:
 
-## What goes where
+| Heading Type | Purpose | Example |
+| :--- | :--- | :--- |
+| **Imperative Verb** | Actionable procedures and step-by-step tasks | `Install`, `Write a test`, `Configure connections` |
+| **Noun Phrase** | Architectural concepts, parameters, or reference sections | `Database URL`, `Engine configuration`, `Defaults` |
+| **Direct Question** | Targeted troubleshooting or complex conceptual queries | `Where does a model live?`, `Which database is active?` |
 
-- **`README.md` and `docs/index.md` are the shop window.** What the library is,
-  how to install it, one example that runs, what makes it different, links
-  onward. Not a tutorial. The two carry the same text and differ only in their
-  links, so change both together.
-- **`docs/getting-started.md`** builds one working thing end to end, each
-  snippet continuing the last.
-- **The topic pages** answer "how do I", one subject each: `databases.md`,
-  `context.md`, `queries.md`, `sql.md`, `models.md`, `routing.md`,
-  `debugging.md`, `testing.md`.
-- **`docs/reference.md`** is generated from docstrings by `mkdocstrings`. Put
-  the explanation in the docstring, not around the `:::` directive. A new
-  public name belongs there the day it is added.
-- **`docs/examples.md`** holds whole programs, not fragments.
+### Consistency Principles
+* **Single Naming Standard:** Use identical terminology across all pages (e.g., use `Soft deletes` consistently rather than mixing with `Logical deletion`).
+* **Section Formatting:** Use sentence case with no trailing colon.
+* **Anchor Integrity:** When renaming headings, update all relative markdown links and explicit `{#anchor}` targets.
 
-Say a thing once. If two pages open with the same paragraph, one of them is an
-overview and should say what the section holds instead.
+---
 
-## Every snippet runs
+## Page Anatomy & Structure
 
-A block that cannot be pasted into a file and run is a bug. Give it its
-imports, or make it an obvious continuation of the block above it on the same
-page. Before you commit, run the blocks you touched:
+Topic pages (`queries.md`, `context.md`, etc.) must follow a standardized layout:
+
+1. **Quick Example:** A minimal, copy-pasteable snippet demonstrating the core feature (max 5-10 lines).
+2. **Core Mechanics:** Concise explanation of the underlying behavior and default settings.
+3. **Patterns & Options:** Itemized configurations, methods, or parameters (use Markdown tables for comparing options).
+4. **Limits & Edge Cases:** Important constraints, async/sync differences, or exceptions raised.
+
+---
+
+## Executable Snippets
+
+Every code block must be fully runnable. Provide necessary imports or structure the snippet as a clear continuation of the preceding block on the same page.
+
+Nothing runs the blocks of a topic page, so a snippet you write or change is yours to run:
 
 ```console
 $ cd /tmp && uv run --project ~/Projects/sqlakit python your_snippet.py
 ```
 
-Comments inside a block are one line. A block needing a paragraph of comment
-needs the paragraph outside it instead.
+`tests/docs` covers two pages that are run in full: `getting-started.md`, assembled into the files and the script a reader types, and the `conftest.py` that `testing.md` prints.
 
-## The docs must not outlive the code
+### Code Block Requirements
+* Inline code comments must not exceed one line. Place longer explanations in the preceding or following prose.
+* Ensure type hints and code styles in snippets mirror the main codebase.
 
-A sentence about behaviour is a claim, and claims rot. When you write or
-review one, check it against the source, or better, run it:
+---
 
-- Does the exception named actually get raised, and is it that class?
-- Does the query really emit that SQL, on that dialect?
-- Is the argument still called that, and does it still default to that?
+## Document Placement Guidelines
 
-If you cannot confirm a claim, do not soften it into vagueness. Test it, then
-write what happened.
+* **`README.md` and `docs/index.md`:** Primary entry points. Contain the high-level overview, installation steps, one complete working example, key differentiators, and navigation links. Keep both files synchronized.
+* **`docs/getting-started.md`:** End-to-end tutorial building a single continuous application.
+* **Topic Pages (`docs/*.md`):** Focused guides answering "how-to" questions for specific features.
+* **`docs/reference.md`:** Autogenerated from docstrings via `mkdocstrings`. Place detailed technical explanations inside class/function docstrings.
+* **`docs/examples.md`:** Complete, standalone runnable application scripts (e.g., FastAPI or Flask integrations).
 
-## Before committing
+---
+
+## Verification & Automated Linting
+
+Before committing documentation updates, run the validation suite:
 
 ```console
-$ uv run poe lint                    # ruff, ty, codespell, and lint_docs.py
-$ uv run mkdocs build --strict       # links, nav, references resolve
-```
-
-Both run in CI, `poe lint` in the `lint` job and `mkdocs` in the `docs` job.
-`lint_docs.py` checks that every fenced Python block formats and annotates
-like the code around it, and that the prose keeps the habits above. It
-deliberately does not check that a block is complete: many continue the one
-above them.
-
-It reads `docs/*.md` and nothing else, so `README.md` is on you.
-
-Also worth a look when the change is larger than a sentence:
-
-- relative links still resolve, including the anchors you renamed
-- the nav in `mkdocs.yml` matches the headings you changed
-- the page still reads top to bottom for someone who has not read the others
+$ uv run poe lint                    # Runs ruff, ty, codespell, and lint_docs.py
+$ uv run pytest tests/docs           # Runs the tutorial and the conftest the docs print
+$ uv run mkdocs build --strict       # Verifies navigation, links, and cross-references

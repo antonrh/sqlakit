@@ -195,7 +195,7 @@ runs on the default one, `db["warehouse"].sql(...)` on the warehouse.
 Routers decide where a *model* lives, and a template is not a model, so no
 router applies to a template.
 
-## What none of this does
+## Limits
 
 **It does not open connections for you.** Naming a database only chooses one. A
 statement still runs inside a block, and using a database no block has opened
