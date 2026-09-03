@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.8
+
+### Documentation
+
+- Every heading on a concept or a reference section is a noun phrase: `Row
+  reads`, `Template syntax`, `Table iteration`, `Async blocks`. The steps of the
+  tutorial keep their verbs and the questions on the routing page keep their
+  question marks.
+- Soft deletes and the sections on what a feature does not do are named the same
+  way on every page that has them. Links and anchors follow the renames.
+
 ## 0.10.7
 
 ### Changed
