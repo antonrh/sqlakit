@@ -15,7 +15,7 @@ Templates are `Jinja` files, rendered by
 [jinja2sql](https://github.com/antonrh/jinja2sql). Every `{{ value }}` becomes
 a bound parameter `:value__1`, so values never reach the SQL text itself.
 
-## Where templates live
+## Template directories
 
 Set the template directory with `templates=` when you create the database:
 
@@ -75,7 +75,7 @@ db = Database(
 )
 ```
 
-## Reading rows
+## Row reads
 
 ```python
 rows = db.sql("reports/by_team.sql", since=since).all()
@@ -158,7 +158,7 @@ One caveat: `SQLAKit` does not apply a model's
 you rely on that hook to hide soft-deleted rows or another tenant's rows,
 repeat the condition in the template's own `WHERE`.
 
-## Writing rows
+## Row writes
 
 ```python
 with db.transaction():
@@ -172,7 +172,7 @@ Use it for `INSERT`, `UPDATE` and `DELETE`. Inside a transaction the write is
 part of it and the block decides. In a block with no transaction the call
 commits for itself, as ORM writes do.
 
-## Walking a table
+## Table iteration
 
 ```python
 with db.transaction():
@@ -185,7 +185,7 @@ whole walk, so don't leave the transaction until you're done. If you'd rather
 commit each batch separately, page the table with
 [`cursor_page`](queries.md#walking-a-whole-table).
 
-## SQL that is not in a file
+## Inline SQL
 
 A three-line query doesn't need a file of its own. `from_string` renders the
 same way, and the source stays right in your code:
@@ -225,7 +225,7 @@ written in the regular `SQLAlchemy` syntax. The call adds the reading methods
 (`typed`, `scalars`, `chunks` and the rest) on top of a statement you built
 anywhere.
 
-## Inside a template
+## Template syntax
 
 `SQLAKit` binds every value as a parameter, whatever its type:
 
@@ -273,7 +273,7 @@ type:
 db.sql("events/at.sql", at=sa.bindparam("at", when, type_=sa.DateTime(timezone=True)))
 ```
 
-## Seeing the SQL
+## SQL inspection
 
 `statement` gives you the finished SQL, rendered and bound, without running
 anything. You can check it in a test, or feed it to `EXPLAIN`:
@@ -294,7 +294,7 @@ WHERE joined_at > :since
 GROUP BY team
 ```
 
-## Checking the templates
+## Template validation
 
 `SQLAKit` only reads a template when it's first used, and that's a late
 moment to find a typo. Call `check()` at startup, next to the rest of your
@@ -308,7 +308,7 @@ It compiles every `.sql` template under the roots you configured. A broken one
 raises `TemplateSyntaxError` with the file and the line, so you find out at
 startup rather than the first time someone uses that template.
 
-## Templates under `asyncio`
+## Async templates
 
 The same methods in `sqlakit.asyncio`, awaited:
 

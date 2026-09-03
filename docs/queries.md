@@ -4,7 +4,7 @@ A query reads rows of one model, using the session of the open block. There
 are several ways to get a query, and which one you use depends only on how
 the model was declared.
 
-## From the database
+## Database queries
 
 A plain `SQLAlchemy` class isn't tied to this library in any way, so you build
 the query from the database object:
@@ -36,7 +36,7 @@ with db.connect():
 The block binds the session the query runs on. Every example below assumes an
 open block, so the examples omit it from here on.
 
-## In a repository
+## Repository queries
 
 If you'd rather keep persistence out of your models, give the database to a
 repository. It uses the same builder:
@@ -95,7 +95,7 @@ If you prefer to get a query straight from the class, use
 Both approaches are shown in full in the [examples](examples.md), with
 `SQLModel` classes and with a repository.
 
-## Building
+## Query building
 
 Every method returns a new query, so you can keep one and branch from it:
 
@@ -331,7 +331,7 @@ request, so it differs from the error for a bad ordering string. A field
 wrapped in `sa.nulls_last()` or `sa.nulls_first()` keeps that placement under
 any direction, unless the ordering string sets another.
 
-### A field from another table
+### Fields of another table
 
 Point the field at another table and the query adds the join automatically.
 The join is added once, no matter how many fields use it, and not at all when
@@ -551,7 +551,7 @@ as well as an `int`. A row with NULL in an ordering column raises
 `NullCursorValueError`, because a comparison against NULL matches nothing and
 the page has nowhere to start.
 
-### Turning rows into something else
+### Row transformation
 
 `map` works on both kinds of page and keeps the totals and the cursors:
 
@@ -577,7 +577,7 @@ items to `with_items`:
 page = page.with_items(await serialize(page.items))
 ```
 
-## Walking a whole table {#walking-a-whole-table}
+## Table iteration {#walking-a-whole-table}
 
 For a job that visits every row, you don't need pages or `all()`. `chunks`
 reads one statement in batches and holds one batch in memory at a time:
@@ -632,7 +632,7 @@ be narrowed with `where`, `order_by`, `distinct`, `limit` and `offset`, and
 db.query(User).only_columns(User.name).order_by("created_at.desc").all()
 ```
 
-## Writing
+## Row creation
 
 ```python
 with db.transaction():
@@ -650,7 +650,7 @@ with db.transaction():
     db.query(User).create_many([{"name": "ada"}, {"name": "grace"}])
 ```
 
-## Writing many rows
+## Bulk updates and deletes
 
 ```python
 with db.transaction():
@@ -667,7 +667,7 @@ to the block. In `connect()` or `autocommit()`, where there is no transaction,
 the write commits immediately. With no block there is no session, and the
 call raises `MissingSessionError`.
 
-## Adding methods to a query
+## Custom query methods
 
 If you use a query often, give it a name and a subclass. You build it like an
 ordinary one:
@@ -783,7 +783,7 @@ the session. An instance loaded before the rule applied, or through
 `unfiltered()`, can still be changed and saved. If you need to prevent that,
 check it where the write happens. The filter can't.
 
-## Your own SQL instead of the builder
+## Raw SQL
 
 ```python
 users = db.query(User).from_statement(sa.text("SELECT * FROM users WHERE ...")).all()
@@ -800,7 +800,7 @@ query: the SQL decides what is selected, so a `where` or a `page` raises
 `__query_filter__` does not apply in either case. See
 [Soft deletes](#soft-deletes).
 
-## Queries under `asyncio`
+## Async queries
 
 The same layer in `sqlakit.asyncio.orm`, awaited:
 

@@ -65,7 +65,7 @@ a report with window functions or a recursive CTE.
 a bound parameter (`:name__1`), so values never reach the SQL text and there
 is no way to inject anything. Requires the `sqlakit[sql]` extra.
 
-### From a file
+### File templates
 
 ```sql
 -- reports/by_team.sql
@@ -98,7 +98,7 @@ type each row is returned as.
 `SQLAKit` adds the template name to the SQL as a comment, so a slow query log
 shows the source file of each query right away.
 
-### From a string
+### String templates
 
 ```python
 db.sql.from_string("SELECT count(*) FROM users").scalars().one()
@@ -392,7 +392,7 @@ closes before the async handler runs, and the handler fails with
 There is nothing to open at startup: `SQLAKit` creates the engine on first use.
 On shutdown, `dispose()` closes the pool.
 
-## Where to go next
+## Next steps
 
 | | |
 | --- | --- |

@@ -38,7 +38,7 @@ returns. The block is required: without one there's no session, and every call
 above raises `MissingSessionError` rather than opening a connection on its
 own.
 
-## Saving
+## Persistence
 
 A new instance needs `save()`. Without it the block ends without writing it,
 transaction or not. Appending one to a relationship this block loaded is the
@@ -93,7 +93,7 @@ User.query.where(User.team == "red").update({"team": "green"})
 Everything it can build, page and write is covered in [queries](queries.md),
 and the [examples](examples.md) include a whole application built on it.
 
-## Adding methods to a model's query {#adding-methods-to-a-models-query}
+## Custom query methods {#adding-methods-to-a-models-query}
 
 A model can have a query class of its own instead of the built-in one. Inherit
 from `Query` and attach your class with `as_descriptor()`:
@@ -306,7 +306,7 @@ A few things to know before you enable it:
   `with_deleted()` lifts that for writes as well. An instance in hand behaves
   differently: `save()` writes it, marked or not.
 
-## Importing every model
+## Model imports
 
 A model is added to the metadata when its module is imported, and not before.
 If your application keeps models next to the features they belong to, you
@@ -330,7 +330,7 @@ breakage appears:
 If all your models live in one module, you don't need any of this: importing
 that module is enough.
 
-## Which database a model uses {#which-database-a-model-uses}
+## The model's database {#which-database-a-model-uses}
 
 By default a model goes to the registry's `"default"` alias. You can name
 another alias, or hand the model a database directly:
@@ -438,7 +438,7 @@ from `SQLAlchemy`, not from this library:
 
 With an async database, use `sqlakit.asyncio.orm.ModelMixin`.
 
-## Models under `asyncio`
+## Async models
 
 The same layer in `sqlakit.asyncio.orm`, awaited:
 

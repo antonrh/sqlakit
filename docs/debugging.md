@@ -191,7 +191,7 @@ sqlakit_skip_queries_from = ["tests/factories.py"]
 
 The marker and the fixtures behind it are on the [testing](testing.md) page.
 
-## Reading the SQL
+## Printed SQL
 
 `echo=True` prints the block's statements when it ends. That's useful in a
 script or a notebook, where you have no logger set up:
@@ -300,7 +300,7 @@ with db1.recording(into=record, debugserver=SERVER), db2.recording(into=record):
 The debug server gets that recording once, whether one block names it or both
 do.
 
-## In a test
+## Queries in a test
 
 `assert_queries` is the same recorder with an assertion around it, and it
 lives next to `recording()` on the database. The next page covers it:
