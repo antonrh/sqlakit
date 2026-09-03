@@ -60,6 +60,14 @@ Topic pages (`queries.md`, `context.md`, etc.) must follow a standardized layout
 
 Every code block must be fully runnable. Provide necessary imports or structure the snippet as a clear continuation of the preceding block on the same page.
 
+Nothing runs the blocks of a topic page, so a snippet you write or change is yours to run:
+
+```console
+$ cd /tmp && uv run --project ~/Projects/sqlakit python your_snippet.py
+```
+
+`tests/docs` covers two pages that are run in full: `getting-started.md`, assembled into the files and the script a reader types, and the `conftest.py` that `testing.md` prints.
+
 ### Code Block Requirements
 * Inline code comments must not exceed one line. Place longer explanations in the preceding or following prose.
 * Ensure type hints and code styles in snippets mirror the main codebase.
@@ -82,5 +90,5 @@ Before committing documentation updates, run the validation suite:
 
 ```console
 $ uv run poe lint                    # Runs ruff, ty, codespell, and lint_docs.py
-$ uv run pytest --codeblocks docs/   # Validates that all documentation code blocks execute without errors
+$ uv run pytest tests/docs           # Runs the tutorial and the conftest the docs print
 $ uv run mkdocs build --strict       # Verifies navigation, links, and cross-references
