@@ -470,6 +470,29 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         """
         return self._outer.get(None) is not None
 
+    @property
+    def aliases(self) -> tuple[str, ...]:
+        """The names this database answers to, which for one is its own.
+
+        A registry has one for each database it holds. Both answer here, so
+        code that takes either does not have to ask which it was given.
+        """
+        return (self._name,)
+
+    def __getitem__(self, alias: str) -> Self:
+        """Return this database, which answers to the name it carries.
+
+        Raises:
+            UnknownDatabaseError: if the alias is another database's.
+
+        """
+        if alias == self._name:
+            return self
+        raise UnknownDatabaseError(alias, self.aliases)
+
+    def __contains__(self, alias: str) -> bool:
+        return alias == self._name
+
     def in_session(self) -> bool:
         """Whether a session is open in the current context.
 

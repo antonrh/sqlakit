@@ -361,7 +361,9 @@ def _schema_blocks(
     database to put it on.
     """
     if base is not None:
-        aliases = getattr(db, "aliases", None) or (None,)
+        # A database of its own is where the models are pinned, and the alias
+        # a registry knows it by is not how the base reaches it.
+        aliases = db.aliases if hasattr(db, "transactions") else (None,)
         return [base.provisioned_tables(alias) for alias in aliases]
     if metadata is not None:
         return [db.provisioned_tables(metadata)]
@@ -393,11 +395,11 @@ def _rolled_back(db: Any, using: tuple[Any, ...]) -> list[Any]:  # noqa: ANN401
     a connection to each in the tests that read one.
     """
     if not using:
-        # A registry goes through `transactions`, one alias or many: with one
-        # it has a database of its own only when `configure` built it.
+        # A registry opens every database it holds, and one database opens
+        # itself. `transactions` is the one a registry has.
         return [
             db.transactions(rollback=True)
-            if hasattr(db, "aliases")
+            if hasattr(db, "transactions")
             else db.transaction(rollback=True)
         ]
     return [

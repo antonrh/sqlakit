@@ -114,6 +114,39 @@ def test_a_registry_holding_one_database(one: pytest.Pytester) -> None:
     one.runpytest_subprocess().assert_outcomes(passed=2)
 
 
+def test_a_marker_naming_the_database_a_base_was_given(one: pytest.Pytester) -> None:
+    """`using` reaches a plain database by the name it carries."""
+    one.makepyfile(
+        conftest="""
+        import pytest
+        from app import Model
+
+
+        @pytest.fixture(scope="session")
+        def sqlakit_base():
+            return Model
+
+
+        @pytest.fixture(scope="session")
+        def sqlakit_db():
+            return Model.db
+        """,
+        test_named="""
+        import pytest
+
+        from app import User
+
+
+        @pytest.mark.db(using="default")
+        def test_it():
+            User(name="ada").save()
+            assert User.query.count() == 1
+        """,
+    )
+
+    one.runpytest_subprocess().assert_outcomes(passed=1)
+
+
 def test_the_marker_opens_the_databases_using_names(project: pytest.Pytester) -> None:
     project.makepyfile(
         test_two="""
