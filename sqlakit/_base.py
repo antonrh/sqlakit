@@ -933,11 +933,15 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         opened with `using()` stands in for the default database.
         """
         placement = self._routed(model) or model.__db__
+        override = self._using.get()
         if isinstance(placement, str):
-            override = self._using.get()
             if override is not None and placement == DEFAULT_ALIAS:
                 placement = override
             return self[placement]
+        # A model pinned to the database itself follows `using()` as one on the
+        # default alias does, when that database is the one being stood in for.
+        if override is not None and self[DEFAULT_ALIAS] is placement:
+            return self[override]
         return placement
 
     def _routed(self, model: type[Any]) -> str | None:

@@ -465,6 +465,22 @@ def test_an_alias_another_database_holds(own: type[Any]) -> None:
         own.register_db(Database("sqlite://"), alias="db2")
 
 
+def test_using_moves_a_model_pinned_to_the_default_database(own: type[Any]) -> None:
+    """`set_db(db)` and `register_db(db)` follow a redirect the same way."""
+    default = Database("sqlite://")
+    own.dbs.register(DEFAULT_ALIAS, default)
+    own.set_db(default)
+
+    assert own.db is default
+
+    with own.dbs.using("db2"):
+        assert own.db is own.dbs["db2"]
+
+    assert own.db is default
+
+    default.dispose()
+
+
 def test_a_default_the_registry_did_not_build(own: type[Any]) -> None:
     default = Database("sqlite://")
     own.register_db(default, alias=DEFAULT_ALIAS)
