@@ -393,9 +393,11 @@ def _rolled_back(db: Any, using: tuple[Any, ...]) -> list[Any]:  # noqa: ANN401
     a connection to each in the tests that read one.
     """
     if not using:
+        # A registry goes through `transactions`, one alias or many: with one
+        # it has a database of its own only when `configure` built it.
         return [
             db.transactions(rollback=True)
-            if len(getattr(db, "aliases", ()) or ()) > 1
+            if hasattr(db, "aliases")
             else db.transaction(rollback=True)
         ]
     return [
