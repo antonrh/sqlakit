@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.10.9
+
+### Fixed
+
+- A registry answers a dunder before it reads any state of its own. A container
+  that resolves a `Database` patches `__getattribute__` on the class and probes
+  every attribute for a marker of its own, which fell into `__getattr__`, read
+  `self.__dict__`, and was caught by the patch again: the two recursed until the
+  stack ran out, and every query through the model layer reached it.
+- The `pytest` plugin rolls back a registry holding one database through
+  `transactions()`. It called `transaction()` on the registry itself, which has
+  a database of its own only when `configure` built it, so a project that
+  registered its single database failed at setup.
+
 ## 0.10.8
 
 ### Documentation
