@@ -215,6 +215,32 @@ def test_a_registry_without_a_database_says_so_rather_than_breaking(
             pass
 
 
+def test_a_patched_getattribute_does_not_loop(
+    handed_over: Databases, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A container that patches the class asks for a marker of its own.
+
+    `anydi` puts a `__getattribute__` on `Database` that probes every attribute
+    for one of its markers. Answering the probe from `__getattr__` sent the two
+    round in circles until the stack ran out.
+    """
+    marker = "__resolver_getter__"
+    original = Database.__getattribute__
+
+    def patched(self: object, name: str) -> object:
+        if name != marker and hasattr(self, marker):
+            pass  # pragma: no cover - the marker is never there
+        return original(self, name)
+
+    monkeypatch.setattr(Database, "__getattribute__", patched)
+
+    assert callable(handed_over.db_for)
+    assert hasattr(handed_over, "nowhere") is False
+
+    with pytest.raises(DatabaseNotConfiguredError):
+        _ = handed_over.session
+
+
 def test_the_state_a_registry_explains_is_the_state_a_database_has() -> None:
     assert set(vars(Database("sqlite://"))) >= DATABASE_STATE
 

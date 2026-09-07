@@ -1061,10 +1061,15 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         # fails, as it does on a registry with no database of its own, from
         # the outside and from its own methods.
         def __getattr__(self, name: str) -> object:
+            # A dunder is the machinery asking, and a container that patched
+            # `__getattribute__` bounces back here until it is answered.
+            if name.startswith("__") and name.endswith("__"):
+                raise AttributeError(name)
             # Only the database half is worth explaining. Anything else is a
             # name that does not exist, and saying so lets `hasattr`,
             # `copy` and every library that introspects work.
-            state = self.__dict__
+            # Through `object`, so a patched `__getattribute__` cannot loop.
+            state = object.__getattribute__(self, "__dict__")
             if "url" in state:
                 raise AttributeError(name)
             asked_as_a_database = name in DATABASE_STATE or (
