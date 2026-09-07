@@ -11,6 +11,7 @@ import pytest
 PROJECT = Path(__file__).parent.parent / "projects" / "plugin"
 REGISTERED = Path(__file__).parent.parent / "projects" / "registered"
 ONE = Path(__file__).parent.parent / "projects" / "one"
+BASES = Path(__file__).parent.parent / "projects" / "bases"
 CONFTEST = (PROJECT / "conftest.py").read_text()
 
 
@@ -36,6 +37,12 @@ def registered(pytester: pytest.Pytester) -> pytest.Pytester:
 def one(pytester: pytest.Pytester) -> pytest.Pytester:
     """A project with a single database, registered rather than configured."""
     return _copied(pytester, ONE)
+
+
+@pytest.fixture
+def bases(pytester: pytest.Pytester) -> pytest.Pytester:
+    """A project with a declarative base for each of its databases."""
+    return _copied(pytester, BASES)
 
 
 def test_the_marker_alone_opens_every_database(project: pytest.Pytester) -> None:
@@ -88,6 +95,37 @@ def test_databases_registered_rather_than_configured(
     )
 
     registered.runpytest_subprocess().assert_outcomes(passed=3)
+
+
+def test_a_base_for_each_database(bases: pytest.Pytester) -> None:
+    """Two bases share a registry, and the schema fixture covers both."""
+    bases.makepyfile(
+        test_bases="""
+        import pytest
+
+        from app import Event, User
+
+
+        @pytest.mark.db
+        def test_writes_to_both():
+            User(name="ada").save()
+            Event(what="signup").save()
+            assert (User.query.count(), Event.query.count()) == (1, 1)
+
+
+        @pytest.mark.db
+        def test_both_rolled_back():
+            assert (User.query.count(), Event.query.count()) == (0, 0)
+
+
+        @pytest.mark.db(using="warehouse")
+        def test_one_of_them():
+            Event(what="signup").save()
+            assert Event.query.count() == 1
+        """
+    )
+
+    bases.runpytest_subprocess().assert_outcomes(passed=3)
 
 
 def test_a_registry_holding_one_database(one: pytest.Pytester) -> None:

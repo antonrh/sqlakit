@@ -145,7 +145,7 @@ class BaseModel(Generic[DatabaseT]):
         Base.register_db(Database(DB_URL))
         ```
 
-        The registry answers for it either way, so `dbs["default"]`,
+        The registry holds it either way, so `dbs["default"]`,
         `dbs.transactions()` and `using()` all reach what was registered.
         [`set_db`][sqlakit.orm.ModelMixin.set_db] is the other way to name a
         database, and it leaves the registry out of it.

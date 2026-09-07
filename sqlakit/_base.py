@@ -472,15 +472,15 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
 
     @property
     def aliases(self) -> tuple[str, ...]:
-        """The names this database answers to, which for one is its own.
+        """The names this database goes by, which for one database is its own.
 
-        A registry has one for each database it holds. Both answer here, so
-        code that takes either does not have to ask which it was given.
+        A registry has one for each database it holds. Both carry this, so code
+        that takes either does not have to ask which it was given.
         """
         return (self._name,)
 
     def __getitem__(self, alias: str) -> Self:
-        """Return this database, which answers to the name it carries.
+        """Return this database, under the name it carries.
 
         Raises:
             UnknownDatabaseError: if the alias is another database's.
@@ -971,10 +971,10 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         # Hidden from type checkers, which keep reading these off `Database`
         # and its asyncio twin, signatures and all.
         def _proxy(name: str, *, attribute: bool = False) -> Any:  # noqa: ANN401, N805
-            """Answer as the database this registry holds, or as itself.
+            """Proxy to the database this registry holds, or call its own.
 
-            A registry handed a default answers as that database. One that
-            `configure` built answers for itself, which `super()` reaches.
+            A registry handed a default proxies to that database. One that
+            `configure` built calls what it inherits, which `super()` reaches.
             """
 
             def reach(self: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401

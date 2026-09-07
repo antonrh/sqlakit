@@ -190,6 +190,36 @@ def test_a_user_is_written() -> None:
     assert db.query(User).count() == 1
 ```
 
+### A base for each database
+
+`sqlakit_base` names one base, so a project with a base per database names the
+registry and builds both schemas:
+
+```python title="conftest.py"
+import pytest
+
+from sqlakit import Databases
+
+from app.db import db
+from app.models import Model, WarehouseModel
+
+
+@pytest.fixture(scope="session")
+def sqlakit_db() -> Databases:
+    return db
+
+
+@pytest.fixture(scope="session")
+def sqlakit_schema(sqlakit_db: Databases) -> None:
+    with Model.provisioned_tables(), WarehouseModel.provisioned_tables():
+        yield
+```
+
+The bases share the registry, and each says where its models live: `Model`
+takes the default and `WarehouseModel` carries `__db__ = "warehouse"`. The
+marker opens every database of the registry, and `using` still narrows it to
+one.
+
 ## Seed data
 
 A fixture that writes rows for one test is like any other: it runs inside the

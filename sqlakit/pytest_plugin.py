@@ -1,24 +1,22 @@
 """The `db` marker, and the fixtures behind it.
 
-Installed with the library, so a project writes the two lines that say which
-database and which tables, and nothing else:
+Installed with the library, so a project says which models it has and nothing
+else:
 
 ```python title="conftest.py"
 import pytest
 
-from app.db import db
 from app.models import Model
 
 
 @pytest.fixture(scope="session")
-def sqlakit_db() -> Databases:
-    return db
-
-
-@pytest.fixture(scope="session")
-def sqlakit_metadata() -> sa.MetaData:
-    return Model.metadata
+def sqlakit_base() -> type[Model]:
+    return Model
 ```
+
+The database comes from the base: the registry its models look their aliases
+up in, or the one they were given in person. A project with no model layer
+defines `sqlakit_db` and `sqlakit_metadata` instead.
 
 A test marked `db` runs in a transaction that rolls back, on every database.
 `using` narrows that to the ones a test works on:

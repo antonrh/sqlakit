@@ -176,7 +176,7 @@ Base.register_db(Database(DB_URL))  # the default one
 Base.register_db(Database(WAREHOUSE_URL), alias="warehouse")
 ```
 
-The registry answers as that database, so `Base.dbs.session`,
+The registry proxies to that database, so `Base.dbs.session`,
 `Base.dbs.transaction()` and everything else a database does reach it, along
 with `Base.dbs["default"]`, `Base.dbs.transactions()`, `using()` and the
 `pytest` plugin.
