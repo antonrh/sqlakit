@@ -86,10 +86,10 @@ class RetryNotSupportedError(SQLAKitError, TypeError):
 
 
 REGISTERED_DEFAULT = (
-    "This registry did not build the default database, it was registered. "
-    "Reach that one as `db['default']`, or through the models that live on it."
+    "This registry did not build the default database, it was registered, so "
+    "the settings it was built from live on it. Read them from `db['default']`."
 )
-"""What a registry says when it is asked for connections it does not have."""
+"""What a registry says when asked for settings the database it holds carries."""
 
 
 class DatabaseNotConfiguredError(SQLAKitError, RuntimeError):

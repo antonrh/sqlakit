@@ -176,10 +176,10 @@ Base.register_db(Database(DB_URL))  # the default one
 Base.register_db(Database(WAREHOUSE_URL), alias="warehouse")
 ```
 
-The registry answers for it, so `Base.dbs["default"]`, `Base.dbs.transactions()`
-and `using()` all reach it, and so does the `pytest` plugin. What the registry
-does not have is connections of its own: reach the default as
-`Base.dbs["default"]`, or through the models that live on it.
+The registry answers as that database, so `Base.dbs.session`,
+`Base.dbs.transaction()` and everything else a database does reach it, along
+with `Base.dbs["default"]`, `Base.dbs.transactions()`, `using()` and the
+`pytest` plugin.
 
 ## Which database is this query on?
 

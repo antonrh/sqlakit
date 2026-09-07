@@ -25,6 +25,7 @@ from sqlakit import (
     MissingSessionError,
     RetryNotSupportedError,
     TransactionRolledBackError,
+    UnknownDatabaseError,
 )
 from sqlakit._base import default_backoff, fix_sqlite_transactions
 
@@ -1088,3 +1089,18 @@ def test_the_async_database_mirrors_this_one(
     sync: type, asynchronous: type, mirrors: Callable[[type, type], None]
 ) -> None:
     mirrors(sync, asynchronous)
+
+
+def test_a_database_answers_to_the_name_it_carries() -> None:
+    """A registry and a database answer the same two questions."""
+    db = Database("sqlite://", alias="warehouse")
+
+    assert db.aliases == ("warehouse",)
+    assert db["warehouse"] is db
+    assert "warehouse" in db
+    assert "default" not in db
+
+    with pytest.raises(UnknownDatabaseError, match="'warehouse'"):
+        db["default"]
+
+    assert Database("sqlite://").aliases == ("default",)

@@ -470,6 +470,29 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         """
         return self._outer.get(None) is not None
 
+    @property
+    def aliases(self) -> tuple[str, ...]:
+        """The names this database answers to, which for one is its own.
+
+        A registry has one for each database it holds. Both answer here, so
+        code that takes either does not have to ask which it was given.
+        """
+        return (self._name,)
+
+    def __getitem__(self, alias: str) -> Self:
+        """Return this database, which answers to the name it carries.
+
+        Raises:
+            UnknownDatabaseError: if the alias is another database's.
+
+        """
+        if alias == self._name:
+            return self
+        raise UnknownDatabaseError(alias, self.aliases)
+
+    def __contains__(self, alias: str) -> bool:
+        return alias == self._name
+
     def in_session(self) -> bool:
         """Whether a session is open in the current context.
 
@@ -910,11 +933,15 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         opened with `using()` stands in for the default database.
         """
         placement = self._routed(model) or model.__db__
+        override = self._using.get()
         if isinstance(placement, str):
-            override = self._using.get()
             if override is not None and placement == DEFAULT_ALIAS:
                 placement = override
             return self[placement]
+        # A model pinned to the database itself follows `using()` as one on the
+        # default alias does, when that database is the one being stood in for.
+        if override is not None and self[DEFAULT_ALIAS] is placement:
+            return self[override]
         return placement
 
     def _routed(self, model: type[Any]) -> str | None:
@@ -939,6 +966,41 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
     def _built_its_own(self) -> bool:
         """Whether the default database is this registry, `configure` having built it."""
         return "url" in self.__dict__
+
+    if not TYPE_CHECKING:
+        # Hidden from type checkers, which keep reading these off `Database`
+        # and its asyncio twin, signatures and all.
+        def _proxy(name: str, *, attribute: bool = False) -> Any:  # noqa: ANN401, N805
+            """Answer as the database this registry holds, or as itself.
+
+            A registry handed a default answers as that database. One that
+            `configure` built answers for itself, which `super()` reaches.
+            """
+
+            def reach(self: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+                held = self._default
+                found = (
+                    getattr(held, name) if held is not None else getattr(super(), name)
+                )
+                return found if attribute else found(*args, **kwargs)
+
+            return property(reach) if attribute else reach
+
+        connection = _proxy("connection", attribute=True)
+        engine = _proxy("engine", attribute=True)
+        session = _proxy("session", attribute=True)
+        sql = _proxy("sql", attribute=True)
+        assert_queries = _proxy("assert_queries")
+        autocommit = _proxy("autocommit")
+        connect = _proxy("connect")
+        in_session = _proxy("in_session")
+        in_transaction = _proxy("in_transaction")
+        ping = _proxy("ping")
+        provisioned_tables = _proxy("provisioned_tables")
+        query = _proxy("query")
+        session_factory = _proxy("session_factory")
+        transaction = _proxy("transaction")
+        del _proxy
 
     @overload
     def configure(
