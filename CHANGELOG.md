@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.11.0
+
+### Added
+
+- `Database.aliases` and `db[name]`. A database carries one name and returns
+  itself for it, as a registry returns the databases it holds, so code that
+  takes either does not have to ask which it was given.
+  `@pytest.mark.db(using="default")` works for a project whose `sqlakit_db`
+  returns a database rather than a registry.
+
+### Changed
+
+- A registry handed its default by `register("default", db)` proxies to that
+  database. `session`, `transaction()`, `connect()`, `engine`, `ping()` and the
+  rest reach it, where they raised `DatabaseNotConfiguredError` before, which is
+  what a project registering its only database ran into. A registry `configure()`
+  built is unchanged.
+- `using()` redirects a model pinned with `set_db(db)` when that database is the
+  registry's default, as it already did for a model on the default alias.
+
+### Documentation
+
+- The testing page has the conftest for a project with a base for each
+  database: the registry under `sqlakit_db`, and both schemas under
+  `sqlakit_schema`.
+- The plugin's own docstring shows `sqlakit_base`, the fixture a project with
+  models defines. It showed `sqlakit_db` and `sqlakit_metadata`, which are the
+  overrides for a project without one.
+- The routing page says what reaches a registered default, and the message a
+  registry raises is about the settings that stay on the database it holds.
+
 ## 0.10.9
 
 ### Fixed
