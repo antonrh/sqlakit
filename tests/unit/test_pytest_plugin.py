@@ -10,6 +10,7 @@ import pytest
 
 PROJECT = Path(__file__).parent.parent / "projects" / "plugin"
 REGISTERED = Path(__file__).parent.parent / "projects" / "registered"
+ONE = Path(__file__).parent.parent / "projects" / "one"
 CONFTEST = (PROJECT / "conftest.py").read_text()
 
 
@@ -29,6 +30,12 @@ def project(pytester: pytest.Pytester) -> pytest.Pytester:
 def registered(pytester: pytest.Pytester) -> pytest.Pytester:
     """A project whose databases were registered rather than configured."""
     return _copied(pytester, REGISTERED)
+
+
+@pytest.fixture
+def one(pytester: pytest.Pytester) -> pytest.Pytester:
+    """A project with a single database, registered rather than configured."""
+    return _copied(pytester, ONE)
 
 
 def test_the_marker_alone_opens_every_database(project: pytest.Pytester) -> None:
@@ -81,6 +88,30 @@ def test_databases_registered_rather_than_configured(
     )
 
     registered.runpytest_subprocess().assert_outcomes(passed=3)
+
+
+def test_a_registry_holding_one_database(one: pytest.Pytester) -> None:
+    """The registry opens it, rather than being asked for a database of its own."""
+    one.makepyfile(
+        test_one="""
+        import pytest
+
+        from app import User
+
+
+        @pytest.mark.db
+        def test_writes():
+            User(name="ada").save()
+            assert User.query.count() == 1
+
+
+        @pytest.mark.db
+        def test_rolled_back():
+            assert User.query.count() == 0
+        """
+    )
+
+    one.runpytest_subprocess().assert_outcomes(passed=2)
 
 
 def test_the_marker_opens_the_databases_using_names(project: pytest.Pytester) -> None:
