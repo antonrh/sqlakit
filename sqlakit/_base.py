@@ -940,6 +940,41 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         """Whether the default database is this registry, `configure` having built it."""
         return "url" in self.__dict__
 
+    if not TYPE_CHECKING:
+        # Hidden from type checkers, which keep reading these off `Database`
+        # and its asyncio twin, signatures and all.
+        def _proxy(name: str, *, attribute: bool = False) -> Any:  # noqa: ANN401, N805
+            """Answer as the database this registry holds, or as itself.
+
+            A registry handed a default answers as that database. One that
+            `configure` built answers for itself, which `super()` reaches.
+            """
+
+            def reach(self: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+                held = self._default
+                found = (
+                    getattr(held, name) if held is not None else getattr(super(), name)
+                )
+                return found if attribute else found(*args, **kwargs)
+
+            return property(reach) if attribute else reach
+
+        connection = _proxy("connection", attribute=True)
+        engine = _proxy("engine", attribute=True)
+        session = _proxy("session", attribute=True)
+        sql = _proxy("sql", attribute=True)
+        assert_queries = _proxy("assert_queries")
+        autocommit = _proxy("autocommit")
+        connect = _proxy("connect")
+        in_session = _proxy("in_session")
+        in_transaction = _proxy("in_transaction")
+        ping = _proxy("ping")
+        provisioned_tables = _proxy("provisioned_tables")
+        query = _proxy("query")
+        session_factory = _proxy("session_factory")
+        transaction = _proxy("transaction")
+        del _proxy
+
     @overload
     def configure(
         self,

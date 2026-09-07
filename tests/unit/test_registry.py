@@ -194,15 +194,20 @@ def test_disposing_reaches_the_registered_default(handed_over: Databases) -> Non
     assert handed_over["replica"]._engine is None
 
 
-def test_the_registry_says_it_has_no_database_of_its_own(
+def test_the_registry_answers_as_the_database_it_was_given(
     handed_over: Databases,
 ) -> None:
-    with pytest.raises(DatabaseNotConfiguredError, match=r"db\['default'\]"):
-        _ = handed_over.session
+    default = handed_over["default"]
 
-    with pytest.raises(DatabaseNotConfiguredError, match=r"db\['default'\]"):
-        with handed_over.transaction():
-            pass
+    with handed_over.transaction() as connection:
+        assert handed_over.in_transaction() is True
+        assert default.connection is connection
+
+    with handed_over.connect():
+        assert handed_over.session is default.session
+
+    assert handed_over.engine is default.engine
+    assert handed_over.ping() is True
 
 
 def test_a_registry_without_a_database_says_so_rather_than_breaking(
@@ -236,9 +241,7 @@ def test_a_patched_getattribute_does_not_loop(
 
     assert callable(handed_over.db_for)
     assert hasattr(handed_over, "nowhere") is False
-
-    with pytest.raises(DatabaseNotConfiguredError):
-        _ = handed_over.session
+    assert handed_over["default"] is not handed_over
 
 
 def test_the_state_a_registry_explains_is_the_state_a_database_has() -> None:
