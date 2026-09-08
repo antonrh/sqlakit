@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.1
+
+### Changed
+
+- `EngineArgs` and `SessionArgs` take a keyword they do not list, as
+  `create_engine` and `sessionmaker` do: `executemany_mode` on `psycopg2`,
+  `prepared_statement_cache_size` on `asyncpg`. A wrong value for a keyword
+  they do list is still an error. `typing-extensions>=4.13` is declared for
+  this, having arrived through `sqlalchemy` until now.
+
 ## 0.11.0
 
 ### Added
