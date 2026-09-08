@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+
+from typing_extensions import TypedDict
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -27,8 +29,11 @@ TemplatesLike: TypeAlias = "str | Path | Sequence[str | Path] | Templates"
 """Where a database's SQL templates are: a path, several, or the object."""
 
 
-class EngineArgs(TypedDict, total=False):
-    """Keyword arguments accepted by [`sqlalchemy.create_engine`](https://docs.sqlalchemy.org/en/20/core/engines.html#sqlalchemy.create_engine)."""
+class EngineArgs(TypedDict, total=False, extra_items=Any):
+    """Keyword arguments accepted by [`sqlalchemy.create_engine`](https://docs.sqlalchemy.org/en/20/core/engines.html#sqlalchemy.create_engine).
+
+    The portable ones are listed. A dialect keyword is allowed too.
+    """
 
     connect_args: dict[str, Any]
     echo: bool | Literal["debug"]
@@ -61,10 +66,11 @@ class EngineArgs(TypedDict, total=False):
     use_insertmanyvalues: bool
 
 
-class SessionArgs(TypedDict, total=False):
+class SessionArgs(TypedDict, total=False, extra_items=Any):
     """Keyword arguments accepted by `sqlalchemy.orm.sessionmaker`.
 
-    No ``bind``: sessions bind to the connection of the surrounding block.
+    No ``bind``: sessions bind to the connection of the surrounding block. A
+    keyword this list does not have is allowed too.
     """
 
     autobegin: bool

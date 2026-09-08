@@ -23,6 +23,7 @@ classifiers = [
 requires-python = ">=3.11"
 dependencies = [
     "sqlalchemy>=2.0.22",
+    "typing-extensions>=4.13",
 ]
 
 [project.scripts]
@@ -60,8 +61,8 @@ default-groups = ["dev", "docs"]
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
-    "ty>=0.0.75",
-    "ruff>=0.16.5",
+    "ty>=0.0.79",
+    "ruff>=0.16.6",
     "poethepoet>=0.48.0",
     "anyio>=4.14.2",
     "trio>=0.34.0",
@@ -88,7 +89,7 @@ docs = [
     "mkdocs>=1.6.1,<2",
     "mkdocs-material>=9.7.7",
     "mkdocstrings[python]>=1.0.6",
-    "ruff>=0.16.3",
+    "ruff>=0.16.6",
 ]
 
 [tool.pytest.ini_options]
