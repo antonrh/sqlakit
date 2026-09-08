@@ -479,8 +479,11 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         """
         return (self._name,)
 
-    def __getitem__(self, alias: str) -> Self:
+    def __getitem__(self, alias: str) -> Any:  # noqa: ANN401
         """Return this database, under the name it carries.
+
+        `Any` rather than `Self`, so a registry can narrow it to the databases
+        it holds.
 
         Raises:
             UnknownDatabaseError: if the alias is another database's.

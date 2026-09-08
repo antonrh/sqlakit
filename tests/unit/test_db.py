@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import anyio
 import pytest
@@ -21,9 +21,11 @@ from sqlakit import (
     DEFAULT_ENGINE_ARGS,
     DEFAULT_SESSION_ARGS,
     Database,
+    EngineArgs,
     MissingConnectionError,
     MissingSessionError,
     RetryNotSupportedError,
+    SessionArgs,
     TransactionRolledBackError,
     UnknownDatabaseError,
 )
@@ -1104,3 +1106,9 @@ def test_a_database_answers_to_the_name_it_carries() -> None:
         db["default"]
 
     assert Database("sqlite://").aliases == ("default",)
+
+
+def test_a_dialect_keyword_is_allowed() -> None:
+    """`create_engine` takes more than the list, `executemany_mode` among them."""
+    assert EngineArgs.__extra_items__ is Any
+    assert SessionArgs.__extra_items__ is Any
