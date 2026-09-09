@@ -85,6 +85,14 @@ class RetryNotSupportedError(SQLAKitError, TypeError):
         super().__init__(message)
 
 
+HIDDEN_BLOCK = (
+    "No {what} is bound: the block around this one is hidden, so the code "
+    "under it opens its own. `with db.transaction():` to write, "
+    "`with db.connect():` to read. A test hides its block with "
+    "`sqlakit_unbound`, `db(unbound=True)` or `db.unbound()`."
+)
+"""What the two errors above say under a hidden block, which a test opens."""
+
 REGISTERED_DEFAULT = (
     "This registry did not build the default database, it was registered, so "
     "the settings it was built from live on it. Read them from `db['default']`."

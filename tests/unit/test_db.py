@@ -1112,3 +1112,53 @@ def test_a_dialect_keyword_is_allowed() -> None:
     """`create_engine` takes more than the list, `executemany_mode` among them."""
     assert EngineArgs.__extra_items__ is Any
     assert SessionArgs.__extra_items__ is Any
+
+
+def test_unbound_hides_the_block_around_it(db: Database) -> None:
+    """The code under test cannot see the block the test opened."""
+    with db.transaction(rollback=True):
+        with db.unbound():
+            with pytest.raises(MissingSessionError):
+                _ = db.session
+
+            with pytest.raises(MissingConnectionError):
+                _ = db.connection
+
+            assert db.in_session() is False
+
+        assert db.in_transaction() is True
+        assert db.session is not None
+
+
+def test_the_error_under_a_hidden_block_says_what_to_open(db: Database) -> None:
+    with db.transaction(), db.unbound():
+        with pytest.raises(MissingSessionError, match="sqlakit_unbound") as raised:
+            _ = db.session
+
+        assert "with db.transaction():" in str(raised.value)
+
+        with pytest.raises(MissingConnectionError, match="hidden"):
+            _ = db.connection
+
+
+def test_a_block_opened_under_unbound_joins_the_one_outside(db: Database) -> None:
+    with db.transaction() as connection:
+        connection.execute(sa.text("CREATE TABLE hidden_rows (id INTEGER)"))
+
+    with db.transaction(rollback=True):
+        with db.unbound(), db.transaction() as inner:
+            inner.execute(sa.text("INSERT INTO hidden_rows VALUES (1)"))
+
+        held = db.connection.execute(sa.text("SELECT count(*) FROM hidden_rows"))
+
+        assert held.scalar() == 1
+
+    with db.connect() as connection:
+        left = connection.execute(sa.text("SELECT count(*) FROM hidden_rows"))
+
+        assert left.scalar() == 0
+
+
+def test_unbound_outside_a_block_is_what_production_looks_like(db: Database) -> None:
+    with db.unbound(), pytest.raises(MissingSessionError):
+        _ = db.session

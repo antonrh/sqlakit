@@ -660,3 +660,14 @@ async def test_the_other_blocks_connect_on_entry(
         assert len(checkouts) == 2
     async with db.autocommit():
         assert len(checkouts) == 3
+
+
+@pytest.mark.anyio
+async def test_unbound_hides_the_block_around_it(db: Database) -> None:
+    """The same block, awaited: `unbound` only moves a context variable."""
+    async with db.transaction(rollback=True):
+        with db.unbound():
+            with pytest.raises(MissingSessionError):
+                _ = db.session
+
+        assert db.session is not None
