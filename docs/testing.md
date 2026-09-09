@@ -545,7 +545,7 @@ recording only listens and runs nothing itself. When you want the numbers
 themselves rather than an assertion, use `db.recording()`, the recorder this
 is created on.
 
-## Rows the code changed
+## Refreshing an instance
 
 The code under test writes on the test's connection, so the rows are already
 in the database. The instance your test holds, though, still carries the
@@ -561,7 +561,7 @@ def test_revoking_a_token(token: Token) -> None:
     assert token.is_revoked
 ```
 
-## Behaviour inside the test's block
+## Blocks inside a test
 
 A rolled-back block is an ordinary transaction, so the code under test behaves
 as it does in production. Inside it:
@@ -581,9 +581,6 @@ as it does in production. Inside it:
   Production behaves the same way. A block that should fail on its own needs
   `transaction(savepoint=True)`.
 
-The point of all this is that your tests behave the way production does.
-
-Next: [debugging](debugging.md), for watching the same queries outside a test.
 ## Multiple databases
 
 Pass the alias, and each database gets the tables of the models that point at
@@ -787,3 +784,4 @@ async def test_renaming_a_user() -> None:
     assert user.name == "grace"
 ```
 
+Next: [debugging](debugging.md), for watching the same queries outside a test.

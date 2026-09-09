@@ -45,6 +45,26 @@ A heading must reflect the user's search intent using appropriate phrasing:
 
 ---
 
+## Writing a Section
+
+Every section, not only the ones that introduce a setting, is written for a
+reader who does not yet know the vocabulary. Three questions, in this order:
+
+1. **Is this mine?** The situation, in the reader's words and concretely: "a
+   handler, a consumer, a scheduled job", not "an unbound execution context".
+   Name a case where the answer is no, so the reader can leave early.
+2. **What do I do?** The shortest path: a command to run, a line to add. How to
+   read what it prints beats a paragraph on why it prints that.
+3. **What changes for me?** One example after the change, and the way back out.
+
+The mechanism comes last, in one or two sentences, and only where it changes
+what the reader would type. A section that opens on how something works inside
+has the order backwards.
+
+The test: read the section to someone who has the problem and not the words for
+it. If the first thing they learn is machinery rather than whether the section
+is about them, rewrite it.
+
 ## Page Anatomy & Structure
 
 Topic pages (`queries.md`, `context.md`, etc.) must follow a standardized layout:
