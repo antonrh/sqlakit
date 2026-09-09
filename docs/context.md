@@ -221,7 +221,7 @@ with db.transaction(rollback=True):
     db.query(User).create(name="ada")  # rolled back when the block ends
 ```
 
-That's how a test runs against a real database and leaves it unchanged. The
+A test runs against a real database this way and leaves it as it found it. The
 [testing](testing.md) page builds on this.
 
 All arguments and their defaults are listed in the
@@ -290,8 +290,8 @@ with db.autocommit():
     raise RuntimeError  # `ada` stays
 ```
 
-That's the intended behavior, and the reason writes belong in
-`transaction()`.
+The mode is meant to work like this. Writes that have to undo together belong
+in `transaction()`.
 
 ## session_factory() {#session-factory}
 
@@ -337,10 +337,11 @@ async with db.transaction():
     await asyncio.gather(load_users(), load_teams())  # both on one session
 ```
 
-A `SQLAlchemy` session isn't designed for concurrent use, and the dangerous
-part is that reads may work without any error. When two tasks overlap on a
-write, you get `InvalidRequestError: Session is already flushing`. Give each
-task a block of its own, and each gets its own connection:
+A `SQLAlchemy` session is not built for two tasks at once. Reads under it
+often pass with no error at all, which is the dangerous part, and two tasks
+that overlap on a write raise `InvalidRequestError: Session is already
+flushing`. Give each task a block of its own, and each gets its own
+connection:
 
 ```python
 async def load_users() -> list[User]:
@@ -371,13 +372,8 @@ async def notify() -> None:
 
 ## Worker-thread blocks
 
-`FastAPI` runs a `def` endpoint in a worker thread, and the thread gets a copy
-of the context. A block opened outside it, in a middleware or an async
-dependency, is therefore visible inside, and the endpoint would run its
-statements on a connection that belongs to another thread. `SQLite` refuses
-that outright, and other drivers do it without a word.
-
-Open the block on the endpoint, so that it belongs to the thread that uses it:
+`FastAPI` runs an endpoint written as `def` in a worker thread. Open the block
+on the endpoint itself, so the connection belongs to the thread that uses it:
 
 ```python
 @app.get("/users")
@@ -386,9 +382,14 @@ def list_users() -> list[UserResponse]:
     return [UserResponse.model_validate(user) for user in db.query(User).all()]
 ```
 
+A block opened outside that thread, in a middleware or an async dependency, is
+visible inside it, because the thread starts with a copy of the context. The
+endpoint would then run its statements on a connection another thread holds.
+`SQLite` refuses that outright, and the other drivers do it without a word.
+
 An `async def` endpoint has none of this to think about. It runs on the loop,
-where a block covers one request and nothing else. `Flask` is the same story
-as the endpoint above: every request already has a thread of its own, and the
-block goes on the view.
+where a block covers one request and nothing else. `Flask` works like the
+endpoint above: every request already has a thread of its own, and the block
+goes on the view.
 
 Next: [queries](queries.md) for what runs inside these blocks.

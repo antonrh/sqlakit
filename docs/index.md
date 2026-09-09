@@ -1,9 +1,9 @@
 # SQLAKit
 
-`SQLAKit` removes the boilerplate from `SQLAlchemy` applications. It manages
-sessions and transactions for you, and adds a query builder with pagination
-built in, `SQL` templates, an optional `Active Record` layer, debugging and
-testing tools, etc. It supports both sync and async APIs and works with any
+`SQLAKit` removes the boilerplate from `SQLAlchemy` applications. It opens the
+session and the transaction, and adds a query builder with pagination, `SQL`
+templates, an optional `Active Record` layer, and tools for debugging and
+testing. The sync and the async API are the same, and neither is tied to a
 framework.
 
 ```console

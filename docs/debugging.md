@@ -193,8 +193,8 @@ The marker and the fixtures behind it are on the [testing](testing.md) page.
 
 ## Printed SQL
 
-`echo=True` prints the block's statements when it ends. That's useful in a
-script or a notebook, where you have no logger set up:
+In a script or a notebook, where no logger is set up, `echo=True` prints the
+block's statements when it ends:
 
 ```python
 with db.recording(echo=True), db.connect():

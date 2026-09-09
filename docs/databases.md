@@ -1,14 +1,16 @@
 # The database
 
-A `Database` holds the `SQLAlchemy` engine, its connection pool, and the
-context that blocks attach to. Creating it doesn't connect to anything yet:
-`SQLAKit` creates the engine when the first block needs it.
+Build a `Database` once, and open blocks on it from anywhere:
 
 ```python
 from sqlakit import Database
 
 db = Database("postgresql+psycopg://localhost/app")
 ```
+
+It holds the `SQLAlchemy` engine, the connection pool, and the context the
+blocks attach to. The line above connects to nothing. The engine arrives when
+the first block needs it.
 
 ## A URL, or separate arguments
 

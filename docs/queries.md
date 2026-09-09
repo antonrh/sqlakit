@@ -1,13 +1,14 @@
 # Queries
 
-A query reads rows of one model, using the session of the open block. There
-are several ways to get a query, and which one you use depends only on how
-the model was declared.
+A query reads rows of one model on the session of the open block. You build it
+from the database, from a repository holding one, or from the class itself when
+the model inherits [`Model`](models.md). How the model was declared decides
+which of the three you have.
 
 ## Database queries
 
-A plain `SQLAlchemy` class isn't tied to this library in any way, so you build
-the query from the database object:
+A plain `SQLAlchemy` class carries no tie to this library, so the database
+object builds the query:
 
 ```python
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -431,9 +432,9 @@ columns.
 
 ## Pagination
 
-Both kinds require an ordering. Without one the database returns rows in no
-fixed order, and pages start repeating and skipping rows. A page with no
-`order_by` raises `UnorderedPageError`.
+Both kinds of page, limit-offset and cursor, require an ordering. Without one
+the database returns rows in no fixed order, and pages start repeating and
+skipping rows. A page with no `order_by` raises `UnorderedPageError`.
 
 Both also append a unique key to the ordering. Otherwise rows with equal
 ordering values could land on two pages at once, or on none.
@@ -669,8 +670,8 @@ call raises `MissingSessionError`.
 
 ## Custom query methods
 
-If you use a query often, give it a name and a subclass. You build it like an
-ordinary one:
+For a query you write over and over, put it on a subclass under a name of its
+own:
 
 ```python
 from typing import Self

@@ -52,8 +52,8 @@ You address a template by its path from that root, extension included:
 keep templates next to the code that uses them, or collect them all in one
 directory. The root only decides where the lookup starts.
 
-There are three calls, one per source of SQL, and all three read rows the
-same way:
+Three calls take SQL, one per source of it, and all three read rows the same
+way:
 
 | call | the source of the SQL |
 | --- | --- |
@@ -296,17 +296,16 @@ GROUP BY team
 
 ## Template validation
 
-`SQLAKit` only reads a template when it's first used, and that's a late
-moment to find a typo. Call `check()` at startup, next to the rest of your
-wiring:
+Call `check()` at startup, next to the rest of your wiring:
 
 ```python
 db.sql.check()
 ```
 
-It compiles every `.sql` template under the roots you configured. A broken one
-raises `TemplateSyntaxError` with the file and the line, so you find out at
-startup rather than the first time someone uses that template.
+It compiles every `.sql` template under the roots you configured, and a broken
+one raises `TemplateSyntaxError` with the file and the line. Without the call,
+a template is read the first time someone uses it, which is a late moment to
+find a typo in it.
 
 ## Async templates
 

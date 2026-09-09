@@ -11,9 +11,7 @@ $ pip install sqlakit
 
 ## Connect
 
-Create a `Database`. It doesn't connect to anything yet and doesn't create
-`app.db`. It only stores the URL. `SQLAKit` creates the engine and the first
-connection the first time you use the database.
+Create a `Database` with the URL of your database:
 
 ```python
 # app/db.py
@@ -22,7 +20,8 @@ from sqlakit import Database
 db = Database("sqlite:///app.db")
 ```
 
-Run a statement:
+That line connects to nothing and creates no `app.db`. The engine and the first
+connection arrive the first time you use the database:
 
 ```python
 import sqlalchemy as sa
