@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.12.0
+
+### Added
+
+- `db.unbound()` hides the block around it, so code that reaches for `session`
+  without opening a block raises `MissingSessionError` instead of borrowing
+  the block a test opened. A block opened inside still joins the transaction
+  around it and rolls back with it. On a registry it covers every database.
+- `sqlakit_unbound = true` in the ini file hides the block for a whole suite,
+  and `@pytest.mark.db(unbound=True)` or `unbound=False` sets it for one test.
+  Both default to the previous behaviour, which lends the test's block to the
+  code it calls.
+
 ## 0.11.1
 
 ### Changed
