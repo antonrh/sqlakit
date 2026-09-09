@@ -11,6 +11,7 @@ from sqlakit import (
     MissingConnectionError,
     MissingDatabaseUrlError,
     MissingDefaultDatabaseError,
+    MissingSessionError,
     UnknownDatabaseError,
 )
 from sqlakit._base import DATABASE_STATE
@@ -259,6 +260,18 @@ def test_only_one_of_them_can_be_the_default(handed_over: Databases) -> None:
 def test_a_configured_registry_keeps_the_default_it_built(aliased: Databases) -> None:
     with pytest.raises(DefaultAliasError, match="default"):
         aliased.register("default", Database("sqlite://"))
+
+
+def test_unbound_covers_every_alias(aliased: Databases) -> None:
+    """A test hides what it opened, on every database at once."""
+    with aliased.transactions(rollback=True):
+        with aliased.unbound():
+            for where in (aliased, aliased["replica"]):
+                with pytest.raises(MissingSessionError):
+                    _ = where.session
+
+        assert aliased.session is not None
+        assert aliased["replica"].session is not None
 
 
 def test_dispose_covers_every_alias(aliased: Databases) -> None:

@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache
 from typing import (
     TYPE_CHECKING,
@@ -39,6 +39,7 @@ from ._recording import (
 from ._routing import Router, as_router
 from .exceptions import (
     DEFAULT_ALIAS,
+    HIDDEN_BLOCK,
     REGISTERED_DEFAULT,
     AliasInUseError,
     ConflictingDatabaseUrlError,
@@ -169,6 +170,9 @@ class _Scope(Generic[ConnectionT, SessionT]):
     autocommit: bool = False
     """Whether the connection is in ``AUTOCOMMIT``, where no transaction runs."""
 
+    hidden: bool = False
+    """Whether `unbound()` hides this scope from the code running under it."""
+
 
 @dataclass(slots=True)
 class _Outer(Generic[ConnectionT]):
@@ -279,9 +283,14 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
 
         """
         try:
-            return self._scope.get()
+            scope = self._scope.get()
         except LookupError:
             raise MissingConnectionError from None
+        if scope.hidden:
+            raise MissingConnectionError(
+                HIDDEN_BLOCK.format(what="connection")
+            ) from None
+        return scope
 
     @property
     def session(self) -> SessionT:
@@ -299,6 +308,8 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
             scope = self._scope.get()
         except LookupError:
             raise MissingSessionError from None
+        if scope.hidden:
+            raise MissingSessionError(HIDDEN_BLOCK.format(what="session")) from None
         if scope.session is None:
             if scope.connection is None and scope.checkout is not None:
                 scope.session = self._lazy_session(scope.checkout)
@@ -505,6 +516,34 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         """
         scope = self._scope.get(None)
         return scope is not None and scope.session is not None
+
+    @contextmanager
+    def unbound(self) -> Iterator[None]:
+        """Hide the block open around this one, for the code inside to open its own.
+
+        A test opens a transaction for the whole test, so code that reaches for
+        `session` without a block of its own borrows one and passes, where in
+        production it raises `MissingSessionError`. Wrap the call under test:
+
+        ```python
+        @pytest.mark.db
+        def test_the_handler_opens_a_block() -> None:
+            with db.unbound():
+                handle(event)
+        ```
+
+        A block opened inside still joins the transaction around it, and rolls
+        back with it.
+        """
+        scope = self._scope.get(None)
+        if scope is None:
+            yield
+            return
+        token = self._scope.set(replace(scope, session=None, hidden=True))
+        try:
+            yield
+        finally:
+            self._scope.reset(token)
 
     @property
     def engine(self) -> Any:  # noqa: ANN401
@@ -865,6 +904,14 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
                     together.echo()
                 if debugserver is not None:
                     send_recording(together, debugserver)
+
+    @contextmanager
+    def unbound(self) -> Iterator[None]:
+        """Hide the block open on every database this registry holds."""
+        with ExitStack() as stack:
+            for alias in self.aliases:
+                stack.enter_context(BaseDatabase.unbound(self[alias]))
+            yield
 
     def _recorded(
         self, using: str | DatabaseT | Sequence[str | DatabaseT] | None

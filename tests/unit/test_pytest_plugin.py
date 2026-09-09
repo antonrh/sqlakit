@@ -209,6 +209,80 @@ def test_the_marker_opens_the_databases_using_names(project: pytest.Pytester) ->
     project.runpytest_subprocess().assert_outcomes(passed=2)
 
 
+def test_the_marker_hides_the_block_it_opened(project: pytest.Pytester) -> None:
+    """`unbound=True` leaves the code under test to open its own block."""
+    project.makepyfile(
+        test_unbound="""
+        import pytest
+
+        from sqlakit import MissingSessionError, db
+
+        from app import User
+
+
+        def handler_that_forgot():
+            User(name="ada").save()
+
+
+        def handler_that_opens_one():
+            with db.transaction():
+                User(name="ada").save()
+
+
+        @pytest.mark.db(unbound=True)
+        def test_the_one_that_forgot():
+            with pytest.raises(MissingSessionError):
+                handler_that_forgot()
+
+
+        @pytest.mark.db(unbound=True)
+        def test_the_one_that_opens_one():
+            handler_that_opens_one()
+
+            with db.connect():
+                assert User.query.count() == 1
+
+
+        @pytest.mark.db
+        def test_the_rows_are_gone_again():
+            assert User.query.count() == 0
+        """
+    )
+
+    project.runpytest_subprocess().assert_outcomes(passed=3)
+
+
+def test_the_ini_hides_it_for_every_test(project: pytest.Pytester) -> None:
+    """`sqlakit_unbound` says it once, and a marker turns it off for a test."""
+    (project.path / "pytest.ini").write_text(
+        "[pytest]\nsqlakit = true\nsqlakit_unbound = true\n"
+    )
+    project.makepyfile(
+        test_ini="""
+        import pytest
+
+        from sqlakit import MissingSessionError, db
+
+        from app import User
+
+
+        @pytest.mark.db
+        def test_the_suite_runs_as_production_does():
+            with pytest.raises(MissingSessionError):
+                User(name="ada").save()
+
+
+        @pytest.mark.db(unbound=False)
+        def test_a_test_may_ask_for_the_block_back():
+            User(name="ada").save()
+
+            assert User.query.count() == 1
+        """
+    )
+
+    project.runpytest_subprocess().assert_outcomes(passed=2)
+
+
 def test_an_unmarked_test_reaches_no_database(project: pytest.Pytester) -> None:
     project.makepyfile(
         test_three="""

@@ -26,10 +26,6 @@ def get_or_create_user(email: str, name: str) -> User:
     return user
 ```
 
-Under the hood, the context lives in a `ContextVar`. A task started inside a
-block inherits the binding, another thread doesn't see it, and two different
-`Database` objects never share one binding.
-
 Every block works as a context manager and as a decorator, with or without
 parentheses:
 
@@ -47,9 +43,6 @@ error instead of silently opening a connection:
 db.connection  # MissingConnectionError
 db.session  # MissingSessionError
 ```
-
-If connections were opened on demand, you couldn't tell when one comes out of
-the pool and when it goes back.
 
 ## connect() {#connect}
 
