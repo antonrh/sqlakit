@@ -19,12 +19,17 @@ up in, or the one they were given in person. A project with no model layer
 defines `sqlakit_db` and `sqlakit_metadata` instead.
 
 A test marked `db` runs in a transaction that rolls back, on every database.
-`using` narrows that to the ones a test works on:
+`using` narrows that to the ones a test works on, and `unbound` hides the
+test's own block from the code it calls, as production has none:
 
 ```python
 @pytest.mark.db(using="warehouse")
 @pytest.mark.db(using=["default", "warehouse"])
+@pytest.mark.db(unbound=True)
 ```
+
+`sqlakit_unbound = true` says the last one for the whole suite, and
+`db(unbound=False)` gives one test its block back.
 
 Every other test connects to nothing, and reaching for a session there raises
 `MissingSessionError` rather than opening one.
@@ -63,6 +68,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addini(
         "sqlakit",
         "give the tests marked `db` a database, and the rest none",
+        type="bool",
+        default=False,
+    )
+    parser.addini(
+        "sqlakit_unbound",
+        "hide the test's own block, so the code it calls opens one as in production",
         type="bool",
         default=False,
     )
@@ -276,6 +287,8 @@ def _sqlakit_transaction(
     with ExitStack() as stack:
         for block in _rolled_back(sqlakit_db, _asked_for(request)):
             stack.enter_context(block)
+        if _hidden(request):
+            stack.enter_context(sqlakit_db.unbound())
         with _reported(request, sqlakit_db):
             yield
 
@@ -289,6 +302,8 @@ async def _sqlakit_async_transaction(
     async with AsyncExitStack() as stack:
         for block in _rolled_back(sqlakit_db, _asked_for(request)):
             await stack.enter_async_context(block)
+        if _hidden(request):
+            stack.enter_context(sqlakit_db.unbound())
         with _reported(request, sqlakit_db):
             yield
 
@@ -383,6 +398,19 @@ def _asked_for(request: pytest.FixtureRequest) -> tuple[Any, ...]:
     if isinstance(using, str) or not isinstance(using, (list, tuple, set, frozenset)):
         return (using,)
     return tuple(using)
+
+
+def _hidden(request: pytest.FixtureRequest) -> bool:
+    """Whether the test's own block is hidden from the code it calls.
+
+    `sqlakit_unbound` says it for the suite, and `db(unbound=...)` on a test
+    says it for that one.
+    """
+    marker = request.node.get_closest_marker(MARKER)
+    asked = None if marker is None else marker.kwargs.get("unbound")
+    if asked is None:
+        return bool(request.config.getini("sqlakit_unbound"))
+    return bool(asked)
 
 
 def _rolled_back(db: Any, using: tuple[Any, ...]) -> list[Any]:  # noqa: ANN401

@@ -220,6 +220,55 @@ takes the default and `WarehouseModel` carries `__db__ = "warehouse"`. The
 marker opens every database of the registry, and `using` still narrows it to
 one.
 
+### Hidden blocks
+
+The marker opens a block around the whole test, and the code the test calls can
+use it. Production wraps that code in nothing, so a handler that never opened a
+block of its own passes here and raises `MissingSessionError` there.
+
+Hide the block in a test that calls something production calls with nothing
+around it: a handler, a consumer, a scheduled job, a command, a view whose
+middleware opens no block. A test that writes its own rows and reads them back
+does not need it, since nothing under it opens blocks either way.
+
+To find them, turn it on for a run and read the failures:
+
+```ini title="pytest.ini"
+[pytest]
+sqlakit = true
+sqlakit_unbound = true
+```
+
+A failure inside your own code is the bug this finds: that code needs
+`with db.transaction():`. A failure on a line of the test is the test reading
+in its own body, which now needs a block of its own:
+
+```python
+@pytest.mark.db
+def test_the_handler_writes_an_order() -> None:
+    handle(event)
+
+    with db.connect():
+        assert Order.query.count() == 1
+```
+
+The transaction is still open and still rolls back. What changed is that the
+code under test opens its own block, as it does in production.
+
+A test that writes its rows inline asks for the block back, which is also how a
+suite moves over one test at a time:
+
+```python
+@pytest.mark.db(unbound=False)
+def test_a_row_written_here() -> None:
+    Order(what="a mug").save()
+
+    assert Order.query.count() == 1
+```
+
+Leave the setting off, and `db(unbound=True)` hides the block for one test,
+`with db.unbound():` for one call.
+
 ## Seed data
 
 A fixture that writes rows for one test is like any other: it runs inside the
