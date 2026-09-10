@@ -6,6 +6,7 @@ import sqlalchemy as sa
 
 from ._sql import (
     BaseSQLQuery,
+    Filter,
     Templates,
     require_pydantic,
     templates_of,
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
 
     from ._db import Database
 
-__all__ = ["SQL", "SQLQuery", "SQLRows", "Templates"]
+__all__ = ["SQL", "Filter", "SQLQuery", "SQLRows", "Templates"]
 
 RowT = TypeVar("RowT")
 OtherT = TypeVar("OtherT")

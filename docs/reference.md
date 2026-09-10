@@ -175,6 +175,8 @@ Requires the `sqlakit[sql]` extra. Covered in [SQL templates](sql.md).
 
 ::: sqlakit.sql.Templates
 
+::: sqlakit.sql.Filter
+
 ## The async classes
 
 The same classes, awaited.

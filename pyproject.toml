@@ -41,7 +41,7 @@ asyncio = [
     "sqlalchemy[asyncio]>=2.0.22",
 ]
 sql = [
-    "jinja2sql>=0.11.0",
+    "jinja2sql>=0.12.0",
 ]
 debug = [
     "sqlparse>=0.6.0",
@@ -61,7 +61,7 @@ default-groups = ["dev", "docs"]
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
-    "ty>=0.0.79",
+    "ty>=0.0.80",
     "ruff>=0.16.6",
     "poethepoet>=0.48.0",
     "anyio>=4.14.2",
@@ -72,7 +72,7 @@ dev = [
     "httpx>=0.28.1",
     "httpx2>=2.10.0",
     "sqlmodel>=0.0.39",
-    "jinja2sql>=0.11.0",
+    "jinja2sql>=0.12.0",
     "pydantic>=2.13.4",
     "sqlparse>=0.6.0",
     "rich>=15.0.0",

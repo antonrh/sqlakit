@@ -7,6 +7,8 @@ from typing import Any, cast
 
 import pytest
 import sqlalchemy as sa
+from jinja2sql import Binder
+from markupsafe import Markup
 from pydantic import BaseModel
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
@@ -27,7 +29,7 @@ from sqlakit import (
 )
 from sqlakit import _sql as sql_module
 from sqlakit.orm import ModelMixin
-from sqlakit.sql import Templates
+from sqlakit.sql import Filter, Templates
 
 TEMPLATES = {
     "users/active.sql": """
@@ -304,6 +306,48 @@ def test_a_filter_that_has_to_be_awaited_is_refused() -> None:
 
     with pytest.raises(AsyncFilterError, match="rates"):
         Templates("app/sql", globals={"rates": money})
+
+    with pytest.raises(AsyncFilterError, match="money"):
+        Templates("app/sql", filters={"money": Filter(money, bind=True)})
+
+
+def test_a_bound_filter_writes_sql_and_binds_the_values_in_it(
+    templates: Path,
+) -> None:
+    def in_span(binder: Binder, span: tuple[str, str]) -> Markup:
+        start, end = span
+        return binder.raw(
+            f"BETWEEN {binder.bind('span', start)} AND {binder.bind('span', end)}"
+        )
+
+    db = Database(
+        "sqlite://",
+        engine_args={"poolclass": sa.StaticPool},
+        templates=Templates(
+            templates,
+            filters={
+                "in_span": Filter(in_span, bind=True),
+                # The same wrapper without the flag registers a plain filter.
+                "doubled": Filter(lambda value: value * 2),
+            },
+        ),
+    )
+
+    rows = db.sql.from_string(
+        "SELECT {{ n | doubled }} WHERE at {{ span | in_span }}",
+        n=1,
+        span=("2026-01-01", "2026-02-01"),
+    )
+    statement = cast("sa.TextClause", rows.statement)
+
+    assert str(statement) == "SELECT :n__1  WHERE at BETWEEN :span__2  AND :span__3 "
+    assert statement.compile().params == {
+        "n__1": 2,
+        "span__2": "2026-01-01",
+        "span__3": "2026-02-01",
+    }
+    assert repr(Filter(in_span, bind=True)).startswith("Filter(")
+    db.dispose()
 
 
 def test_scalars_read_the_first_column(db: Database) -> None:
