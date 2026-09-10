@@ -70,19 +70,14 @@ class Filter:
     Templates("app/sql", filters={"in_span": Filter(in_span, bind=True)})
     ```
 
-    ``bind=True`` calls the filter with the renderer as its first argument, so a
-    filter writing SQL of its own binds the values through it:
+    ``bind=True`` calls the filter with a jinja2sql `Binder` as its first
+    argument, so a filter writing SQL of its own binds the values through it:
 
     ```python
-    from jinja2sql import bind
-    from markupsafe import Markup
-
-
-    def in_span(renderer, span):
+    def in_span(binder, span):
         start, end = span
-        return Markup(
-            f"BETWEEN {bind(renderer, start, 'span')}"
-            f" AND {bind(renderer, end, 'span')}"
+        return binder.raw(
+            f"BETWEEN {binder.bind('span', start)} AND {binder.bind('span', end)}"
         )
     ```
 
@@ -116,7 +111,7 @@ class Templates:
 
     A filter is a plain function, whose return value is bound as one more value
     of the statement. `Filter(func, bind=True)` registers one that writes SQL of
-    its own instead, and is handed the renderer to bind the values inside it.
+    its own instead, and is handed a binder for the values inside it.
     """
 
     def __init__(
@@ -163,7 +158,7 @@ class Templates:
         renderer.register_filter("identifier", _identifier)
         for name, filter_ in self.filters.items():
             if isinstance(filter_, Filter):
-                renderer.register_filter(name, filter_.func, bind=filter_.bind)  # type: ignore[call-overload]
+                renderer.register_filter(name, filter_.func, bind=filter_.bind)
             else:
                 renderer.register_filter(name, filter_)
         return renderer

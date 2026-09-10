@@ -41,7 +41,7 @@ asyncio = [
     "sqlalchemy[asyncio]>=2.0.22",
 ]
 sql = [
-    "jinja2sql>=0.11.0",
+    "jinja2sql>=0.12.0",
 ]
 debug = [
     "sqlparse>=0.6.0",
@@ -72,7 +72,7 @@ dev = [
     "httpx>=0.28.1",
     "httpx2>=2.10.0",
     "sqlmodel>=0.0.39",
-    "jinja2sql>=0.11.0",
+    "jinja2sql>=0.12.0",
     "pydantic>=2.13.4",
     "sqlparse>=0.6.0",
     "rich>=15.0.0",

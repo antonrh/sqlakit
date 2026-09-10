@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import pytest
 import sqlalchemy as sa
-from jinja2sql import Jinja2SQL, bind
+from jinja2sql import Binder
 from markupsafe import Markup
 from pydantic import BaseModel
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -314,10 +314,10 @@ def test_a_filter_that_has_to_be_awaited_is_refused() -> None:
 def test_a_bound_filter_writes_sql_and_binds_the_values_in_it(
     templates: Path,
 ) -> None:
-    def in_span(renderer: Jinja2SQL, span: tuple[str, str]) -> Markup:
+    def in_span(binder: Binder, span: tuple[str, str]) -> Markup:
         start, end = span
-        return Markup(  # noqa: S704 - what a bound filter is for
-            f"BETWEEN {bind(renderer, start, 'span')} AND {bind(renderer, end, 'span')}"
+        return binder.raw(
+            f"BETWEEN {binder.bind('span', start)} AND {binder.bind('span', end)}"
         )
 
     db = Database(

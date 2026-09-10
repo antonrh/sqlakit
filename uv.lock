@@ -814,14 +814,14 @@ wheels = [
 
 [[package]]
 name = "jinja2sql"
-version = "0.11.0"
+version = "0.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d7/29/269d59679f47a1df99744a54cb57b7607d44640daeeb1343d58665c2f209/jinja2sql-0.11.0.tar.gz", hash = "sha256:e31902c66e5e238ecbd9b6d771eec0d40daa72cc74d1bd4ce0417e5e2d29757b", size = 87285, upload-time = "2026-04-16T12:43:46.211Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/24/8c/825890a641ae551b0042b4faa28110cda07719a7c7b3dc0d078976449e48/jinja2sql-0.12.0.tar.gz", hash = "sha256:a0b8a33d0a8671003efcd555ab955cf3262f6a3046f1285041e4a5fc7bf49349", size = 6238, upload-time = "2026-09-10T07:20:03.197Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e2/7b/15efe09576dd19d95da1343a77b9acadb1b44bfd295ecd207356252e8429/jinja2sql-0.11.0-py3-none-any.whl", hash = "sha256:97808137049050264338297806f15a665294ead8871f651909a5a6be90a82dc7", size = 6899, upload-time = "2026-04-16T12:43:47.215Z" },
+    { url = "https://files.pythonhosted.org/packages/32/59/51f1bfa692b5411723ebfe4988af11ba260570d28ae9ce82add16a2652bf/jinja2sql-0.12.0-py3-none-any.whl", hash = "sha256:ad494b8d2b989a60f3106af8ba42bb5177e64f5fdfcad7ba7cae83ab4f59d0d0", size = 6416, upload-time = "2026-09-10T07:20:01.932Z" },
 ]
 
 [[package]]
@@ -1663,7 +1663,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "jinja2sql", marker = "extra == 'sql'", specifier = ">=0.11.0" },
+    { name = "jinja2sql", marker = "extra == 'sql'", specifier = ">=0.12.0" },
     { name = "sqlalchemy", specifier = ">=2.0.22" },
     { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'asyncio'", specifier = ">=2.0.22" },
     { name = "sqlparse", marker = "extra == 'debug'", specifier = ">=0.6.0" },
@@ -1682,7 +1682,7 @@ dev = [
     { name = "flask", specifier = ">=3.1.3" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx2", specifier = ">=2.10.0" },
-    { name = "jinja2sql", specifier = ">=0.11.0" },
+    { name = "jinja2sql", specifier = ">=0.12.0" },
     { name = "oracledb", specifier = ">=4.0.2" },
     { name = "poethepoet", specifier = ">=0.48.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },

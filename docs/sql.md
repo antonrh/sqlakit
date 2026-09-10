@@ -299,22 +299,22 @@ as `total > :amount__1` with `1000` bound to it.
 
 A filter that writes SQL rather than a value, an operator carrying values of
 its own, needs the values bound as it builds them. Register it as
-`Filter(func, bind=True)`, and it is called with the renderer first:
+`Filter(func, bind=True)`, and it is called with a `Binder` first:
 
 ```python
 from datetime import date
 
-from jinja2sql import Jinja2SQL, bind
+from jinja2sql import Binder
 from markupsafe import Markup
 
 from sqlakit import Database
 from sqlakit.sql import Filter, Templates
 
 
-def in_span(renderer: Jinja2SQL, span: tuple[date, date]) -> Markup:
+def in_span(binder: Binder, span: tuple[date, date]) -> Markup:
     start, end = span
-    return Markup(
-        f"BETWEEN {bind(renderer, start, 'span')} AND {bind(renderer, end, 'span')}"
+    return binder.raw(
+        f"BETWEEN {binder.bind('span', start)} AND {binder.bind('span', end)}"
     )
 
 
@@ -329,14 +329,15 @@ SELECT * FROM orders WHERE placed_at {{ span | in_span }}
 ```
 
 The statement comes out as `placed_at BETWEEN :span__1 AND :span__2`, with a
-date bound to each. `bind(renderer, value, name)` binds one value and returns
-the placeholder standing for it, and the name is a prefix rather than the
+date bound to each. `binder.bind(name, value)` binds one value and returns the
+placeholder standing for it, and the name is a prefix rather than the
 parameter's name, so two values bound as `span` do not collide.
+`binder.quote(name)` is there for a table or column name.
 
-`Markup` marks the result as SQL. Without it the whole fragment is bound as one
-value, and the column is compared to the string `BETWEEN :span__1 ...`.
+`binder.raw()` marks the result as SQL. Without it the whole fragment is bound
+as one value, and the column is compared to the string `BETWEEN :span__1 ...`.
 
-The flag, the renderer and `bind` belong to
+The flag and the binder belong to
 [jinja2sql](https://github.com/antonrh/jinja2sql), so a filter written for it
 works here as it is. `Filter(func)` without the flag is the plain registration
 written out.
