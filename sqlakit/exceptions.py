@@ -38,6 +38,7 @@ __all__ = [
     "UnknownFieldError",
     "UnknownImportPathError",
     "UnorderedPageError",
+    "UnregisteredDatabaseError",
 ]
 
 
@@ -155,6 +156,17 @@ class UnknownDatabaseError(SQLAKitError, KeyError):
         super().__init__(
             f"No database is configured as {alias!r}. "
             f"Configured: {', '.join(map(repr, known)) or 'none'}."
+        )
+
+
+class UnregisteredDatabaseError(SQLAKitError, ValueError):
+    """Raised when a registry is handed a database it does not hold."""
+
+    def __init__(self, known: tuple[str, ...] = ()) -> None:
+        super().__init__(
+            "That database is not one this registry holds. Register it with "
+            "`register(alias, db)`, or name one of the databases it has: "
+            f"{', '.join(map(repr, known)) or 'none'}."
         )
 
 

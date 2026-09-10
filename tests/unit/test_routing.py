@@ -19,6 +19,7 @@ from sqlakit import (
     Router,
     UnknownDatabaseError,
     UnknownImportPathError,
+    UnregisteredDatabaseError,
 )
 from sqlakit._model import db_for
 from sqlakit.orm import ModelMixin, Query
@@ -154,6 +155,24 @@ def test_a_transaction_of_another_database_writes_there(databases: None) -> None
 def test_a_block_refuses_a_database_nobody_configured(databases: None) -> None:
     with pytest.raises(UnknownDatabaseError):
         sqlakit.db.using("nowhere")
+
+
+def test_a_block_takes_the_database_itself(databases: None) -> None:
+    _write("replica", "replica")
+    replica = sqlakit.db["replica"]
+
+    with sqlakit.db.using(replica).connect():
+        assert User.db is replica
+        assert User.query.one().name == "replica"
+
+    assert sqlakit.db.using(sqlakit.db["default"]).url == sqlakit.db["default"].url
+
+
+def test_a_block_refuses_a_database_the_registry_does_not_hold(
+    databases: None,
+) -> None:
+    with pytest.raises(UnregisteredDatabaseError):
+        sqlakit.db.using(Database("sqlite://"))
 
 
 def test_the_handle_is_the_database_it_stands_for(databases: None) -> None:
