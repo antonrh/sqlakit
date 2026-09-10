@@ -65,14 +65,14 @@ The statements are the same either way. `save()` decides when, which matters
 for a query later in the same block: it sees the change if the change was
 written first.
 
-The one place the timing costs anything is a loop that changes rows, where it
-is a write per row rather than one for all of them, eleven statements against
-two over ten rows. On a row nothing changed `save()` sends nothing, so a loop
-that only reads costs the same with it or without.
+The timing costs something in one place, a loop that changes rows: `save()` in
+the loop sends a statement per row, eleven over ten rows against two without
+it. For a row nothing changed `save()` sends nothing, so a loop that only reads
+costs the same with it or without.
 
-What happens at the end is the block's to decide. Inside `transaction()`,
-`save()` flushes and the transaction commits. Inside `connect()` or
-`autocommit()` there is no transaction to wait for, so `save()` commits:
+The block decides what happens at the end. Inside `transaction()`, `save()`
+flushes and the transaction commits. Inside `connect()` or `autocommit()` there
+is no transaction to wait for, so `save()` commits:
 
 ```python
 with db.connect():
@@ -183,11 +183,10 @@ with db.transaction():
     user.save()
 ```
 
-The method is explicit for a reason. `merge()` attaches the object to the
-current session, but whatever your instance holds overwrites the row it
-reads, so changes that someone else committed in the meantime are silently
-lost. The simplest way to stay safe is to load and save a model
-inside one block.
+`merge()` is a call of its own because it overwrites. The values your instance
+holds win over the row it reads, so a change someone else committed in the
+meantime is lost without a word. Load and save a model inside one block, and
+none of this comes up.
 
 ## Fields from a request
 
@@ -204,17 +203,16 @@ not what was non-empty. In `pydantic` that means `exclude_unset=True`.
 
 ## Relationships without a query
 
-`set_loaded()` gives a relationship a value and marks it as loaded:
+A relationship declared `lazy="raise"` raises when anything reads it, and the
+value is sometimes in memory already: the rows were selected in one go for a
+whole page, the row was created in this very block, or the instance outlived
+the block that loaded it, and nothing can load a relationship after that.
+`set_loaded()` hands the relationship that value and marks it as loaded:
 
 ```python
 campaign.set_loaded("esp", esp)  # the one this code just used
 campaign.set_loaded("thumbnail", None)  # known to be empty
 ```
-
-It helps when a relationship uses `lazy="raise"` but the data is already in
-memory: the rows were selected in one go for a whole page, the row was created
-in this very block, or the instance outlived the block that loaded it. Once
-the session closes, loading a relationship is no longer possible.
 
 The method describes what the database already contains. It doesn't change
 anything. The value isn't written on save, doesn't mark the instance as
@@ -308,9 +306,8 @@ A few things to know before you enable it:
 
 ## Model imports
 
-A model is added to the metadata when its module is imported, and not before.
-If your application keeps models next to the features they belong to, you
-have to import them all somewhere:
+If your application keeps models next to the features they belong to, import
+them all somewhere at startup:
 
 ```python
 from sqlakit import import_models
@@ -318,8 +315,9 @@ from sqlakit import import_models
 import_models("app")  # app/billing/models.py, app/users/models/*, ...
 ```
 
-If you forget to import some of them, nothing fails loudly. Here's where the
-breakage appears:
+A model reaches the metadata when its module is imported, and not before. A
+module nobody imports fails nowhere at first, and turns up later in three
+places:
 
 - `alembic revision --autogenerate` compares the metadata with the database,
   and a model nobody imported looks like a table to **drop**.
@@ -374,10 +372,11 @@ class Shipment(WarehouseBase):  # the same database, nothing to configure
 
 ## A declarative base of your own
 
-The `Model` that ships with the library is `ModelMixin` on a plain declarative
-base. If you need a base with settings of your own, mix `ModelMixin` into it
-and put the settings where `SQLAlchemy` reads them: `type_annotation_map` only
-works on the class that starts the hierarchy.
+To carry settings of your own on the base, mix `ModelMixin` into a declarative
+base you write. The `Model` this library ships is that mixin on a plain
+declarative base, and nothing else. Put the settings on the class that starts
+the hierarchy, where `SQLAlchemy` reads them: `type_annotation_map` works
+nowhere else.
 
 ```python
 import uuid
