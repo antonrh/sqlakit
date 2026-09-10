@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.14.0
+
+### Added
+
+- `sqlakit_db` returns several databases: a dict naming each, which is what a
+  marker picks by, or a list, where it picks by the name each database carries.
+  A project that builds its databases itself and pins its models with
+  `set_db()` hands them over as they are, rather than registering them in a
+  `Databases()` made for the fixture, which renamed them.
+- `assert_queries` as a fixture, watching whatever `sqlakit_db` returned, so a
+  project with no registry counts the queries of the database it names.
+  `sqlakit.testing.AssertQueries` is the type a test annotates it with.
+- `db.using()` on a registry takes the database itself, as
+  `recording(using=...)` and a query's `using()` already did. A database the
+  registry does not hold raises `UnregisteredDatabaseError` instead of saying
+  it is not configured.
+
+### Fixed
+
+- A savepoint a nested block takes is taken through the session that owns the
+  savepoints of that connection, so the two are released in the order they were
+  taken. A session committing inside such a block released the older savepoint,
+  and the database ended the block's with it: the block then failed on
+  `savepoint ... does not exist`, at its end or at the teardown after it. A
+  block whose savepoint that session has already released ends quietly, since
+  the commit kept its work.
+
+### Changed
+
+- A block binds its context without a generator, and a nested block, which
+  every call under a decorated function opens, takes 3.5 µs where it took 4.6.
+
 ## 0.13.0
 
 ### Added
