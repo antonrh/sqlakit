@@ -643,6 +643,10 @@ as it does in production. Inside it:
   is bound.
 - A nested `transaction(rollback=True)` takes a savepoint, so it undoes its own
   writes and leaves the test's alone.
+- A session of an enclosing block that commits mid-block, which a factory or a
+  handler does, releases the savepoint the inner block runs in. The work is
+  kept and the block ends quietly, because one session owns the savepoints of
+  a connection and releases them in the order they were taken.
 - A session that rolls *itself* back, through `session_factory()` and then
   `rollback()`, ends the whole transaction. The block then raises
   `TransactionRolledBackError`, because there is nothing left to commit.

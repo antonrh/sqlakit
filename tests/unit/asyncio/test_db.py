@@ -279,6 +279,27 @@ async def test_savepoint_lets_a_nested_block_fail_alone(
 
 
 @pytest.mark.anyio
+async def test_one_session_owns_the_savepoints_of_a_connection(
+    users_db: Database,
+) -> None:
+    # A savepoint released ends every savepoint taken after it, so the session
+    # holding one takes the blocks' savepoints too, and releases them in order.
+    async with users_db.transaction(rollback=True):
+        session = users_db.session
+        session.add(User(name="ada"))
+        await session.flush()
+
+        async with users_db.transaction():
+            users_db.session.add(User(name="grace"))
+            await session.commit()
+
+        assert await names(users_db.connection) == ["ada", "grace"]
+
+    async with users_db.connect() as conn:
+        assert await names(conn) == []
+
+
+@pytest.mark.anyio
 async def test_rollback_undoes_the_writes(users_db: Database) -> None:
     async with users_db.transaction(rollback=True):
         users_db.session.add(User(name="ada"))

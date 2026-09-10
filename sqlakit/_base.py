@@ -187,6 +187,9 @@ class _Outer(Generic[ConnectionT]):
             own. Two savepoint owners on one connection release each other's out
             of order, so only one may have it.
         scope: The block's own scope, whose session the savepoint is for.
+        owner: The scope whose session owns the savepoints of this connection.
+            A block below takes its savepoint through that session, so the two
+            are released in the order they were taken.
 
     """
 
@@ -195,6 +198,11 @@ class _Outer(Generic[ConnectionT]):
     savepoint: bool = False
     session_savepoint: bool = False
     scope: Any = None
+    owner: Any = None
+
+    def savepoint_owner(self) -> Any:  # noqa: ANN401 - a session of either API
+        """Return the session that owns the savepoints here, if one does."""
+        return None if self.owner is None else self.owner.session
 
 
 class BaseDatabase(Generic[ConnectionT, SessionT]):
@@ -641,6 +649,7 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         join_nested: bool = True,
         savepoint: bool = False,
         session_savepoint: bool = False,
+        owner: Any = None,  # noqa: ANN401 - the scope whose session owns them
     ) -> Iterator[_Outer[ConnectionT] | None]:
         """Make ``connection`` the outer one for this context. See `_Outer`.
 
@@ -654,6 +663,7 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
                 join_nested=join_nested,
                 savepoint=savepoint,
                 session_savepoint=session_savepoint,
+                owner=owner,
             )
             if connection is not None
             else None
