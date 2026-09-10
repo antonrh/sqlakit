@@ -563,8 +563,11 @@ returned. A project whose databases are its own needs no registry for `using`
 to name one:
 
 ```python
+from sqlakit.testing import AssertQueries
+
+
 @pytest.mark.db
-def test_the_report_reads_one_database(assert_queries: Any) -> None:
+def test_the_report_reads_one_database(assert_queries: AssertQueries) -> None:
     with assert_queries(1, using="reporting"):
         build_report()
 ```

@@ -145,6 +145,8 @@ plain declarative base.
 
 ::: sqlakit.testing.assert_queries
 
+::: sqlakit.testing.AssertQueries
+
 ::: sqlakit.Recording
 
 ::: sqlakit.Statement
@@ -226,6 +228,7 @@ The same classes, awaited.
 ::: sqlakit.SessionArgs
 
 ::: sqlakit.ValidationArgs
+
 
 ::: sqlakit.TemplatesLike
 

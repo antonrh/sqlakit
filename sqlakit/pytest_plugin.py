@@ -54,10 +54,11 @@ from ._registry import db as importable_db
 from .exceptions import UnknownDatabaseError
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Iterator, Sequence
-    from contextlib import AbstractContextManager
+    from collections.abc import AsyncIterator, Iterator, Sequence
 
     import sqlalchemy as sa
+
+    from .types import AssertQueries
 
 MARKER = "db"
 SYNC_FIXTURE = "_sqlakit_transaction"
@@ -284,12 +285,12 @@ def sqlakit_seed(sqlakit_schema: None) -> None:  # noqa: ARG001 - after the sche
 
 
 @pytest.fixture
-def assert_queries(sqlakit_db: Any) -> Callable[..., AbstractContextManager[Recording]]:  # noqa: ANN401
+def assert_queries(sqlakit_db: Any) -> AssertQueries:  # noqa: ANN401
     """Assert what a block asks of the databases under test.
 
     ```python
     @pytest.mark.db
-    def test_the_page_costs_two_queries(assert_queries):
+    def test_the_page_costs_two_queries(assert_queries: AssertQueries):
         with assert_queries(2):
             User.query.order_by("name").page(limit=10)
     ```
