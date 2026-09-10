@@ -286,6 +286,12 @@ def _sqlakit_transaction(
 ) -> Iterator[None]:
     with ExitStack() as stack:
         for block in _rolled_back(sqlakit_db, _asked_for(request)):
+            if hasattr(block, "__aenter__"):
+                pytest.fail(
+                    f"`{request.node.name}` runs on an async database, whose "
+                    "blocks are awaited. Write the test as `async def`.",
+                    pytrace=False,
+                )
             stack.enter_context(block)
         if _hidden(request):
             stack.enter_context(sqlakit_db.unbound())
@@ -301,7 +307,12 @@ async def _sqlakit_async_transaction(
 ) -> AsyncIterator[None]:
     async with AsyncExitStack() as stack:
         for block in _rolled_back(sqlakit_db, _asked_for(request)):
-            await stack.enter_async_context(block)
+            # A synchronous database under a test that awaits something else,
+            # a handler it runs in a worker thread among them.
+            if hasattr(block, "__aenter__"):
+                await stack.enter_async_context(block)
+            else:
+                stack.enter_context(block)
         if _hidden(request):
             stack.enter_context(sqlakit_db.unbound())
         with _reported(request, sqlakit_db):

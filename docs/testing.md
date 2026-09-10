@@ -104,6 +104,12 @@ Write it either way. Without it `anyio` runs each async test once per backend
 it finds installed, and `SQLAlchemy`'s async drivers need `asyncio`. The plugin
 needs nothing else: it awaits what has to be awaited.
 
+A test on a synchronous database can be `async def` as well, for a reason of
+its own: it awaits an HTTP client, or a handler it hands to a worker thread.
+The marker works there too. The plugin awaits the blocks an async database
+opens and enters the rest as they are, so what the database is decides, not
+how the test is written.
+
 ### Database selection
 
 The schema is created once for the session, on every database. A transaction is
