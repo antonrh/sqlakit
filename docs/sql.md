@@ -273,6 +273,74 @@ type:
 db.sql("events/at.sql", at=sa.bindparam("at", when, type_=sa.DateTime(timezone=True)))
 ```
 
+## Filters of your own
+
+For a value the template has to reshape before it goes in, register a filter.
+It is a plain function, and `filters=` gives it a name:
+
+```python
+from sqlakit import Database
+from sqlakit.sql import Templates
+
+
+def cents(value: float) -> int:
+    return round(value * 100)
+
+
+db = Database(DB_URL, templates=Templates(BASE_DIR, filters={"cents": cents}))
+```
+
+```sql
+SELECT * FROM orders WHERE total > {{ amount | cents }}
+```
+
+What the filter returns is bound like any other value, so the statement runs
+as `total > :amount__1` with `1000` bound to it.
+
+A filter that writes SQL rather than a value, an operator carrying values of
+its own, needs the values bound as it builds them. Register it as
+`Filter(func, bind=True)`, and it is called with the renderer first:
+
+```python
+from datetime import date
+
+from jinja2sql import Jinja2SQL, bind
+from markupsafe import Markup
+
+from sqlakit import Database
+from sqlakit.sql import Filter, Templates
+
+
+def in_span(renderer: Jinja2SQL, span: tuple[date, date]) -> Markup:
+    start, end = span
+    return Markup(
+        f"BETWEEN {bind(renderer, start, 'span')} AND {bind(renderer, end, 'span')}"
+    )
+
+
+db = Database(
+    DB_URL,
+    templates=Templates(BASE_DIR, filters={"in_span": Filter(in_span, bind=True)}),
+)
+```
+
+```sql
+SELECT * FROM orders WHERE placed_at {{ span | in_span }}
+```
+
+The statement comes out as `placed_at BETWEEN :span__1 AND :span__2`, with a
+date bound to each. `bind(renderer, value, name)` binds one value and returns
+the placeholder standing for it, and the name is a prefix rather than the
+parameter's name, so two values bound as `span` do not collide.
+
+`Markup` marks the result as SQL. Without it the whole fragment is bound as one
+value, and the column is compared to the string `BETWEEN :span__1 ...`.
+
+The flag, the renderer and `bind` belong to
+[jinja2sql](https://github.com/antonrh/jinja2sql), so a filter written for it
+works here as it is. `Filter(func)` without the flag is the plain registration
+written out.
+
 ## SQL inspection
 
 `statement` gives you the finished SQL, rendered and bound, without running

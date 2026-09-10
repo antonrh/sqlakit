@@ -42,7 +42,13 @@ else:
     except ImportError:  # pragma: no cover - pydantic is installed in CI
         BaseModel = TypeAdapter = None
 
-__all__ = ["BaseSQLQuery", "Templates", "require_pydantic", "templates_of"]
+__all__ = [
+    "BaseSQLQuery",
+    "Filter",
+    "Templates",
+    "require_pydantic",
+    "templates_of",
+]
 
 _preparer: ContextVar[Any] = ContextVar("sqlakit.identifier_preparer")
 """The preparer of the database a template is rendering for."""
@@ -55,6 +61,43 @@ QueryT = TypeVar("QueryT", bound="BaseSQLQuery[Any, Any]")
 
 PathLike = str | Path
 """Where templates are looked for: one directory, or several."""
+
+
+class Filter:
+    """A template filter, registered the way jinja2sql registers one.
+
+    ```python
+    Templates("app/sql", filters={"in_span": Filter(in_span, bind=True)})
+    ```
+
+    ``bind=True`` calls the filter with the renderer as its first argument, so a
+    filter writing SQL of its own binds the values through it:
+
+    ```python
+    from jinja2sql import bind
+    from markupsafe import Markup
+
+
+    def in_span(renderer, span):
+        start, end = span
+        return Markup(
+            f"BETWEEN {bind(renderer, start, 'span')}"
+            f" AND {bind(renderer, end, 'span')}"
+        )
+    ```
+
+    A plain function needs none of this and goes in as it is: whatever it
+    returns is bound as one more value of the statement.
+    """
+
+    __slots__ = ("bind", "func")
+
+    def __init__(self, func: Callable[..., Any], *, bind: bool = False) -> None:
+        self.func = func
+        self.bind = bind
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.func!r}, bind={self.bind})"
 
 
 class Templates:
@@ -70,6 +113,10 @@ class Templates:
     development server wants and a production one does not. ``filters`` and
     ``globals`` are handed to the Jinja environment, and are refused if they have
     to be awaited: rendering makes a string, in both APIs.
+
+    A filter is a plain function, whose return value is bound as one more value
+    of the statement. `Filter(func, bind=True)` registers one that writes SQL of
+    its own instead, and is handed the renderer to bind the values inside it.
     """
 
     def __init__(
@@ -77,7 +124,7 @@ class Templates:
         path: PathLike | Sequence[PathLike] = (),
         *,
         auto_reload: bool = False,
-        filters: Mapping[str, Callable[..., Any]] | None = None,
+        filters: Mapping[str, Callable[..., Any] | Filter] | None = None,
         globals: Mapping[str, Any] | None = None,  # noqa: A002
     ) -> None:
         self.paths = (
@@ -87,7 +134,8 @@ class Templates:
         self.filters = dict(filters or {})
         self.globals = dict(globals or {})
         for name, value in (*self.filters.items(), *self.globals.items()):
-            if iscoroutinefunction(value):
+            called = value.func if isinstance(value, Filter) else value
+            if iscoroutinefunction(called):
                 raise AsyncFilterError(name)
 
     def __repr__(self) -> str:
@@ -109,17 +157,15 @@ class Templates:
             autoescape=True,
         )
         environment.globals.update(self.globals)
-        # Always named parameters: what comes back is handed to `text()`,
-        # which reads `:name` and nothing else. The driver's own style is
-        # SQLAlchemy's business, and a template that picked one would be wrong
-        # on the next database.
+        # Named parameters: `text()` reads `:name` and nothing else.
         renderer = jinja2sql(environment, param_style=_placeholder)
-        # Ours rather than jinja2sql's: the preparer of the database in hand
-        # knows both how it quotes and when it has to, which is the difference
-        # between `"name"` and `name` on Oracle.
+        # Ours quotes through the dialect's preparer, jinja2sql's through one char.
         renderer.register_filter("identifier", _identifier)
         for name, filter_ in self.filters.items():
-            renderer.register_filter(name, filter_)
+            if isinstance(filter_, Filter):
+                renderer.register_filter(name, filter_.func, bind=filter_.bind)  # type: ignore[call-overload]
+            else:
+                renderer.register_filter(name, filter_)
         return renderer
 
     def render(
@@ -152,8 +198,7 @@ class Templates:
                     raise TemplateNotFoundError(source, self.paths) from None
         finally:
             _preparer.reset(token)
-        # Always a mapping: the parameters are named, and only a positional
-        # style would hand back a sequence.
+        # Named parameters come back as a mapping, positional ones as a sequence.
         return sql, cast("Mapping[str, Any]", params)
 
     def check(self) -> None:
