@@ -306,6 +306,21 @@ class BaseSQLQuery(Generic[RowT, DatabaseT]):
         return self.statement.execution_options(yield_per=size)
 
 
+def _context(
+    context: Mapping[str, Any] | None, values: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """Return the values a template renders with, however they were passed.
+
+    A caller handed a mapping passes it as ``context``, and the keywords beside
+    it win, so one value of a mapping can be replaced without copying it.
+    """
+    if not context:
+        return values
+    if not values:
+        return context
+    return {**context, **values}
+
+
 def _identifier(value: Any) -> Markup:  # noqa: ANN401
     """Return a name quoted the way the database in hand quotes one.
 

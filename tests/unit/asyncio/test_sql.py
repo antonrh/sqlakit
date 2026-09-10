@@ -85,6 +85,16 @@ async def test_a_template_reads_rows(db: Database) -> None:
 
 
 @pytest.mark.anyio
+async def test_the_context_is_a_mapping_or_keywords(db: Database) -> None:
+    async with db.connect():
+        rows = await db.sql("notes/by_text.sql", {"text": "c"}).all()
+        same = await db.sql("notes/by_text.sql", context={"text": "c"}).all()
+
+        assert [row.id for row in rows] == [3]
+        assert [row.id for row in same] == [3]
+
+
+@pytest.mark.anyio
 async def test_rows_come_back_as_the_type_asked_for(db: Database) -> None:
     async with db.connect():
         query = db.sql("notes/by_text.sql", text="c").typed(NoteRow)
