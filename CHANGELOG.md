@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.15.0
+
+### Added
+
+- A template's values go in as a mapping as well as by keyword, positionally or
+  as `context=`, so a caller holding a dict passes it rather than unpacking it
+  at every call site. A keyword beside a mapping replaces the value of that
+  name, the mapping is read rather than changed, and a value named `context`
+  is one of the mapping's own. `db.sql(...)`, `from_file`, `from_string` and a
+  query's `from_sql` take it.
+- `create()` takes a mapping beside its keywords, and `update()` takes keywords
+  beside its mapping: `create(payload)` and `update(team="green")` write what
+  `create(**payload)` and `update({"team": "green"})` wrote.
+
 ## 0.14.0
 
 ### Added
