@@ -112,6 +112,7 @@ def _elsewhere(frames: tuple[str, ...], skipped: tuple[str, ...]) -> bool:
 
 ConnectionT = TypeVar("ConnectionT")
 SessionT = TypeVar("SessionT")
+ValueT = TypeVar("ValueT")
 
 
 class _Lazy(Generic[ConnectionT]):
@@ -201,6 +202,27 @@ class _Outer(Generic[ConnectionT]):
     def savepoint_owner(self) -> Any:  # noqa: ANN401 - a session of either API
         """Return the session that owns the savepoints here, if one does."""
         return None if self.owner is None else self.owner.session
+
+
+class _Binding(Generic[ValueT]):
+    """A value bound to a context variable for as long as a block is open.
+
+    The generator `@contextmanager` builds costs more than the two calls it
+    saves, and every block binds two of these.
+    """
+
+    __slots__ = ("_token", "_value", "_var")
+
+    def __init__(self, var: ContextVar[Any], value: ValueT) -> None:
+        self._var = var
+        self._value = value
+
+    def __enter__(self) -> ValueT:
+        self._token = self._var.set(self._value)
+        return self._value
+
+    def __exit__(self, *_: object) -> None:
+        self._var.reset(self._token)
 
 
 class BaseDatabase(Generic[ConnectionT, SessionT]):
@@ -629,30 +651,26 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
             return None
         return scope
 
-    @contextmanager
     def _bind(
         self,
         connection: ConnectionT | None,
         checkout: _Lazy[ConnectionT] | None = None,
         *,
         autocommit: bool = False,
-    ) -> Iterator[_Scope[ConnectionT, SessionT]]:
+    ) -> _Binding[_Scope[ConnectionT, SessionT]]:
         """Bind a scope holding ``connection`` to the current context.
 
         Every block gets a scope, and so a session, of its own. Ending that
         session is left to the caller, which knows whether it takes an
         ``await``. A lazy block passes ``checkout`` instead of a connection.
         """
-        scope = _Scope[ConnectionT, SessionT](
+        # Unparameterized: subscripting a generic builds an alias and calls
+        # through it, and every block binds a scope.
+        scope: _Scope[ConnectionT, SessionT] = _Scope(
             connection, checkout=checkout, autocommit=autocommit
         )
-        token = self._scope.set(scope)
-        try:
-            yield scope
-        finally:
-            self._scope.reset(token)
+        return _Binding(self._scope, scope)
 
-    @contextmanager
     def _set_outer(
         self,
         connection: ConnectionT | None,
@@ -660,7 +678,7 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         join_nested: bool = True,
         savepoint: bool = False,
         owner: Any = None,  # noqa: ANN401 - the scope whose session owns them
-    ) -> Iterator[_Outer[ConnectionT] | None]:
+    ) -> _Binding[_Outer[ConnectionT] | None]:
         """Make ``connection`` the outer one for this context. See `_Outer`.
 
         ``None`` leaves this context without an outer transaction at all, as
@@ -677,11 +695,7 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
             if connection is not None
             else None
         )
-        token = self._outer.set(outer)
-        try:
-            yield outer
-        finally:
-            self._outer.reset(token)
+        return _Binding(self._outer, outer)
 
 
 DatabaseT = TypeVar("DatabaseT", bound="BaseDatabase[Any, Any]")
