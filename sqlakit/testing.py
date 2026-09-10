@@ -9,11 +9,12 @@ from . import db as sync_db
 from ._recording import Recording, check, require_expectation
 from .asyncio import db as async_db
 from .exceptions import UnknownDatabaseError
+from .types import AssertQueries
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-__all__ = ["assert_queries"]
+__all__ = ["AssertQueries", "assert_queries"]
 
 
 @contextmanager

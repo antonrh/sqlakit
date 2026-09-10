@@ -12,6 +12,7 @@ PROJECT = Path(__file__).parent.parent / "projects" / "plugin"
 REGISTERED = Path(__file__).parent.parent / "projects" / "registered"
 ONE = Path(__file__).parent.parent / "projects" / "one"
 BASES = Path(__file__).parent.parent / "projects" / "bases"
+SEVERAL = Path(__file__).parent.parent / "projects" / "several"
 CONFTEST = (PROJECT / "conftest.py").read_text()
 
 
@@ -43,6 +44,180 @@ def one(pytester: pytest.Pytester) -> pytest.Pytester:
 def bases(pytester: pytest.Pytester) -> pytest.Pytester:
     """A project with a declarative base for each of its databases."""
     return _copied(pytester, BASES)
+
+
+@pytest.fixture
+def several(pytester: pytest.Pytester) -> pytest.Pytester:
+    """A project on two databases of its own, with no registry between them."""
+    return _copied(pytester, SEVERAL)
+
+
+def test_a_list_of_databases_needs_no_registry(several: pytest.Pytester) -> None:
+    several.makepyfile(
+        test_both="""
+        import pytest
+
+        from app import Order, Report
+
+
+        @pytest.mark.db
+        def test_writes_both():
+            Order(what="a mug").save()
+            Report(name="quarterly").save()
+
+            assert (Order.query.count(), Report.query.count()) == (1, 1)
+
+
+        @pytest.mark.db
+        def test_both_rolled_back():
+            assert (Order.query.count(), Report.query.count()) == (0, 0)
+
+
+        @pytest.mark.db(using="reporting")
+        def test_one_of_them_alone():
+            from sqlakit import MissingSessionError
+
+            Report(name="only this").save()
+
+            assert Report.query.count() == 1
+            with pytest.raises(MissingSessionError):
+                Order.query.count()
+        """
+    )
+
+    several.runpytest_subprocess().assert_outcomes(passed=3)
+
+
+def test_a_list_names_the_databases_by_their_own_aliases(
+    several: pytest.Pytester,
+) -> None:
+    (several.path / "conftest.py").write_text(
+        """
+from collections.abc import Iterator
+
+import pytest
+
+from app import OrderModel, ReportModel, orders_db, reporting_db
+
+from sqlakit import Database
+
+
+@pytest.fixture(scope="session")
+def sqlakit_db() -> list[Database]:
+    return [orders_db, reporting_db]
+
+
+@pytest.fixture(scope="session")
+def sqlakit_schema(sqlakit_db: list[Database]) -> Iterator[None]:
+    with OrderModel.provisioned_tables(), ReportModel.provisioned_tables():
+        yield
+"""
+    )
+    several.makepyfile(
+        test_list="""
+        import pytest
+
+        from app import Order, Report
+
+
+        @pytest.mark.db(using="reporting")
+        def test_one_of_them_alone():
+            from sqlakit import MissingSessionError
+
+            Report(name="only this").save()
+
+            assert Report.query.count() == 1
+            with pytest.raises(MissingSessionError):
+                Order.query.count()
+        """
+    )
+
+    several.runpytest_subprocess().assert_outcomes(passed=1)
+
+
+def test_assert_queries_watches_the_databases_under_test(
+    several: pytest.Pytester,
+) -> None:
+    several.makepyfile(
+        test_counted="""
+        import pytest
+
+        from app import Order, Report
+
+
+        @pytest.mark.db
+        def test_both_databases_are_counted(assert_queries):
+            with assert_queries(2):
+                Order.query.count()
+                Report.query.count()
+
+
+        @pytest.mark.db
+        def test_one_of_them_by_name(assert_queries):
+            with assert_queries(1, using="reporting"):
+                Order.query.count()
+                Report.query.count()
+
+
+        @pytest.mark.db
+        def test_what_it_counted_is_what_ran(assert_queries):
+            with pytest.raises(AssertionError, match="expected 5"):
+                with assert_queries(5):
+                    Order.query.count()
+        """
+    )
+
+    several.runpytest_subprocess().assert_outcomes(passed=3)
+
+
+def test_an_alias_none_of_the_databases_has(several: pytest.Pytester) -> None:
+    several.makepyfile(
+        test_unknown="""
+        import pytest
+
+
+        @pytest.mark.db(using="nowhere")
+        def test_it():
+            pass
+        """
+    )
+
+    result = several.runpytest_subprocess()
+
+    result.assert_outcomes(errors=1)
+    result.stdout.fnmatch_lines(["*No database is configured as 'nowhere'*"])
+
+
+def test_several_databases_say_who_creates_their_tables(
+    several: pytest.Pytester,
+) -> None:
+    (several.path / "conftest.py").write_text(
+        """
+import pytest
+
+from app import orders_db, reporting_db
+
+
+@pytest.fixture(scope="session")
+def sqlakit_db():
+    return [orders_db, reporting_db]
+"""
+    )
+    several.makepyfile(
+        test_no_schema="""
+        import pytest
+
+
+        @pytest.mark.db
+        def test_it():
+            pass
+        """
+    )
+
+    result = several.runpytest_subprocess()
+
+    result.assert_outcomes(errors=1)
+    result.stdout.fnmatch_lines(["*the tables of each are the project's to create*"])
 
 
 def test_the_marker_alone_opens_every_database(project: pytest.Pytester) -> None:

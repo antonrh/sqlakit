@@ -52,6 +52,7 @@ from .exceptions import (
     UnknownImportPathError,
     UnknownOrderFieldError,
     UnorderedPageError,
+    UnregisteredDatabaseError,
 )
 from .types import (
     DatabaseConfig,
@@ -122,6 +123,7 @@ __all__ = [
     "UnknownImportPathError",
     "UnknownOrderFieldError",
     "UnorderedPageError",
+    "UnregisteredDatabaseError",
     "UrlParts",
     "ValidationArgs",
     "db",

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
 
 from typing_extensions import TypedDict
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+    from contextlib import AbstractContextManager
     from pathlib import Path
 
     import sqlalchemy as sa
@@ -13,9 +14,11 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Query, Session
     from sqlalchemy.pool import Pool
 
+    from ._recording import Recording
     from ._sql import Templates
 
 __all__ = [
+    "AssertQueries",
     "DatabaseConfig",
     "EngineArgs",
     "SessionArgs",
@@ -128,6 +131,32 @@ class QueryStats(TypedDict):
     duplicated: int
     databases: tuple[str, ...]
     label: str | None
+
+
+class AssertQueries(Protocol):
+    """The `assert_queries` fixture, for a test that annotates what it asks for.
+
+    Imported from `sqlakit.testing`, where the function of the same name is:
+
+    ```python
+    from sqlakit.testing import AssertQueries
+
+
+    @pytest.mark.db
+    def test_the_page_costs_two_queries(assert_queries: AssertQueries) -> None:
+        with assert_queries(2):
+            User.query.order_by("name").page(limit=10)
+    ```
+    """
+
+    def __call__(
+        self,
+        count: int | None = None,
+        *,
+        at_most: int | None = None,
+        duplicates: bool = True,
+        using: Any = None,  # noqa: ANN401 - an alias, or the database itself
+    ) -> AbstractContextManager[Recording]: ...
 
 
 class DatabaseConfig(UrlParts, total=False):

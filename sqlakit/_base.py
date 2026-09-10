@@ -52,6 +52,7 @@ from .exceptions import (
     MissingSessionError,
     RetryNotSupportedError,
     UnknownDatabaseError,
+    UnregisteredDatabaseError,
 )
 
 if TYPE_CHECKING:
@@ -928,8 +929,11 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         db._name = alias  # noqa: SLF001
         return db
 
-    def using(self, alias: str) -> _Using:
-        """Return the database under that alias, standing in for the default one.
+    def using(self, target: str | DatabaseT) -> _Using:
+        """Return that database, standing in for the default one.
+
+        Named or handed over, as `recording(using=...)` and a query's `using()`
+        take it.
 
         The block opens on it, and models that live on the default database resolve
         there for as long as it is open:
@@ -945,11 +949,30 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
 
         Raises:
             UnknownDatabaseError: if nothing is configured under that alias.
+            UnregisteredDatabaseError: if the database is not one this registry
+                holds, since the redirection works by the name it holds it under.
 
         """
+        alias = target if isinstance(target, str) else self._alias_of(target)
         if alias not in self:
             raise UnknownDatabaseError(alias, self.aliases)
         return _Using(self[alias], self._using, alias)
+
+    def _alias_of(self, db: DatabaseT) -> str:
+        """Return the alias this registry holds a database under.
+
+        Raises:
+            UnregisteredDatabaseError: if it holds it under none.
+
+        """
+        # A configured registry is the default database itself, and a
+        # registered one holds it.
+        if db is self or db is self._default:
+            return DEFAULT_ALIAS
+        for alias, held in self._aliased.items():
+            if held is db:
+                return alias
+        raise UnregisteredDatabaseError(self.aliases)
 
     def route(self, *routers: Router | RouterFunction | str) -> None:
         """Say which database a model lives on, for models that do not say it.
