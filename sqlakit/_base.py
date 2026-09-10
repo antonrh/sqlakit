@@ -183,20 +183,18 @@ class _Outer(Generic[ConnectionT]):
         connection: What blocks below reuse, with ``join_nested``.
         join_nested: Whether blocks below reuse that connection.
         savepoint: Whether nested blocks run as savepoints.
-        session_savepoint: Whether this block's session needs a savepoint of its
-            own. Two savepoint owners on one connection release each other's out
-            of order, so only one may have it.
-        scope: The block's own scope, whose session the savepoint is for.
+        scope: The block's own scope, whose session the connection is bound to.
         owner: The scope whose session owns the savepoints of this connection.
-            A block below takes its savepoint through that session, so the two
-            are released in the order they were taken.
+            That session joins with a savepoint of its own, and a block below
+            takes its savepoint through it, so the two are released in the
+            order they were taken. One owner per connection: two of them
+            release each other's savepoints out of order.
 
     """
 
     connection: ConnectionT
     join_nested: bool = True
     savepoint: bool = False
-    session_savepoint: bool = False
     scope: Any = None
     owner: Any = None
 
@@ -570,11 +568,24 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         outer = self._outer.get(None)
         if outer is None or outer.connection is not connection:
             return {}
-        if outer.session_savepoint and outer.scope is self._scope.get(None):
+        if outer.owner is not None and outer.owner is self._scope.get(None):
             return {"join_transaction_mode": "create_savepoint"}
         # Spelled out: SQLAlchemy's default would open a savepoint of its own
         # whenever the connection is already inside one.
         return {"join_transaction_mode": "rollback_only"}
+
+    @staticmethod
+    def _owns_savepoints(outer: _Outer[Any] | None, *, savepoint: bool) -> bool:
+        """Whether this block's session owns the savepoints of its connection.
+
+        A block rolled back at the end gives its session one, so a test or the
+        code under it may commit that session without ending the block. A block
+        that took a savepoint of its own does not: the owner stays the one
+        above, and blocks below take their savepoints through it.
+        """
+        if outer is None:
+            return savepoint
+        return not savepoint and outer.owner is not None
 
     def _plan(self, *, savepoint: bool, rollback: bool) -> tuple[_Outer | None, bool]:
         """Decide what a transaction joins, and whether it is a savepoint.
@@ -648,7 +659,6 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         *,
         join_nested: bool = True,
         savepoint: bool = False,
-        session_savepoint: bool = False,
         owner: Any = None,  # noqa: ANN401 - the scope whose session owns them
     ) -> Iterator[_Outer[ConnectionT] | None]:
         """Make ``connection`` the outer one for this context. See `_Outer`.
@@ -662,7 +672,6 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
                 connection,
                 join_nested=join_nested,
                 savepoint=savepoint,
-                session_savepoint=session_savepoint,
                 owner=owner,
             )
             if connection is not None

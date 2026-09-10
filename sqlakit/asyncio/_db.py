@@ -538,9 +538,6 @@ class Transaction(
                     await holder.connection()
                 else:
                     transaction = await connection.begin_nested()
-                # The block's savepoint isolates it; a session opened inside
-                # must not add a second one on the same connection.
-                session_savepoint = outer.session_savepoint and not savepoint
                 held_by = outer.owner
             else:
                 borrowed = self.db._scope_to_borrow()  # noqa: SLF001
@@ -552,7 +549,6 @@ class Transaction(
                         self.db.engine.connect()
                     )
                     transaction = await connection.begin()
-                session_savepoint = savepoint
                 held_by = None
             # Unwound in reverse: session, context, transaction, connection.
             stack.push_async_exit(self._finish(transaction, owner, connection))
@@ -561,16 +557,13 @@ class Transaction(
                     connection,
                     join_nested=self.join_nested,
                     savepoint=savepoint,
-                    session_savepoint=session_savepoint,
                     owner=held_by,
                 )
             )
             scope = stack.enter_context(self.db._bind(connection))  # noqa: SLF001
             if bound is not None:
                 bound.scope = scope
-                if session_savepoint:
-                    # This block's session is the one that owns the savepoints
-                    # of this connection, and blocks below take theirs from it.
+                if self.db._owns_savepoints(outer, savepoint=savepoint):  # noqa: SLF001
                     bound.owner = scope
             stack.push_async_exit(self._close_session(scope))
         except BaseException:
