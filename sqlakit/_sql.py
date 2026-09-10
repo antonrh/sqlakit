@@ -228,6 +228,7 @@ class BaseSQLQuery(Generic[RowT, DatabaseT]):
         inline: bool = False,
         type_: type[Any] | None = None,
         scalar: bool = False,
+        validation: Mapping[str, Any] | None = None,
     ) -> None:
         self.db = db
         self.source = source
@@ -235,6 +236,7 @@ class BaseSQLQuery(Generic[RowT, DatabaseT]):
         self.inline = inline
         self.type = type_
         self.scalar = scalar
+        self.validation = dict(validation or {})
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.source!r})"
@@ -277,6 +279,7 @@ class BaseSQLQuery(Generic[RowT, DatabaseT]):
             "inline": self.inline,
             "type_": self.type,
             "scalar": self.scalar,
+            "validation": self.validation,
             **changes,
         }
         return query(self.db, self.source, self.context, **arguments)
@@ -285,12 +288,17 @@ class BaseSQLQuery(Generic[RowT, DatabaseT]):
         if self.type is None:
             return rows
         adapter = _adapter(self.type)
-        return [adapter.validate_python(_as_python(row, self.type)) for row in rows]
+        return [
+            adapter.validate_python(_as_python(row, self.type), **self.validation)
+            for row in rows
+        ]
 
     def _shaped_one(self, row: Any) -> Any:  # noqa: ANN401
         if self.type is None or row is None:
             return row
-        return _adapter(self.type).validate_python(_as_python(row, self.type))
+        return _adapter(self.type).validate_python(
+            _as_python(row, self.type), **self.validation
+        )
 
     def _executable(self, *, size: int | None = None) -> Executable:
         if size is None:

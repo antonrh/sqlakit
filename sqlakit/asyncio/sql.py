@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import sqlalchemy as sa
+from typing_extensions import Unpack
 
 from sqlakit._sql import (
     BaseSQLQuery,
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Result, ScalarResult
     from sqlalchemy.ext.asyncio import AsyncConnection
     from sqlalchemy.sql import Executable
+
+    from sqlakit.types import ValidationArgs
 
     from ._db import Database
 
@@ -190,11 +193,13 @@ class SQLQuery(SQLRows[sa.Row[Any]]):
     same way and carry no further say, so each is asked once.
     """
 
-    def typed(self, type_: type[OtherT], /) -> SQLRows[OtherT]:
+    def typed(
+        self, type_: type[OtherT], /, **validation: Unpack[ValidationArgs]
+    ) -> SQLRows[OtherT]:
         """Read the rows as this type, one row at a time.
 
         ```python
-        await db.sql("reports/by_team.sql", since=since).typed(TeamReport).all()
+        db.sql("reports/by_team.sql", since=since).typed(TeamReport).all()
         ```
 
         The type says what one row becomes, and the terminal decides the container.
@@ -203,12 +208,21 @@ class SQLQuery(SQLRows[sa.Row[Any]]):
         from columns is given the whole row, and anything else is given the
         first column, so `SELECT count(*)` with `typed(int)` reads as an `int`.
 
+        Keyword arguments go to pydantic's `validate_python`, `context` and
+        `strict` among them:
+
+        ```python
+        db.sql("reports/by_team.sql").typed(TeamReport, context={"tz": tz}).all()
+        ```
+
         Raises:
             MissingDependencyError: if pydantic is not installed.
 
         """
         require_pydantic()
-        return cast("SQLRows[OtherT]", self._as(SQLRows, type_=type_))
+        return cast(
+            "SQLRows[OtherT]", self._as(SQLRows, type_=type_, validation=validation)
+        )
 
     def scalars(self) -> SQLRows[Any]:
         """Read the first column of each row instead of whole rows.

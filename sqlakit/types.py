@@ -21,6 +21,7 @@ __all__ = [
     "SessionArgs",
     "TemplatesLike",
     "UrlParts",
+    "ValidationArgs",
 ]
 
 # Quoted, so importing this module never reaches `Templates` and the
@@ -64,6 +65,22 @@ class EngineArgs(TypedDict, total=False, extra_items=Any):
     query_cache_size: int
     skip_autocommit_rollback: bool
     use_insertmanyvalues: bool
+
+
+class ValidationArgs(TypedDict, total=False, extra_items=Any):
+    """Keyword arguments accepted by [`pydantic.TypeAdapter.validate_python`](https://docs.pydantic.dev/latest/api/type_adapter/#pydantic.type_adapter.TypeAdapter.validate_python).
+
+    `typed()` hands them to pydantic for every row it reads. A keyword a later
+    pydantic adds is allowed too.
+    """
+
+    strict: bool | None
+    extra: Literal["allow", "ignore", "forbid"] | None
+    from_attributes: bool | None
+    context: Any
+    experimental_allow_partial: bool | Literal["off", "on", "trailing-strings"]
+    by_alias: bool | None
+    by_name: bool | None
 
 
 class SessionArgs(TypedDict, total=False, extra_items=Any):

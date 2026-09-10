@@ -101,6 +101,21 @@ validated by `pydantic`, which means a `pydantic` model, a dataclass, a
 `TypedDict` and a plain `int` all work, and a row of the wrong shape raises
 `ValidationError` right away instead of somewhere downstream.
 
+Keyword arguments go to `validate_python`, so a validator that reads a
+`context` gets one, and `strict`, `by_alias` and the rest of pydantic's
+arguments arrive as well:
+
+```python
+teams = (
+    db.sql("reports/by_team.sql", since=since)
+    .typed(TeamReport, context={"tenant": tenant})
+    .all()
+)
+```
+
+The same arguments reach every row the query reads, a batch of `chunks`
+included.
+
 A one-column row arrives as the value of that column:
 
 ```python
