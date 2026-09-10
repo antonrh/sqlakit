@@ -714,6 +714,41 @@ def test_savepoint_applies_to_the_blocks_below_it(users_db: Database) -> None:
             assert users_db.connection.in_nested_transaction()
 
 
+def test_one_session_owns_the_savepoints_of_a_connection(
+    users_db: Database,
+) -> None:
+    # A savepoint released ends every savepoint taken after it, so the session
+    # holding one takes the blocks' savepoints too, and releases them in order.
+    with users_db.transaction(rollback=True):
+        session = users_db.session
+        session.add(User(name="ada"))
+        session.flush()  # the session holds a savepoint from here
+
+        with users_db.transaction():
+            users_db.session.add(User(name="grace"))
+            session.commit()  # what a factory or a handler does mid-test
+
+        assert names(users_db.connection) == ["ada", "grace"]
+
+    with users_db.connect() as conn:
+        assert names(conn) == []
+
+
+def test_a_savepoint_the_session_released_ends_the_block_quietly(
+    users_db: Database,
+) -> None:
+    # The commit kept the block's work, so there is nothing left to say.
+    with users_db.transaction(rollback=True):
+        session = users_db.session
+        session.execute(sa.select(sa.literal(1)))
+
+        with users_db.transaction(savepoint=True):
+            users_db.session.add(User(name="ada"))
+            session.commit()
+
+        assert names(users_db.connection) == ["ada"]
+
+
 def test_commit_on_error_keeps_the_writes(users_db: Database) -> None:
     class Blocked(Exception):
         pass

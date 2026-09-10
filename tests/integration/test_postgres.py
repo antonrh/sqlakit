@@ -48,6 +48,24 @@ def _names(db: Database, statement: str) -> list[Any]:
         return list(conn.scalars(sa.text(statement)))
 
 
+def test_a_session_commit_inside_a_nested_block(events: Database) -> None:
+    # `RELEASE SAVEPOINT` ends every savepoint taken after it, so a session
+    # releasing its own while a block holds one used to leave the block with
+    # `InvalidSavepointSpecification` at its end.
+    with events.transaction(rollback=True):
+        session = events.session
+        Event(id=90, name="written by the test", at=datetime.now(UTC)).save()
+        session.flush()
+
+        with events.transaction():
+            Event(id=91, name="written by the handler", at=datetime.now(UTC)).save()
+            session.commit()
+
+        assert Event.query.count() == 7
+
+    assert _names(events, "SELECT name FROM events WHERE id IN (90, 91)") == []
+
+
 def test_a_statement_no_transaction_may_hold(events: Database) -> None:
     with events.autocommit() as conn:
         conn.execute(sa.text("VACUUM events"))

@@ -482,12 +482,26 @@ class Transaction(ContextDecorator, AbstractContextManager["sa.Connection"]):
             owner: Session | None = None
             if outer is not None:
                 connection = outer.connection
+                holder = outer.savepoint_owner()
                 # Without a savepoint the block only takes part in the
                 # transaction around it, which commits it.
-                transaction = connection.begin_nested() if savepoint else None
+                if not savepoint:
+                    transaction = None
+                elif holder is not None:
+                    # The session holding this connection's savepoints takes
+                    # this one too, so a commit of its own releases them in the
+                    # order they were taken.
+                    transaction = holder.begin_nested()
+                    # It opens the savepoint when it next reaches the
+                    # connection, which may be after this block has written
+                    # through a session of its own.
+                    holder.connection()
+                else:
+                    transaction = connection.begin_nested()
                 # The block's savepoint isolates it; a session opened inside
                 # must not add a second one on the same connection.
                 session_savepoint = outer.session_savepoint and not savepoint
+                held_by = outer.owner
             else:
                 borrowed = self.db._scope_to_borrow()  # noqa: SLF001
                 if borrowed is not None:
@@ -497,19 +511,25 @@ class Transaction(ContextDecorator, AbstractContextManager["sa.Connection"]):
                     connection = stack.enter_context(self.db.engine.connect())
                     owner, transaction = None, connection.begin()
                 session_savepoint = savepoint
+                held_by = None
             # Unwound in reverse: session, context, transaction, connection.
-            stack.push(self._finish(transaction, owner))
+            stack.push(self._finish(transaction, owner, connection))
             bound = stack.enter_context(
                 self.db._set_outer(  # noqa: SLF001
                     connection,
                     join_nested=self.join_nested,
                     savepoint=savepoint,
                     session_savepoint=session_savepoint,
+                    owner=held_by,
                 )
             )
             scope = stack.enter_context(self.db._bind(connection))  # noqa: SLF001
             if bound is not None:
                 bound.scope = scope
+                if session_savepoint:
+                    # This block's session is the one that owns the savepoints
+                    # of this connection, and blocks below take theirs from it.
+                    bound.owner = scope
             stack.push(self._close_session(scope))
         except BaseException:
             stack.close()
@@ -552,6 +572,7 @@ class Transaction(ContextDecorator, AbstractContextManager["sa.Connection"]):
         self,
         transaction: sa.Transaction | None,
         owner: Session | None = None,
+        connection: sa.Connection | None = None,
     ) -> Callable[..., None]:
         """Commit or roll back, unless this block only takes part in another."""
 
@@ -571,6 +592,10 @@ class Transaction(ContextDecorator, AbstractContextManager["sa.Connection"]):
             if transaction is None:
                 return
             if not transaction.is_active:
+                if connection is not None and connection.in_transaction():
+                    # The session of an enclosing block ended this savepoint by
+                    # committing, and the transaction around it holds the work.
+                    return
                 # Rolled back from inside the block. Say so, unless an
                 # exception is already on its way out with the reason.
                 if exc is None:
