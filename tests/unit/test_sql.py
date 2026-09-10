@@ -9,7 +9,7 @@ import pytest
 import sqlalchemy as sa
 from jinja2sql import Binder
 from markupsafe import Markup
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError, ValidationInfo, field_validator
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 from typing_extensions import TypedDict  # `typing`'s needs 3.12 to validate
@@ -235,6 +235,38 @@ def test_rows_come_back_as_the_type_asked_for(db: Database, type_: Any) -> None:
         row = db.sql("users/one.sql", name="b").typed(type_).one()
 
         assert row == type_(name="b", team="red")
+
+
+def test_validation_takes_the_arguments_pydantic_takes(db: Database) -> None:
+    class Member(BaseModel):
+        name: str
+        team: str
+
+        @field_validator("team")
+        @classmethod
+        def tenanted(cls, value: str, info: ValidationInfo) -> str:
+            return f"{(info.context or {}).get('tenant', 'none')}/{value}"
+
+    with db.connect():
+        rows = db.sql("users/active.sql", team="red")
+
+        tenanted = rows.typed(Member, context={"tenant": "acme"}).all()
+        without = rows.typed(Member).first()
+
+        assert [member.model_dump() for member in tenanted] == [
+            {"name": "b", "team": "acme/red"},
+            {"name": "d", "team": "acme/red"},
+        ]
+        assert without is not None
+        assert without.model_dump() == {"name": "b", "team": "none/red"}
+
+        # `strict` reaches it as well, and a chunk is validated the same way.
+        with pytest.raises(ValidationError):
+            db.sql("users/count.sql").typed(str, strict=True).one()
+        assert list(db.sql("users/all.sql").typed(OneName, context={}).chunks(3)) == [
+            [OneName(name="a"), OneName(name="b"), OneName(name="c")],
+            [OneName(name="d"), OneName(name="e")],
+        ]
 
 
 def test_the_type_is_the_row_and_the_terminal_is_the_container(db: Database) -> None:

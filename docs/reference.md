@@ -225,6 +225,8 @@ The same classes, awaited.
 
 ::: sqlakit.SessionArgs
 
+::: sqlakit.ValidationArgs
+
 ::: sqlakit.TemplatesLike
 
 ::: sqlakit.DatabaseConfig

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationInfo, field_validator
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.orm.exc import NoResultFound
 
@@ -92,6 +92,25 @@ async def test_rows_come_back_as_the_type_asked_for(db: Database) -> None:
         assert await query.one() == NoteRow(id=3, text="c")
         assert await query.first() == NoteRow(id=3, text="c")
         assert await query.all() == [NoteRow(id=3, text="c")]
+
+
+@pytest.mark.anyio
+async def test_validation_takes_the_arguments_pydantic_takes(db: Database) -> None:
+    class Marked(BaseModel):
+        id: int
+        text: str
+
+        @field_validator("text")
+        @classmethod
+        def marked(cls, value: str, info: ValidationInfo) -> str:
+            return f"{value}{(info.context or {}).get('mark', '')}"
+
+    async with db.connect():
+        query = db.sql("notes/by_text.sql", text="c")
+
+        row = await query.typed(Marked, context={"mark": "!"}).one()
+
+        assert row.model_dump() == {"id": 3, "text": "c!"}
 
 
 @pytest.mark.anyio
