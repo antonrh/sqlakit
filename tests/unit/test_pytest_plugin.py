@@ -671,6 +671,80 @@ def sqlakit_base():
     project.runpytest_subprocess().assert_outcomes(passed=2)
 
 
+def test_an_async_test_rolls_back_a_synchronous_database(
+    project: pytest.Pytester,
+) -> None:
+    """A test awaits for reasons of its own, and the database stays sync."""
+    project.makepyfile(
+        test_awaited="""
+        import anyio
+        import pytest
+
+        from app import User
+
+
+        @pytest.fixture(scope="session", autouse=True)
+        def anyio_backend():
+            return "asyncio"
+
+
+        @pytest.mark.db
+        async def test_writes():
+            User(name="ada").save()
+            await anyio.sleep(0)  # the reason the test is a coroutine at all
+            assert User.query.count() == 1
+
+
+        @pytest.mark.db
+        async def test_rolled_back():
+            assert User.query.count() == 0
+        """
+    )
+
+    project.runpytest_subprocess().assert_outcomes(passed=2)
+
+
+def test_a_sync_test_on_an_async_database_says_to_await_it(
+    project: pytest.Pytester,
+) -> None:
+    (project.path / "app.py").write_text(
+        """
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from sqlakit.asyncio import Database
+from sqlakit.asyncio.orm import ModelMixin
+
+db = Database("sqlite+aiosqlite:///./awaited.db")
+
+
+class Model(ModelMixin, DeclarativeBase):
+    __db__ = db
+
+
+class User(Model):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str]
+"""
+    )
+    project.makepyfile(
+        test_written_sync="""
+        import pytest
+
+
+        @pytest.mark.db
+        def test_it():
+            pass
+        """
+    )
+
+    result = project.runpytest_subprocess()
+
+    result.assert_outcomes(errors=1)
+    result.stdout.fnmatch_lines(["*runs on an async database*async def*"])
+
+
 def test_a_project_may_name_the_database_instead_of_the_base(
     project: pytest.Pytester,
 ) -> None:
