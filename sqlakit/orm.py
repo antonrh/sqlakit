@@ -29,6 +29,7 @@ from ._query import (
     BaseQuery,
     CursorPage,
     Page,
+    merged,
     one_row,
     one_row_or_none,
     orderable,
@@ -334,19 +335,28 @@ class Query(BaseQuery[ModelT]):
             scalar=len(columns) == 1,
         )
 
-    def create(self, **values: Any) -> ModelT:  # noqa: ANN401
+    def create(
+        self,
+        values: Mapping[str, Any] | None = None,
+        /,
+        **fields: Any,  # noqa: ANN401
+    ) -> ModelT:
         """Write a new row, and return it as an instance.
 
         ```python
         user = User.query.create(name="ada", team="red")
+        user = User.query.create(payload.model_dump())
         ```
+
+        The fields are keywords, a mapping, or both, where a keyword replaces
+        the value of that name.
 
         The row goes through the session, so defaults, relationships and the identity
         map behave as they do for a model that saves itself. What it adds is a write
         that needs no model layer: `Query(User, db).create(...)` works on any mapped
         class.
         """
-        instance = self.model(**values)
+        instance = self.model(**merged(values, fields))
         self.db.session.add(instance)
         self._persist()
         return instance
@@ -367,8 +377,16 @@ class Query(BaseQuery[ModelT]):
         self._persist()
         return len(rows)
 
-    def update(self, values: Mapping[str, Any]) -> int:
+    def update(
+        self,
+        values: Mapping[str, Any] | None = None,
+        /,
+        **fields: Any,  # noqa: ANN401
+    ) -> int:
         """Write these values to every matching row, and return how many.
+
+        A mapping, keywords, or both: `update({"team": "green"})` and
+        `update(team="green")` write the same statement.
 
         One statement, so the session's objects are updated from the database
         rather than in memory. Only the narrowing carries over.
@@ -377,7 +395,7 @@ class Query(BaseQuery[ModelT]):
             BulkQueryError: if the query carries anything a statement drops.
 
         """
-        result = self.db.session.execute(self._update_statement(values))
+        result = self.db.session.execute(self._update_statement(merged(values, fields)))
         self._persist()
         return cast("CursorResult[Any]", result).rowcount
 

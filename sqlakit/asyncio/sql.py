@@ -5,11 +5,11 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 import sqlalchemy as sa
 from typing_extensions import Unpack
 
+from sqlakit._query import merged
 from sqlakit._sql import (
     BaseSQLQuery,
     Filter,
     Templates,
-    _context,
     require_pydantic,
     templates_of,
 )
@@ -84,7 +84,7 @@ class SQL:
         the same values as a mapping, for values a caller was handed rather than
         wrote. A value named `context` lives in that mapping.
         """
-        return SQLQuery(self.db, template, _context(context, values))
+        return SQLQuery(self.db, template, merged(context, values))
 
     def from_string(
         self,
@@ -106,7 +106,7 @@ class SQL:
         rendering says so rather than reaching the driver. It needs no
         ``templates=``.
         """
-        return SQLQuery(self.db, source, _context(context, values), inline=True)
+        return SQLQuery(self.db, source, merged(context, values), inline=True)
 
     def from_statement(self, statement: Executable) -> SQLQuery:
         """Read the rows of a statement built with SQLAlchemy.

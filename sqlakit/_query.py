@@ -112,6 +112,21 @@ RowT = TypeVar("RowT")
 RowT_co = TypeVar("RowT_co", covariant=True)
 
 
+def merged(
+    mapping: Mapping[str, Any] | None, keywords: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """Return the values a call was given, however they were passed.
+
+    A caller handed a mapping passes it as it is, and the keywords beside it
+    win, so one value can be replaced without copying the mapping.
+    """
+    if not mapping:
+        return keywords
+    if not keywords:
+        return mapping
+    return {**mapping, **keywords}
+
+
 class CaseInsensitive(sa.ColumnElement[Any]):
     """A column compared without regard to case, however the dialect does it.
 
