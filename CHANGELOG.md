@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.13.0
+
+### Added
+
+- `Filter(func, bind=True)` registers a template filter that writes SQL of its
+  own and binds the values inside it, where a plain function returns one value
+  and has it bound. The filter is called with a `jinja2sql` `Binder`, so one
+  written for `jinja2sql` works here as it is. The `sql` extra now needs
+  `jinja2sql>=0.12.0`, which is where the binder arrived.
+- `typed()` takes the keywords `pydantic` takes: `context` for a validator that
+  reads one, and `strict`, `by_alias` and the rest beside it. They reach every
+  row the query reads, a batch of `chunks` included, and `ValidationArgs` lists
+  them.
+
+### Fixed
+
+- A test written `async def` over a synchronous database rolls back as a
+  synchronous one does. The plugin chose the transaction fixture by whether the
+  test was a coroutine and then awaited every block, so a test that awaits
+  something other than the database, a handler it runs in a worker thread among
+  them, failed at setup with `TypeError: ... does not support the asynchronous
+  context manager protocol`. A `def` test on an async database says to write it
+  as `async def`, rather than failing on the same protocol from the other side.
+
+### Documentation
+
+- Every page leads with the reader's case and the line to type, and explains
+  the mechanism after the example: the database page, getting started, queries,
+  the worker-thread section on the context page, and the sections introducing
+  `set_loaded()`, `import_models()` and `sql.check()`.
+
 ## 0.12.0
 
 ### Added
