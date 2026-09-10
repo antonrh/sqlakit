@@ -216,7 +216,7 @@ def sqlakit_db() -> Databases:
 
 
 @pytest.fixture(scope="session")
-def sqlakit_schema(sqlakit_db: Databases) -> None:
+def sqlakit_schema(sqlakit_db: Databases) -> Iterator[None]:
     with Model.provisioned_tables(), WarehouseModel.provisioned_tables():
         yield
 ```
@@ -225,6 +225,54 @@ The bases share the registry, and each says where its models live: `Model`
 takes the default and `WarehouseModel` carries `__db__ = "warehouse"`. The
 marker opens every database of the registry, and `using` still narrows it to
 one.
+
+### Databases with no registry between them
+
+A project that builds its databases itself, and pins its models to them with
+`set_db()`, names them in the fixture:
+
+```python title="conftest.py"
+from collections.abc import Iterator
+
+import pytest
+
+from sqlakit import Database
+
+from app.db import orders_db, reporting_db
+from app.models import OrderModel, ReportModel
+
+
+@pytest.fixture(scope="session")
+def sqlakit_db() -> dict[str, Database]:
+    return {"orders": orders_db, "reporting": reporting_db}
+
+
+@pytest.fixture(scope="session")
+def sqlakit_schema(sqlakit_db: dict[str, Database]) -> Iterator[None]:
+    with OrderModel.provisioned_tables(), ReportModel.provisioned_tables():
+        yield
+```
+
+The marker opens a transaction on each and rolls them all back, and `using`
+picks one by its key:
+
+```python
+@pytest.mark.db(using="reporting")
+def test_the_quarterly_report() -> None: ...
+```
+
+A list works as well, `[orders_db, reporting_db]`. There `using` picks by the
+name each database carries, so build them as
+`Database(url, alias="reporting")`. Two unnamed databases are both `default`,
+and a marker cannot pick between them: the plugin says so rather than guessing.
+
+The keys of a dict name the databases for the marker alone. A recorded
+statement carries the name its database was built with, whatever the fixture
+calls it, so name a database you want to tell apart in a report.
+
+The tables of each database are the project's to create, as above. A dict or a
+list with `sqlakit_metadata` instead creates the same tables on every database,
+as a suite over shards wants.
 
 ### Hidden blocks
 
@@ -508,6 +556,17 @@ with db.assert_queries(duplicates=False):
     ...  # no repeats allowed, catches N+1
 with db.assert_queries(3, duplicates=False):
     ...
+```
+
+The plugin has a fixture of the same name, which watches whatever `sqlakit_db`
+returned. A project whose databases are its own needs no registry for `using`
+to name one:
+
+```python
+@pytest.mark.db
+def test_the_report_reads_one_database(assert_queries: Any) -> None:
+    with assert_queries(1, using="reporting"):
+        build_report()
 ```
 
 `db.assert_queries` watches the database it was called on. To watch several at
