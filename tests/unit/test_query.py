@@ -804,6 +804,27 @@ def test_create_writes_a_row_and_returns_it(db: Database) -> None:
         assert User.query.count() == 6
 
 
+def test_create_and_update_take_a_mapping_too(db: Database) -> None:
+    payload = {"id": 6, "name": "f", "team": "green"}
+
+    with db.transaction():
+        user = User.query.create(payload)
+
+        assert (user.id, user.name, user.team) == (6, "f", "green")
+
+        # A keyword beside a mapping replaces the value of that name, and the
+        # mapping the caller holds is left as it was.
+        other = User.query.create({**payload, "id": 7}, name="g")
+
+        assert (other.id, other.name) == (7, "g")
+        assert payload == {"id": 6, "name": "f", "team": "green"}
+
+        assert User.query.where(User.id == 6).update(team="red") == 1
+        assert User.query.where(User.id == 7).update({"team": "blue"}) == 1
+        assert User.query.get_one(6).team == "red"
+        assert User.query.get_one(7).team == "blue"
+
+
 def test_create_many_writes_one_statement(db: Database) -> None:
     rows = [
         {"id": 7, "name": "g", "team": "red"},

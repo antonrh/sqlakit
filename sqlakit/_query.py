@@ -112,6 +112,21 @@ RowT = TypeVar("RowT")
 RowT_co = TypeVar("RowT_co", covariant=True)
 
 
+def merged(
+    mapping: Mapping[str, Any] | None, keywords: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """Return the values a call was given, however they were passed.
+
+    A caller handed a mapping passes it as it is, and the keywords beside it
+    win, so one value can be replaced without copying the mapping.
+    """
+    if not mapping:
+        return keywords
+    if not keywords:
+        return mapping
+    return {**mapping, **keywords}
+
+
 class CaseInsensitive(sa.ColumnElement[Any]):
     """A column compared without regard to case, however the dialect does it.
 
@@ -466,18 +481,26 @@ class BaseQuery(Generic[ModelT]):
         )
         return query
 
-    def from_sql(self, template: str, /, **context: Any) -> Self:  # noqa: ANN401
+    def from_sql(
+        self,
+        template: str,
+        /,
+        context: Mapping[str, Any] | None = None,
+        **values: Any,  # noqa: ANN401
+    ) -> Self:
         """Take the rows of a SQL template, mapped onto the model.
 
         ```python
         User.query.from_sql("users/active.sql", team="red").all()
+        User.query.from_sql("users/active.sql", context=filters).all()
         ```
 
         Read from the database this query runs on, and rendered for its dialect. As
         with `from_statement`, nothing can be added afterwards and
         ``__query_filter__`` is not applied.
         """
-        return self.from_statement(self.db.sql.from_file(template, **context).statement)
+        rows = self.db.sql.from_file(template, context, **values)
+        return self.from_statement(rows.statement)
 
     def where(self, *criteria: _ColumnExpressionArgument[bool]) -> Self:
         """Narrow the rows, as `Select.where` does."""

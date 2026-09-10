@@ -81,8 +81,19 @@ db = Database(
 rows = db.sql("reports/by_team.sql", since=since).all()
 ```
 
-Keyword arguments go into the template context. Rows arrive as `SQLAlchemy`
-`Row` objects, which you can read by name or by position.
+Keyword arguments go into the template context. Values a caller was handed
+rather than wrote go in as a mapping, and a keyword beside it replaces one of
+them:
+
+```python
+rows = db.sql("reports/by_team.sql", filters).all()
+rows = db.sql("reports/by_team.sql", filters, since=since).all()
+rows = db.sql("reports/by_team.sql", context=filters).all()
+```
+
+The mapping is read, never changed, and a value named `context` is one of its
+own. Rows arrive as `SQLAlchemy` `Row` objects, which you can read by name or
+by position.
 
 If you'd rather get rows as a type of your own, call `typed`:
 

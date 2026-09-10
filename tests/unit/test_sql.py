@@ -161,6 +161,33 @@ def test_sql_written_out_here(db: Database) -> None:
         assert names.scalars().all() == ["b", "d"]
 
 
+def test_the_context_is_a_mapping_or_keywords(db: Database) -> None:
+    filters = {"team": "red"}
+
+    with db.connect():
+        assert db.sql("users/active.sql", filters).scalars().all() == [2, 4]
+        assert db.sql("users/active.sql", context=filters).scalars().all() == [2, 4]
+        assert db.sql.from_file("users/active.sql", filters).scalars().all() == [2, 4]
+
+        # A keyword beside a mapping replaces the value of that name, and a
+        # value named `context` is one of the mapping's own.
+        assert db.sql("users/active.sql", filters, team="blue").scalars().all() == [
+            1,
+            3,
+            5,
+        ]
+        named = db.sql.from_string("SELECT {{ context }}", context={"context": 7})
+        assert named.scalars().one() == 7
+        assert filters == {"team": "red"}
+
+
+def test_a_query_reads_a_template_with_a_mapping(db: Database) -> None:
+    with db.connect():
+        rows = User.query.from_sql("users/active.sql", {"team": "red"}).all()
+
+        assert [row.name for row in rows] == ["b", "d"]
+
+
 def test_a_list_is_a_list_to_the_database(db: Database) -> None:
     with db.connect():
         # A bare list expands on this side, `| inclause` on the template's.

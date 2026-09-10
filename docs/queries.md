@@ -638,10 +638,13 @@ db.query(User).only_columns(User.name).order_by("created_at.desc").all()
 ```python
 with db.transaction():
     user = db.query(User).create(name="ada", team="red")
+    user = db.query(User).create(payload.model_dump())  # or a mapping
 ```
 
-The row goes through the session, so defaults, relationships and the identity
-map behave the same as for anything else added to it. Any mapped class works.
+The fields are keywords, a mapping, or both, where a keyword replaces the
+value of that name. The row goes through the session, so defaults,
+relationships and the identity map behave the same as for anything else added
+to it. Any mapped class works.
 
 `create_many` writes a list of rows in one statement, without creating
 instances:
@@ -656,6 +659,7 @@ with db.transaction():
 ```python
 with db.transaction():
     db.query(User).where(User.team == "red").update({"team": "green"})
+    db.query(User).where(User.team == "red").update(team="green")  # the same
     db.query(User).where(User.is_active.is_(False)).delete()
 ```
 

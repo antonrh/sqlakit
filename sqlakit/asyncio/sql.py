@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 import sqlalchemy as sa
 from typing_extensions import Unpack
 
+from sqlakit._query import merged
 from sqlakit._sql import (
     BaseSQLQuery,
     Filter,
@@ -14,7 +15,7 @@ from sqlakit._sql import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import AsyncIterator, Mapping, Sequence
 
     from sqlalchemy.engine import Result, ScalarResult
     from sqlalchemy.ext.asyncio import AsyncConnection
@@ -50,27 +51,48 @@ class SQL:
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.db!r})"
 
-    def __call__(self, template: str, /, **context: Any) -> SQLQuery:  # noqa: ANN401
+    def __call__(
+        self,
+        template: str,
+        /,
+        context: Mapping[str, Any] | None = None,
+        **values: Any,  # noqa: ANN401
+    ) -> SQLQuery:
         """Read the rows of a template. Short for `from_file`.
 
         ```python
         await db.sql("users/active.sql", team="red").all()
         ```
         """
-        return self.from_file(template, **context)
+        return self.from_file(template, context, **values)
 
-    def from_file(self, template: str, /, **context: Any) -> SQLQuery:  # noqa: ANN401
+    def from_file(
+        self,
+        template: str,
+        /,
+        context: Mapping[str, Any] | None = None,
+        **values: Any,  # noqa: ANN401
+    ) -> SQLQuery:
         """Read the rows of a template kept under the database's ``templates=``.
 
         ```python
         await db.sql.from_file("users/active.sql", team="red").all()
+        await db.sql.from_file("users/active.sql", context=filters).all()
         ```
 
-        The keyword arguments are the template's context.
+        The keyword arguments are the template's context, and ``context`` takes
+        the same values as a mapping, for values a caller was handed rather than
+        wrote. A value named `context` lives in that mapping.
         """
-        return SQLQuery(self.db, template, context)
+        return SQLQuery(self.db, template, merged(context, values))
 
-    def from_string(self, source: str, /, **context: Any) -> SQLQuery:  # noqa: ANN401
+    def from_string(
+        self,
+        source: str,
+        /,
+        context: Mapping[str, Any] | None = None,
+        **values: Any,  # noqa: ANN401
+    ) -> SQLQuery:
         """Read the rows of SQL written out here rather than kept in a file.
 
         ```python
@@ -79,11 +101,12 @@ class SQL:
         )
         ```
 
-        Values are named in `{{ }}` and passed by keyword, as in a template. A
-        `:name` or a `?` binds nothing here, and rendering says so rather than
-        reaching the driver. It needs no ``templates=``.
+        Values are named in `{{ }}` and passed by keyword, or as the ``context``
+        mapping, as in a template. A `:name` or a `?` binds nothing here, and
+        rendering says so rather than reaching the driver. It needs no
+        ``templates=``.
         """
-        return SQLQuery(self.db, source, context, inline=True)
+        return SQLQuery(self.db, source, merged(context, values), inline=True)
 
     def from_statement(self, statement: Executable) -> SQLQuery:
         """Read the rows of a statement built with SQLAlchemy.
