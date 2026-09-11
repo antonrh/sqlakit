@@ -30,6 +30,8 @@ from sqlalchemy.orm import (
     selectinload,
     subqueryload,
     undefer,
+    undefer_group,
+    with_expression,
 )
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 from sqlalchemy.sql import operators
@@ -711,6 +713,30 @@ class BaseQuery(Generic[ModelT]):
         wants the column after all.
         """
         return self.options(*(undefer(column) for column in columns))
+
+    def undefer_group(self, name: str) -> Self:
+        """Load the columns a model defers under this group name.
+
+        ```python
+        db.query(Post).undefer_group("body").all()
+        ```
+
+        The group is the one `mapped_column(deferred_group="body")` names, for
+        the columns a read wants together or not at all.
+        """
+        return self.options(undefer_group(name))
+
+    def with_expression(self, key: Any, expression: Any) -> Self:  # noqa: ANN401
+        """Give a `query_expression()` attribute its value for this read.
+
+        ```python
+        db.query(Post).with_expression(Post.comments, _comment_count()).all()
+        ```
+
+        The attribute holds what this statement selects into it, so a count or
+        a window function arrives on the instance rather than beside it.
+        """
+        return self.options(with_expression(key, expression))
 
     def with_for_update(
         self,

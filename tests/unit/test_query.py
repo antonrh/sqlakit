@@ -16,6 +16,7 @@ from sqlalchemy.orm import (
     foreign,
     joinedload,
     mapped_column,
+    query_expression,
     relationship,
 )
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
@@ -686,12 +687,24 @@ class Post(Base):
     title: Mapped[str]
     body: Mapped[str]
     notes: Mapped[str] = mapped_column(deferred=True, default="")
+    draft: Mapped[str] = mapped_column(
+        deferred=True, deferred_group="aside", default=""
+    )
+    seen: Mapped[str] = mapped_column(deferred=True, deferred_group="aside", default="")
+    words: Mapped[int] = query_expression()
 
 
 @pytest.fixture
 def posts(db: Database) -> Database:
     with db.transaction():
-        Post(id=1, title="one", body="a long body", notes="kept aside").save()
+        Post(
+            id=1,
+            title="one",
+            body="a long body",
+            notes="kept aside",
+            draft="a draft",
+            seen="yesterday",
+        ).save()
     return db
 
 
@@ -717,6 +730,23 @@ def test_a_deferred_column_is_read_when_it_is_touched(posts: Database) -> None:
         assert record.count == 1
         assert post.body == "a long body"
         assert record.count == 2  # the column came on its own statement
+
+
+def test_undefer_group_reads_the_columns_of_one_group(posts: Database) -> None:
+    with posts.connect(), posts.recording() as record:
+        post = posts.query(Post).undefer_group("aside").one()
+
+        assert (post.draft, post.seen) == ("a draft", "yesterday")
+        assert record.count == 1  # both came with the row
+
+
+def test_with_expression_puts_a_value_on_the_instance(posts: Database) -> None:
+    with posts.connect():
+        counted = sa.func.length(Post.body)
+
+        post = posts.query(Post).with_expression(Post.words, counted).one()
+
+        assert post.words == len("a long body")
 
 
 def test_undefer_reads_a_column_the_model_defers(posts: Database) -> None:

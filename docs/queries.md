@@ -116,7 +116,8 @@ active.filter_by(team="red").first()  # or filter_by(request.query_params)
 | `order_by("name.desc")` | ordering by a string from the request |
 | `group_by`, `having` | aggregate |
 | `options`, `joinedload`, `selectinload`, `subqueryload`, `contains_eager` | load relationships |
-| `load_only`, `defer`, `undefer` | which columns of the row to load |
+| `load_only`, `defer`, `undefer`, `undefer_group` | which columns of the row to load |
+| `with_expression` | a value the statement selects onto the instance |
 | `with_for_update`, `execution_options` | how the statement runs |
 
 | runs | |
@@ -649,6 +650,23 @@ A column left out is read when something touches it, one statement per
 instance, so this pays off on a wide column a page does not show and costs on
 one it does. `mapped_column(deferred=True)` says it for every read of the
 model, and `undefer` is the read that wants the column after all.
+`undefer_group("name")` takes the columns a model defers together, as
+`mapped_column(deferred_group="name")` grouped them.
+
+A value the statement computes lands on the instance through
+`query_expression()`:
+
+```python
+class Post(Model):
+    words: Mapped[int] = query_expression()
+
+
+post = db.query(Post).with_expression(Post.words, sa.func.length(Post.body)).one()
+post.words  # 11
+```
+
+Without `with_expression` the attribute is `None`: it holds what a read put
+there, and nothing more.
 
 ## Row creation
 
