@@ -22,7 +22,9 @@ from ._model import (
     BaseModel,
     BaseSoftDeletes,
     DatabaseDescriptor,
+    every_attribute,
     names_of,
+    related_to,
     soft_delete_column,
     tables_for,
 )
@@ -624,31 +626,43 @@ class ModelMixin(BaseModel[Database]):
         self,
         *attributes: str | InstrumentedAttribute[Any],
         attribute_names: Iterable[str] | None = None,
+        with_relationships: bool = False,
         with_for_update: ForUpdateParameter = None,
     ) -> None:
         """Read this instance back from the database.
 
         ```python
-        user.refresh()  # every column, as the row holds it now
-        user.refresh(User.team)  # and the relationship, though it raises on load
+        user.refresh()  # every column, and the relationships already loaded
+        user.refresh(User.team)  # and one that was not, though it raises on load
+        user.refresh(with_relationships=True)  # every relationship the model has
         ```
 
         Args:
-            attributes: The attributes to reload, rather than all of them, as
-                the model declares them or by name. A relationship named here
-                is loaded again too, which is how a `lazy="raise"` one is read
-                after a refresh.
+            attributes: The attributes to read again, rather than all of them, as
+                the model declares them or by name. A relationship named here is
+                loaded, which is how a `lazy="raise"` one is read after a refresh.
             attribute_names: The same, for names a caller holds as a list.
+            with_relationships: Read every relationship the model declares, loaded
+                or not, which costs a statement each. For a test that compares the
+                whole instance and would otherwise name them one by one.
             with_for_update: Lock the row while it is read, as
                 ``Session.refresh`` takes it: `True` for a plain ``FOR UPDATE``,
                 or a mapping such as ``{"read": True}``.
 
         """
+        names = names_of(attributes, attribute_names)
+        if with_relationships:
+            names = list(dict.fromkeys([*(names or ()), *every_attribute(type(self))]))
         self.db.session.refresh(
             self,
-            attribute_names=names_of(attributes, attribute_names),
+            attribute_names=names,
             with_for_update=with_for_update,
         )
+        if with_relationships:
+            # The relationships hand back the instances the session holds, and
+            # those carry the values they were loaded with.
+            for related in related_to(self):
+                self.db.session.expire(related)
 
     def _persist(self) -> None:
         db = self.db

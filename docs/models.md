@@ -259,6 +259,20 @@ user.refresh(attribute_names=names)  # for names held as a list
 A relationship the instance had already loaded survives a plain `refresh()`.
 One it never loaded stays unloaded, and reading it raises, as it did before.
 
+`with_relationships=True` reads every relationship the model declares, loaded
+or not, so a test comparing a whole instance names none of them:
+
+```python
+user.refresh(with_relationships=True)
+
+assert response == user
+```
+
+It costs a statement per relationship, and the instances behind them are
+expired, so their columns are read again when something touches them. That is
+what a test wants and what production does not: there a relationship is loaded
+by the read that needs it, with `joinedload` or its neighbours.
+
 ## Soft deletes {#soft-deletes}
 
 `SoftDeletes` marks a row as deleted instead of removing it:

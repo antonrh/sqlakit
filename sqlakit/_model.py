@@ -291,6 +291,30 @@ def names_of(
     return named or None
 
 
+def every_attribute(model: type[Any]) -> list[str]:
+    """Return every attribute a model declares, relationships included."""
+    return list(sa.inspect(model).attrs.keys())
+
+
+def related_to(instance: Any) -> list[Any]:  # noqa: ANN401 - a model of either API
+    """Return the instances the loaded relationships of this one hold.
+
+    A relationship read again hands back the instances the session already
+    holds, with the values they were loaded with, so a caller that wants the
+    rows as they are now expires them.
+    """
+    state = sa.inspect(instance)
+    found = []
+    for name in state.mapper.relationships.keys():  # noqa: SIM118
+        if name in state.unloaded:
+            continue
+        value = state.dict.get(name)
+        if value is None:
+            continue
+        found.extend(value if isinstance(value, (list, set, tuple)) else [value])
+    return found
+
+
 def resolve_alias(model: type[Any], alias: str) -> BaseDatabase[Any, Any]:
     """Return the database a model knows under that alias.
 
