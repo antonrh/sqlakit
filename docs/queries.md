@@ -105,12 +105,12 @@ active = db.query(User).where(User.is_active)
 
 active.count()
 active.order_by(User.name).all()
-active.filter_by(team="red").first()
+active.filter_by(team="red").first()  # or filter_by(request.query_params)
 ```
 
 | builds | |
 | --- | --- |
-| `where`, `filter_by` | narrow the selection |
+| `where`, `filter_by` | narrow the selection, by keyword or by a mapping |
 | `join`, `outerjoin`, `select_from` | bring in other tables |
 | `order_by`, `distinct`, `limit`, `offset` | shape the result |
 | `order_by("name.desc")` | ordering by a string from the request |

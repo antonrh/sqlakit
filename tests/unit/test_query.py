@@ -780,6 +780,8 @@ def test_group_by_and_having(db: Database) -> None:
 def test_filter_by_and_select_from(db: Database) -> None:
     with db.connect():
         assert User.query.filter_by(team="red").count() == 2
+        assert User.query.filter_by({"team": "red"}).count() == 2
+        assert User.query.filter_by({"team": "red"}, team="blue").count() == 3
         assert User.query.select_from(User).filter_by(name="a").one().id == 1
 
 
