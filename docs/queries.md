@@ -116,6 +116,7 @@ active.filter_by(team="red").first()  # or filter_by(request.query_params)
 | `order_by("name.desc")` | ordering by a string from the request |
 | `group_by`, `having` | aggregate |
 | `options`, `joinedload`, `selectinload`, `subqueryload`, `contains_eager` | load relationships |
+| `load_only`, `defer`, `undefer` | which columns of the row to load |
 | `with_for_update`, `execution_options` | how the statement runs |
 
 | runs | |
@@ -632,6 +633,22 @@ be narrowed with `where`, `order_by`, `distinct`, `limit` and `offset`, and
 ```python
 db.query(User).only_columns(User.name).order_by("created_at.desc").all()
 ```
+
+### Fewer columns, still instances
+
+`only_columns` gives up the instances. To keep them and read less, name the
+columns to load, or the ones to leave behind:
+
+```python
+db.query(Post).load_only(Post.id, Post.title).all()  # the rest is deferred
+db.query(Post).defer(Post.body).all()  # everything but that one
+db.query(Post).undefer(Post.body).all()  # a column the model defers
+```
+
+A column left out is read when something touches it, one statement per
+instance, so this pays off on a wide column a page does not show and costs on
+one it does. `mapped_column(deferred=True)` says it for every read of the
+model, and `undefer` is the read that wants the column after all.
 
 ## Row creation
 

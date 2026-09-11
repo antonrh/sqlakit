@@ -679,6 +679,54 @@ def test_with_for_update(teams: Database) -> None:
         assert Member.query.with_for_update(read=True, skip_locked=True).count() == 1
 
 
+class Post(Base):
+    __tablename__ = "posts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str]
+    body: Mapped[str]
+    notes: Mapped[str] = mapped_column(deferred=True, default="")
+
+
+@pytest.fixture
+def posts(db: Database) -> Database:
+    with db.transaction():
+        Post(id=1, title="one", body="a long body", notes="kept aside").save()
+    return db
+
+
+def test_load_only_and_defer_leave_columns_out(posts: Database) -> None:
+    with posts.connect():
+        columns = str(posts.query(Post).defer(Post.body).select)
+        few = str(posts.query(Post).load_only(Post.title).select)
+
+        assert "posts.body" not in columns
+        assert "posts.title" in columns
+        assert [
+            name for name in ("posts.id", "posts.title", "posts.body") if name in few
+        ] == [
+            "posts.id",
+            "posts.title",
+        ]
+
+
+def test_a_deferred_column_is_read_when_it_is_touched(posts: Database) -> None:
+    with posts.connect(), posts.recording() as record:
+        post = posts.query(Post).defer(Post.body).one()
+
+        assert record.count == 1
+        assert post.body == "a long body"
+        assert record.count == 2  # the column came on its own statement
+
+
+def test_undefer_reads_a_column_the_model_defers(posts: Database) -> None:
+    with posts.connect(), posts.recording() as record:
+        post = posts.query(Post).undefer(Post.notes).one()
+
+        assert post.notes == "kept aside"
+        assert record.count == 1  # no second statement for it
+
+
 class Event(Base):
     __tablename__ = "events"
 
