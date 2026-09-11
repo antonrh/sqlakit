@@ -127,6 +127,20 @@ teams = (
 The same arguments reach every row the query reads, a batch of `chunks`
 included.
 
+Reading a template takes three calls because each one speaks a different
+language, and a shorter call would have to mix them:
+
+| call | whose words it takes |
+| --- | --- |
+| `db.sql(name, values)` | the template's: where the SQL is, and the values it renders with |
+| `.typed(Type, ...)` | pydantic's: what a row becomes, and how it is validated |
+| `.all()`, `.one()`, `.first()`, `.chunks(n)` | its own: how many rows you want |
+
+The split keeps the two meanings of `context` apart: the template's values in
+the first call, pydantic's validation context in the second. A query on a
+model needs no second call, since a model has nothing to validate:
+`db.query(User).all()` says where the rows are, what they are, and how many.
+
 A one-column row arrives as the value of that column:
 
 ```python
