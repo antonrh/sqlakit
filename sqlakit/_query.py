@@ -24,9 +24,14 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import (
     InstrumentedAttribute,
     contains_eager,
+    defer,
     joinedload,
+    load_only,
     selectinload,
     subqueryload,
+    undefer,
+    undefer_group,
+    with_expression,
 )
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
 from sqlalchemy.sql import operators
@@ -671,6 +676,67 @@ class BaseQuery(Generic[ModelT]):
     def contains_eager(self, *keys: Any) -> Self:  # noqa: ANN401
         """Read a relationship from a join this query already makes."""
         return self.options(_chain(contains_eager, keys))
+
+    def load_only(self, *columns: Any) -> Self:  # noqa: ANN401
+        """Load these columns of the row, and defer the rest.
+
+        ```python
+        db.query(User).load_only(User.id, User.name).all()
+        ```
+
+        The rows are still instances: a column left out is read from the
+        database when something touches it, one statement per instance, which
+        is the cost this trades the narrower row for. `only_columns` is the
+        other one: it gives the instances up and reads values.
+        """
+        return self.options(load_only(*columns))
+
+    def defer(self, *columns: Any) -> Self:  # noqa: ANN401
+        """Leave these columns out of the row until something reads them.
+
+        ```python
+        db.query(Post).defer(Post.body).all()
+        ```
+
+        For the wide column of a table read for everything else.
+        """
+        return self.options(*(defer(column) for column in columns))
+
+    def undefer(self, *columns: Any) -> Self:  # noqa: ANN401
+        """Load these columns with the row, though the model defers them.
+
+        ```python
+        db.query(Post).undefer(Post.body).all()
+        ```
+
+        The other side of `mapped_column(deferred=True)`, for the read that
+        wants the column after all.
+        """
+        return self.options(*(undefer(column) for column in columns))
+
+    def undefer_group(self, name: str) -> Self:
+        """Load the columns a model defers under this group name.
+
+        ```python
+        db.query(Post).undefer_group("body").all()
+        ```
+
+        The group is the one `mapped_column(deferred_group="body")` names, for
+        the columns a read wants together or not at all.
+        """
+        return self.options(undefer_group(name))
+
+    def with_expression(self, key: Any, expression: Any) -> Self:  # noqa: ANN401
+        """Give a `query_expression()` attribute its value for this read.
+
+        ```python
+        db.query(Post).with_expression(Post.comments, _comment_count()).all()
+        ```
+
+        The attribute holds what this statement selects into it, so a count or
+        a window function arrives on the instance rather than beside it.
+        """
+        return self.options(with_expression(key, expression))
 
     def with_for_update(
         self,

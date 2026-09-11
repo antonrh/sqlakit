@@ -16,6 +16,7 @@ from sqlalchemy.orm import (
     foreign,
     joinedload,
     mapped_column,
+    query_expression,
     relationship,
 )
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
@@ -677,6 +678,83 @@ def test_with_for_update(teams: Database) -> None:
     with teams.connect():
         # SQLite parses the clause and ignores it; the query still runs.
         assert Member.query.with_for_update(read=True, skip_locked=True).count() == 1
+
+
+class Post(Base):
+    __tablename__ = "posts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str]
+    body: Mapped[str]
+    notes: Mapped[str] = mapped_column(deferred=True, default="")
+    draft: Mapped[str] = mapped_column(
+        deferred=True, deferred_group="aside", default=""
+    )
+    seen: Mapped[str] = mapped_column(deferred=True, deferred_group="aside", default="")
+    words: Mapped[int] = query_expression()
+
+
+@pytest.fixture
+def posts(db: Database) -> Database:
+    with db.transaction():
+        Post(
+            id=1,
+            title="one",
+            body="a long body",
+            notes="kept aside",
+            draft="a draft",
+            seen="yesterday",
+        ).save()
+    return db
+
+
+def test_load_only_and_defer_leave_columns_out(posts: Database) -> None:
+    with posts.connect():
+        columns = str(posts.query(Post).defer(Post.body).select)
+        few = str(posts.query(Post).load_only(Post.title).select)
+
+        assert "posts.body" not in columns
+        assert "posts.title" in columns
+        assert [
+            name for name in ("posts.id", "posts.title", "posts.body") if name in few
+        ] == [
+            "posts.id",
+            "posts.title",
+        ]
+
+
+def test_a_deferred_column_is_read_when_it_is_touched(posts: Database) -> None:
+    with posts.connect(), posts.recording() as record:
+        post = posts.query(Post).defer(Post.body).one()
+
+        assert record.count == 1
+        assert post.body == "a long body"
+        assert record.count == 2  # the column came on its own statement
+
+
+def test_undefer_group_reads_the_columns_of_one_group(posts: Database) -> None:
+    with posts.connect(), posts.recording() as record:
+        post = posts.query(Post).undefer_group("aside").one()
+
+        assert (post.draft, post.seen) == ("a draft", "yesterday")
+        assert record.count == 1  # both came with the row
+
+
+def test_with_expression_puts_a_value_on_the_instance(posts: Database) -> None:
+    with posts.connect():
+        counted = sa.func.length(Post.body)
+
+        post = posts.query(Post).with_expression(Post.words, counted).one()
+
+        assert post.words == len("a long body")
+
+
+def test_undefer_reads_a_column_the_model_defers(posts: Database) -> None:
+    with posts.connect(), posts.recording() as record:
+        post = posts.query(Post).undefer(Post.notes).one()
+
+        assert post.notes == "kept aside"
+        assert record.count == 1  # no second statement for it
 
 
 class Event(Base):
