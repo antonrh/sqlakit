@@ -134,6 +134,20 @@ def test_refresh_takes_the_attributes_to_read_again(db: Database) -> None:
         assert user.nickname == "gh"
 
 
+def test_refresh_reads_every_relationship_when_asked(db: Database) -> None:
+    with db.transaction() as conn:
+        team = Team(id=1, name="red").save()
+        user = User(name="ada", team_id=team.id).save()
+        conn.execute(sa.update(Team).values(name="blue"))
+        conn.execute(sa.update(User).values(name="grace"))
+
+        user.refresh(with_relationships=True)
+
+        assert user.name == "grace"
+        assert user.team is not None
+        assert user.team.name == "blue"  # named by the model, not by the caller
+
+
 def test_modified_fields(db: Database) -> None:
     with db.transaction():
         user = User(name="ada").save()
