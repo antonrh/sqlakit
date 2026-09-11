@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.17.0
+
+### Added
+
+- `refresh()` takes the attributes to read again as the model declares them:
+  `user.refresh(User.team)` rather than `refresh(attribute_names=["team"])`.
+  Naming a relationship is how a `lazy="raise"` one is read after a refresh,
+  and a name still goes in as a string or as a list.
+- `refresh(with_relationships=True)` reads every relationship the model
+  declares, loaded or not, for a test that compares a whole instance and would
+  otherwise name them one by one. The instances behind those relationships are
+  expired as well, since a relationship read again hands back what the session
+  holds, with the values it was loaded with. It costs a statement per
+  relationship.
+
 ## 0.16.0
 
 ### Added
