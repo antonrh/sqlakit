@@ -22,6 +22,7 @@ from ._model import (
     BaseModel,
     BaseSoftDeletes,
     DatabaseDescriptor,
+    names_of,
     soft_delete_column,
     tables_for,
 )
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping, Sequence
 
     from sqlalchemy.engine import CursorResult, Result, ScalarResult
+    from sqlalchemy.orm import InstrumentedAttribute
     from sqlalchemy.sql import Executable
     from sqlalchemy.sql._typing import (
         _ColumnExpressionArgument,
@@ -620,15 +622,23 @@ class ModelMixin(BaseModel[Database]):
 
     def refresh(
         self,
-        *,
+        *attributes: str | InstrumentedAttribute[Any],
         attribute_names: Iterable[str] | None = None,
         with_for_update: ForUpdateParameter = None,
     ) -> None:
         """Read this instance back from the database.
 
+        ```python
+        user.refresh()  # every column, as the row holds it now
+        user.refresh(User.team)  # and the relationship, though it raises on load
+        ```
+
         Args:
-            attribute_names: The attributes to reload, rather than all of them.
-                A relationship named here is loaded again too.
+            attributes: The attributes to reload, rather than all of them, as
+                the model declares them or by name. A relationship named here
+                is loaded again too, which is how a `lazy="raise"` one is read
+                after a refresh.
+            attribute_names: The same, for names a caller holds as a list.
             with_for_update: Lock the row while it is read, as
                 ``Session.refresh`` takes it: `True` for a plain ``FOR UPDATE``,
                 or a mapping such as ``{"read": True}``.
@@ -636,7 +646,7 @@ class ModelMixin(BaseModel[Database]):
         """
         self.db.session.refresh(
             self,
-            attribute_names=attribute_names,
+            attribute_names=names_of(attributes, attribute_names),
             with_for_update=with_for_update,
         )
 

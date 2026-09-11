@@ -2,6 +2,7 @@ from collections.abc import Callable
 
 import pytest
 import sqlalchemy as sa
+import sqlalchemy.exc
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.orm.exc import NoResultFound
 
@@ -109,6 +110,28 @@ def test_refresh(db: Database) -> None:
         user.refresh()
 
         assert user.name == "grace"
+
+
+def test_refresh_takes_the_attributes_to_read_again(db: Database) -> None:
+    with db.transaction() as conn:
+        team = Team(id=1, name="red").save()
+        user = User(name="ada", team_id=team.id).save()
+        conn.execute(sa.update(User).values(name="grace", nickname="gh"))
+
+        # A relationship declared `lazy="raise"` is read by naming it, as the
+        # model declares it or as a string.
+        with pytest.raises(sa.exc.InvalidRequestError, match="lazy='raise'"):
+            _ = user.team
+
+        user.refresh(User.team, "name")
+
+        assert user.team is not None
+        assert (user.team.name, user.name) == ("red", "grace")
+        assert user.nickname is None  # not named, not read again
+
+        user.refresh(attribute_names=["nickname"])
+
+        assert user.nickname == "gh"
 
 
 def test_modified_fields(db: Database) -> None:
