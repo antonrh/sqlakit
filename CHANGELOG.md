@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.0
+
+### Added
+
+- `filter_by()` takes a mapping beside its keywords, as `create()` and the
+  template calls do, so a filter held as a dict goes in as it is:
+  `filter_by(request.query_params)`.
+
 ## 0.15.0
 
 ### Added
