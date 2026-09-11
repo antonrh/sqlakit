@@ -43,6 +43,7 @@ nav:
   - Multiple databases: routing.md
   - Debugging: debugging.md
   - Testing: testing.md
+  - Test setups: test-setups.md
   - Examples: examples.md
   - Reference: reference.md
 

@@ -43,7 +43,7 @@ class Report(WarehouseBase):
 ```
 
 Reads, writes and the tables created by
-[`provisioned_tables()`](testing.md) all follow it.
+[`provisioned_tables()`](test-setups.md) all follow it.
 
 `__db__` is part of the [model layer](models.md). With a plain mapped class,
 pass the database directly: `warehouse.query(Report)`.
@@ -221,4 +221,5 @@ relationship between models on two databases, so there is nothing to permit or
 forbid.
 
 Next: [debugging](debugging.md) for a recording that shows which database ran
-what, and [testing](testing.md) for a schema and a rollback on every database.
+what, and [test setups](test-setups.md) for a schema and a rollback on every
+database.

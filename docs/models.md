@@ -321,7 +321,7 @@ places:
 
 - `alembic revision --autogenerate` compares the metadata with the database,
   and a model nobody imported looks like a table to **drop**.
-- [`provisioned_tables()`](testing.md) creates the tables the metadata
+- [`provisioned_tables()`](test-setups.md) creates the tables the metadata
   contains, so a test run starts without those tables.
 - `relationship("Team")` cannot find a class nobody has defined yet.
 

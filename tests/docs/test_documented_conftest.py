@@ -1,11 +1,14 @@
-"""The conftest the testing page shows is run here, so it cannot go stale."""
+"""The conftests the testing pages show are run here, so they cannot go stale."""
 
 import re
 from pathlib import Path
 
 import pytest
 
-DOCS = Path(__file__).parent.parent.parent / "docs" / "testing.md"
+PAGES = (
+    Path(__file__).parent.parent.parent / "docs" / "testing.md",
+    Path(__file__).parent.parent.parent / "docs" / "test-setups.md",
+)
 
 APP_DB = """
 from sqlakit import Database
@@ -50,11 +53,15 @@ async def _dispose() -> AsyncIterator[None]:
 
 
 def _block(title: str) -> str:
-    """Return the code of the block the page gives that title."""
+    """Return the code of the block one of the pages gives that title."""
     pattern = rf'```python title="{re.escape(title)}"\n(.*?)```'
-    found = re.search(pattern, DOCS.read_text(), re.DOTALL)
-    assert found is not None, f"no block titled {title!r} in {DOCS}"
-    return found.group(1)
+    for page in PAGES:
+        found = re.search(pattern, page.read_text(), re.DOTALL)
+        if found is not None:
+            return found.group(1)
+    pages = ", ".join(page.name for page in PAGES)
+    missing = f"no block titled {title!r} in {pages}"
+    raise AssertionError(missing)
 
 
 def _project(pytester: pytest.Pytester, *, asyncio: bool) -> None:

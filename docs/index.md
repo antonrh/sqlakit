@@ -403,6 +403,7 @@ On shutdown, `dispose()` closes the pool.
 | [SQL templates](sql.md) | statements in files and strings, values bound, rows typed |
 | [Models](models.md) | the Active Record way: `save()`, `delete()`, soft deletes |
 | [Testing](testing.md) | a schema once per run, a rollback around each test |
+| [Test setups](test-setups.md) | the schema, several databases, migrations, a server the suite starts |
 | [Debugging](debugging.md) | what ran, how long it took, what repeated |
 | [Multiple databases](routing.md) | replicas, a warehouse, a shard per tenant |
 | [Reference](reference.md) | every class, and the mapping for [asyncio](reference.md#async) |
