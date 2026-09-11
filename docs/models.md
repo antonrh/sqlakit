@@ -217,8 +217,8 @@ campaign.set_loaded("thumbnail", None)  # known to be empty
 The method describes what the database already contains. It doesn't change
 anything. The value isn't written on save, doesn't mark the instance as
 modified, and doesn't update the other side of the relationship. The
-alternative is `refresh(attribute_names=["esp"])`, which queries the database
-and therefore can't be wrong, but costs a query and needs an open session.
+alternative is `refresh(Campaign.esp)`, which queries the database and
+therefore can't be wrong, but costs a query and needs an open session.
 
 ## Instance state
 
@@ -245,6 +245,19 @@ with db.transaction():
 `refresh()` discards what the session remembers about the instance and reads
 the row from the database. An assertion after `refresh()` checks the database
 rather than the session. [Testing](testing.md) relies on exactly that.
+
+Name attributes to read those and leave the rest alone. A relationship read
+this way is loaded even when it is declared `lazy="raise"`, which is how a
+test reaches one after a refresh:
+
+```python
+user.refresh(User.team)  # the relationship, and nothing else
+user.refresh(User.name, User.team)
+user.refresh(attribute_names=names)  # for names held as a list
+```
+
+A relationship the instance had already loaded survives a plain `refresh()`.
+One it never loaded stays unloaded, and reading it raises, as it did before.
 
 ## Soft deletes {#soft-deletes}
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # Imported here rather than under TYPE_CHECKING: SQLAlchemy resolves the
 # annotation of `deleted_at` in this module, and needs both names at runtime.
+from collections.abc import Iterable  # noqa: TC003
 from datetime import datetime  # noqa: TC003
 from typing import (
     TYPE_CHECKING,
@@ -272,6 +273,22 @@ def db_for(model: type[Any]) -> BaseDatabase[Any, Any]:
             raise MissingRegistryError(model.__name__, placement)
         return source[placement]
     return placement
+
+
+def names_of(
+    attributes: tuple[Any, ...], listed: Iterable[str] | None
+) -> list[str] | None:
+    """Return the attributes to reload, as the session names them.
+
+    A rename and an editor follow the attribute a model declares, and neither
+    follows a string, so a caller may name either.
+    """
+    named = [
+        attribute if isinstance(attribute, str) else attribute.key
+        for attribute in attributes
+    ]
+    named += list(listed or ())
+    return named or None
 
 
 def resolve_alias(model: type[Any], alias: str) -> BaseDatabase[Any, Any]:
