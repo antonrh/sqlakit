@@ -507,10 +507,23 @@ class BaseQuery(Generic[ModelT]):
         self._reject_statement("where")
         return self.with_select(self._select.where(*criteria))
 
-    def filter_by(self, **values: Any) -> Self:  # noqa: ANN401
-        """Narrow the rows by equality, as `Select.filter_by` does."""
+    def filter_by(
+        self,
+        values: Mapping[str, Any] | None = None,
+        /,
+        **fields: Any,  # noqa: ANN401
+    ) -> Self:
+        """Narrow the rows by equality, as `Select.filter_by` does.
+
+        ```python
+        db.query(User).filter_by(team="red")
+        db.query(User).filter_by(request.query_params)
+        ```
+
+        The fields are keywords, a mapping, or both, as `create()` takes them.
+        """
         self._reject_statement("filter_by")
-        return self.with_select(self._select.filter_by(**values))
+        return self.with_select(self._select.filter_by(**merged(values, fields)))
 
     def join(
         self,
