@@ -684,7 +684,8 @@ class BaseQuery(Generic[ModelT]):
 
         The rows are still instances: a column left out is read from the
         database when something touches it, one statement per instance, which
-        is the cost this trades the narrower row for.
+        is the cost this trades the narrower row for. `only_columns` is the
+        other one: it gives the instances up and reads values.
         """
         return self.options(load_only(*columns))
 

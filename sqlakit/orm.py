@@ -327,6 +327,10 @@ class Query(BaseQuery[ModelT]):
         ```python
         names = User.query.where(User.is_active).only_columns(User.name).all()
         ```
+
+        One column arrives as values and several as tuples, and neither is an
+        instance. `load_only` is the other one: the rows stay instances, and
+        the columns it leaves out are read when something touches them.
         """
         return ColumnQuery(
             self.model,
