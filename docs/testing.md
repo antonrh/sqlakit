@@ -274,6 +274,40 @@ The tables of each database are the project's to create, as above. A dict or a
 list with `sqlakit_metadata` instead creates the same tables on every database,
 as a suite over shards wants.
 
+### Rollback limits
+
+Each database rolls back its own transaction, on its own connection. Two
+consequences follow:
+
+- A test that writes to one database and reads from another sees only what the
+  second one holds. No transaction spans both, and no isolation level changes
+  that.
+- A replica alias is a second connection, and it cannot see the test's
+  uncommitted rows even when it points at the same database.
+
+The second point breaks the suite as soon as a router appears in the project:
+reads go to `replica`, the test's rows are never committed, and every read
+comes back empty. Keep routers off in tests. A fresh registry has none, and
+the fixture below clears them after each test:
+
+```python
+@pytest.fixture(autouse=True)
+def _no_routers() -> Iterator[None]:
+    yield
+    db.route()  # reads and writes both go to default again
+```
+
+A model that set its database through `__db__` keeps it: `route()` clears the
+routing policy, not the model's own setting. Test the policy by checking where
+a model resolves, not by reading data:
+
+```python
+def test_reads_go_to_the_replica() -> None:
+    db.route(reads_go_to_the_replica)
+
+    assert User.db is db["replica"]
+```
+
 ### Hidden blocks
 
 The marker opens a block around the whole test, and the code the test calls can
@@ -613,6 +647,35 @@ recording only listens and runs nothing itself. When you want the numbers
 themselves rather than an assertion, use `db.recording()`, the recorder this
 is created on.
 
+### Query counts across databases
+
+The standalone `assert_queries` watches every database in the registry, so a
+block that touches two databases gets one combined count. To watch a single
+one, pass its alias or the database itself:
+
+```python
+from sqlakit.testing import assert_queries
+
+with assert_queries(2):
+    User.query.count()
+    Event.query.count()
+
+with assert_queries(1, using="warehouse"):
+    build_report()
+```
+
+`db.assert_queries` watches one database. On the registry it covers them all.
+
+A recording tracks which database ran each statement, so a test can prove that
+nothing reached the warehouse:
+
+```python
+with db.recording() as record:
+    register_user("ada@example.com")
+
+assert record.databases == ("default",)
+```
+
 ## Refreshing an instance
 
 The code under test writes on the test's connection, so the rows are already
@@ -653,104 +716,6 @@ as it does in production. Inside it:
   Production behaves the same way. A block that should fail on its own needs
   `transaction(savepoint=True)`.
 
-## Multiple databases
-
-Pass the alias, and each database gets the tables of the models that point at
-it. An association table lands on the same database as the rows it joins:
-
-```python
-@pytest.fixture(scope="session")
-def _db_schema() -> Iterator[None]:
-    with Model.provisioned_tables(), Model.provisioned_tables("warehouse"):
-        yield
-```
-
-Then open a transaction on each one. `transactions()` does that for every
-database in the registry:
-
-```python
-@pytest.fixture
-def _db_transaction(_db_schema: None) -> Iterator[None]:
-    with db.transactions(rollback=True):
-        yield
-```
-
-Your test can now write to either database through its model, and both
-transactions roll back when it ends:
-
-```python
-@pytest.mark.db
-def test_a_signup_is_recorded() -> None:
-    register_user("ada@example.com")
-
-    assert User.query.count() == 1
-    assert Event.query.count() == 1  # `Event.__db__` is "warehouse"
-```
-
-### Rollback limits
-
-Each database rolls back its own transaction, on its own connection. Two
-consequences follow:
-
-- A test that writes to one database and reads from another sees only what the
-  second one holds. No transaction spans both, and no isolation level changes
-  that.
-- A replica alias is a second connection, and it cannot see the test's
-  uncommitted rows even when it points at the same database.
-
-The second point breaks the suite as soon as a router appears in the project:
-reads go to `replica`, the test's rows are never committed, and every read
-comes back empty. Keep routers off in tests. A fresh registry has none, and
-the fixture below clears them after each test:
-
-```python
-@pytest.fixture
-def _db_transaction(_db_schema: None) -> Iterator[None]:
-    with db.transactions(rollback=True):
-        yield
-    db.route()  # no routers, reads and writes both go to default
-```
-
-A model that set its database through `__db__` keeps it: `route()` clears the
-routing policy, not the model's own setting. Test the policy by checking where
-a model resolves, not by reading data:
-
-```python
-def test_reads_go_to_the_replica() -> None:
-    db.route(reads_go_to_the_replica)
-
-    assert User.db is db["replica"]
-```
-
-### Query counts across databases
-
-The standalone `assert_queries` watches every database in the registry, so a
-block that touches two databases gets one combined count. To watch a single
-one, pass its alias or the database itself:
-
-```python
-from sqlakit.testing import assert_queries
-
-with assert_queries(2):
-    User.query.count()
-    Event.query.count()
-
-with assert_queries(1, using="warehouse"):
-    build_report()
-```
-
-`db.assert_queries` watches one database. On the registry it covers them all.
-
-A recording tracks which database ran each statement, so a test can prove that
-nothing reached the warehouse:
-
-```python
-with db.recording() as record:
-    register_user("ada@example.com")
-
-assert record.databases == ("default",)
-```
-
 ## Tests without the plugin
 
 The same marker, written by hand:
@@ -789,6 +754,41 @@ def _db_transaction(_db_schema: None) -> Iterator[None]:
 
 An unmarked test never asks for `_db_transaction`, so nothing connects, and
 `_db_schema` runs only when some test does ask.
+
+### Several databases by hand
+
+The schema is a `provisioned_tables()` per alias, and each database gets the
+tables of the models that point at it. An association table lands on the same
+database as the rows it joins:
+
+```python
+@pytest.fixture(scope="session")
+def _db_schema() -> Iterator[None]:
+    with Model.provisioned_tables(), Model.provisioned_tables("warehouse"):
+        yield
+```
+
+Then open a transaction on each one. `transactions()` does that for every
+database in the registry:
+
+```python
+@pytest.fixture
+def _db_transaction(_db_schema: None) -> Iterator[None]:
+    with db.transactions(rollback=True):
+        yield
+```
+
+Your test can now write to either database through its model, and both
+transactions roll back when it ends:
+
+```python
+@pytest.mark.db
+def test_a_signup_is_recorded() -> None:
+    register_user("ada@example.com")
+
+    assert User.query.count() == 1
+    assert Event.query.count() == 1  # `Event.__db__` is "warehouse"
+```
 
 ### Async tests without the plugin
 
