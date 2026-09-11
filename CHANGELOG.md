@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.16.0
+
+### Added
+
+- `load_only()`, `defer()`, `undefer()`, `undefer_group()` and
+  `with_expression()` on a query, the loader options for columns beside the
+  ones for relationships. A column left out is read when something touches it,
+  one statement per instance, so it pays off on a wide column a page does not
+  show.
+- `filter_by()` takes a mapping beside its keywords, as `create()` and the
+  template calls do, so a filter held as a dict goes in as it is:
+  `filter_by(request.query_params)`.
+
+### Documentation
+
+- The SQL templates page says what each call in a read is for, which is why
+  there are three: the template's values, pydantic's arguments, and how many
+  rows.
+- The testing page reads in one pass. Several databases were covered twice, in
+  two places, and the hand-written fixtures for them now follow the
+  hand-written ones they build on.
+
 ## 0.15.0
 
 ### Added
