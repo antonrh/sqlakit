@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.18.0
+
+### Changed
+
+- `Model.query` on a model that assigns no query of its own reads as a query
+  of that model: `User.query.get(1)` is a `User | None` and `User.query.all()`
+  a `Sequence[User]`, where both were `Any`. A checker now reports an attribute
+  the model does not have on a row read through `Model.query`, so a project
+  that type-checks may see errors the `Any` was hiding. `as_descriptor()` and
+  `QueryDescriptor(MyQuery)` read as they did.
+
 ## 0.17.0
 
 ### Added
