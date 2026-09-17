@@ -133,30 +133,56 @@ User.query.in_team("red").order_by(User.name).page(limit=20)
 User.query.in_team("red").deactivate()  # how many rows it updated
 ```
 
-Rules you want on every model go on a base class. Refer to the model class
-through `self.model`:
+Rules you want on every model go on a query class of the base that declares
+what they use. Bind it to that base, and `self.model` is the model the query is
+read from:
 
 ```python
-from typing import Any
+from datetime import datetime
+from typing import Self, TypeVar
+
+from sqlalchemy.orm import Mapped, mapped_column
+
+from sqlakit.orm import Model, Query
 
 
-class AppQuery(Query[Any]):
+class Timestamped(Model):
+    __abstract__ = True
+
+    created_at: Mapped[datetime] = mapped_column(default=datetime.now)
+
+
+TimestampedT = TypeVar("TimestampedT", bound=Timestamped)
+
+
+class TimestampedQuery(Query[TimestampedT]):
     def recent(self) -> Self:
         return self.order_by(self.model.created_at.desc())
 
 
-class Base(Model):
-    __abstract__ = True
+class Post(Timestamped):
+    __tablename__ = "posts"
 
-    query = AppQuery.as_descriptor()
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str]
+
+    query = TimestampedQuery["Post"].as_descriptor()
 ```
 
-A model under such a base can still define a query of its own, and
-`UserQuery(AppQuery["User"])` keeps both.
+A checker reads `created_at` off `Timestamped`, so a column the base does not
+declare is an error in the query class, and `Post.query.recent().all()` is a
+`Sequence[Post]`. A model that adds methods of its own inherits both with
+`PostQuery(TimestampedQuery["Post"])`.
 
-`as_descriptor()` returns the class it was called on, so `User.query.active()`
-type checks without any annotations on your part. If a model adds no methods
-but you still want typed rows, use `QueryDescriptor(Query["User"])`.
+Assigned on the base itself, `TimestampedQuery.as_descriptor()` reaches every
+model under it without a line per model, but nothing tells a checker which
+model the query was read from: its rows read as `Any`, and a strict checker
+asks for an annotation.
+
+`as_descriptor()` returns the class it was called on, so `User.query.in_team()`
+type checks without any annotations on your part. A model that assigns no
+query of its own reads as `Query[User]`, so `User.query.get(1)` is a
+`User | None` and a checker reports an attribute the model does not have.
 
 ## Instances from an earlier block
 

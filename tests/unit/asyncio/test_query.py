@@ -1,5 +1,5 @@
-from collections.abc import AsyncIterator
-from typing import Any
+from collections.abc import AsyncIterator, Sequence
+from typing import Any, assert_type
 
 import pytest
 import sqlalchemy as sa
@@ -286,6 +286,16 @@ class Player(ScopedBase):
     @classmethod
     def __query_filter__(cls) -> Any:
         return cls.hidden.is_(False)
+
+
+@pytest.mark.anyio
+async def test_a_model_types_its_default_query_after_itself(scoped: Database) -> None:
+    async with scoped.connect():
+        assert_type(User.query, Query[User])
+        assert_type(await User.query.get(1), User | None)
+        assert_type(await User.query.first(), User | None)
+        assert_type(await User.query.order_by(User.id).all(), Sequence[User])
+        assert_type(Player.query, NamedQuery)  # a custom query keeps its own type
 
 
 @pytest.fixture

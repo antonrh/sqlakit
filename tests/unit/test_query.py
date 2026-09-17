@@ -2,7 +2,7 @@ import base64
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
-from typing import Any, Self
+from typing import Any, Self, assert_type
 
 import pytest
 import sqlalchemy as sa
@@ -777,7 +777,7 @@ def events(db: Database) -> Database:
 
 def test_a_cursor_carries_dates_and_uuids(events: Database) -> None:
     with events.connect():
-        seen: list[str] = []
+        seen: list[str | None] = []
         cursor = None
         while True:
             page = Event.query.order_by(Event.at.desc()).cursor_page(
@@ -1065,6 +1065,15 @@ def test_a_custom_method_keeps_its_type_when_chained(scoped: Database) -> None:
 
         assert isinstance(query, TeamQuery)
         assert [member.id for member in query.in_team("red").all()] == [1]
+
+
+def test_a_model_types_its_default_query_after_itself(scoped: Database) -> None:
+    with scoped.connect():
+        assert_type(User.query, Query[User])
+        assert_type(User.query.get(1), User | None)
+        assert_type(User.query.first(), User | None)
+        assert_type(User.query.order_by(User.id).all(), Sequence[User])
+        assert_type(Player.query, TeamQuery)  # a custom query keeps its own type
 
 
 def test_the_filter_reaches_both_kinds_of_page(scoped: Database) -> None:
