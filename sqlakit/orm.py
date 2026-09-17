@@ -533,12 +533,28 @@ class QueryDescriptor(Generic[QueryT]):
 
         query = QueryDescriptor(AppQuery)
     ```
+
+    Given `Query` itself, as `ModelMixin` does, it reads as a query of the model
+    it is read from: `User.query` is a `Query[User]`, so `User.query.get(1)` is
+    a `User | None`.
     """
 
     def __init__(self, query_class: type[QueryT]) -> None:
         self.query_class = query_class
 
-    def __get__(self, instance: object | None, owner: type[Any]) -> QueryT:
+    # `ClassVar` cannot hold a type variable, so the base declares the query
+    # every model has and a read narrows it to the model it is read from.
+    @overload
+    def __get__(
+        self: QueryDescriptor[Query[Any]],
+        instance: object | None,
+        owner: type[ModelT],
+    ) -> Query[ModelT]: ...
+
+    @overload
+    def __get__(self, instance: object | None, owner: type[Any]) -> QueryT: ...
+
+    def __get__(self, instance: object | None, owner: type[Any]) -> Query[Any]:
         return self.query_class(owner, owner.db)
 
 
