@@ -751,6 +751,15 @@ def test_with_expression_puts_a_value_on_the_instance(posts: Database) -> None:
         assert post.words == len("a long body")
 
 
+def test_with_expression_reads_a_held_instance_again(posts: Database) -> None:
+    with posts.connect():
+        post = posts.query(Post).with_expression(Post.words, sa.literal(1)).one()
+        again = posts.query(Post).with_expression(Post.words, sa.literal(2)).one()
+
+        assert again is post  # the identity map's instance
+        assert post.words == 2  # with this read's value, not the first one's
+
+
 def test_undefer_reads_a_column_the_model_defers(posts: Database) -> None:
     with posts.connect(), posts.recording() as record:
         post = posts.query(Post).undefer(Post.notes).one()

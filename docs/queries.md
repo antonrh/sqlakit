@@ -690,8 +690,43 @@ post = db.query(Post).with_expression(Post.words, sa.func.length(Post.body)).one
 post.words  # 11
 ```
 
-Without `with_expression` the attribute is `None`: it holds what a read put
-there, and nothing more.
+An expression with a parameter goes on a
+[query method](#custom-query-methods), and the value depends on who asks:
+
+```python
+class PostQuery(Query["Post"]):
+    def for_reader(self, reader_id: int) -> Self:
+        return self.with_expression(
+            Post.commented_by_me,
+            sa.exists().where(
+                Comment.post_id == Post.id, Comment.author_id == reader_id
+            ),
+        )
+
+
+class Post(Model):
+    commented_by_me: Mapped[bool] = query_expression()
+
+    query = PostQuery.as_descriptor()
+
+
+Post.query.for_reader(reader_id).all()
+```
+
+`with_expression` reads an instance the session already holds again, so the
+value follows this read's parameters rather than the ones it was first loaded
+with. Without `with_expression` the attribute is `None`: it holds what a read
+put there, and nothing more. A value with no parameters that must never read
+as `None` is a deferred `column_property`, computed on `undefer` and read on
+its own otherwise:
+
+```python
+class Post(Model):
+    words: Mapped[int] = column_property(sa.func.length(body), deferred=True)
+
+
+db.query(Post).undefer(Post.words).all()
+```
 
 ## Row creation
 

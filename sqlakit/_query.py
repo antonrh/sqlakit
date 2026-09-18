@@ -736,9 +736,13 @@ class BaseQuery(Generic[ModelT]):
         ```
 
         The attribute holds what this statement selects into it, so a count or
-        a window function arrives on the instance rather than beside it.
+        a window function arrives on the instance rather than beside it. An
+        instance the session already holds is read again, so the value follows
+        the expression given this time rather than the one it was loaded with.
         """
-        return self.options(with_expression(key, expression))
+        return self.options(with_expression(key, expression)).execution_options(
+            populate_existing=True
+        )
 
     def with_for_update(
         self,
