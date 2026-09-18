@@ -123,6 +123,7 @@ active.filter_by(team="red").first()  # or filter_by(request.query_params)
 | runs | |
 | --- | --- |
 | `get`, `get_one` | one row by primary key |
+| `in_bulk` | rows as a dict, by a column or by the primary key |
 | `all`, `first`, `one`, `one_or_none` | rows as instances |
 | `latest`, `earliest` | the row with the highest or lowest value of a column |
 | `count`, `exists` | how many rows match, and whether any do |
@@ -196,6 +197,30 @@ A query always runs against the database, but it returns instances from the
 identity map. Rows the session already holds arrive as the same objects,
 with the attributes they had before. To get fresh values, call `refresh()` or
 start a new transaction.
+
+## Rows by key
+
+`in_bulk()` returns the rows as a dict. With no argument the key is the primary
+key, and a column keys by its value:
+
+```python
+users = db.query(User).where(User.id.in_(ids)).in_bulk()  # dict[int, User]
+by_email = db.query(User).in_bulk(User.email)  # dict[str, User]
+```
+
+Several columns key by the tuple of their values, and the type follows:
+
+```python
+seats = db.query(Seat).where(Seat.flight == flight).in_bulk(Seat.row, Seat.letter)
+seats[12, "A"]  # dict[tuple[int, str], Seat]
+```
+
+The rows keep the query's order, and a key column the query defers with
+`load_only` is loaded with the row rather than one row at a time. The key has
+to be a column of the model: an expression, or a column of a joined table,
+raises `UnknownFieldError`. Two rows under one key raise `DuplicateKeyError`,
+naming the columns and the value, so a key that is not unique is caught rather
+than quietly losing a row.
 
 ## Ordering
 

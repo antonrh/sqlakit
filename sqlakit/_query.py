@@ -43,6 +43,7 @@ from ._model import resolve_alias, soft_delete_column
 from .exceptions import (
     BulkQueryError,
     ConflictingJoinError,
+    DuplicateKeyError,
     InstanceNotFoundError,
     InvalidCursorError,
     InvalidNullsError,
@@ -53,6 +54,7 @@ from .exceptions import (
     PageItemsMismatchError,
     RawStatementError,
     UncomparableOrderingError,
+    UnknownFieldError,
     UnknownOrderFieldError,
     UnorderedPageError,
 )
@@ -1516,6 +1518,59 @@ class _Rows(Protocol[RowT_co]):
     def one(self) -> RowT_co: ...
 
     def one_or_none(self) -> RowT_co | None: ...
+
+
+def key_names(model: type[Any], keys: Sequence[Any]) -> list[str]:
+    """Return the attribute names `in_bulk` keys by, checked against the model.
+
+    With no columns the key is the primary key. A key has to be a column
+    attribute of the model itself: an expression cannot be read off a row, and
+    a column of another table with the same name would read the wrong value.
+
+    Raises:
+        UnknownFieldError: if a key is not a column of the model.
+
+    """
+    mapper = sa.inspect(model, raiseerr=True)
+    if not keys:
+        return [
+            mapper.get_property_by_column(column).key for column in mapper.primary_key
+        ]
+    names = []
+    for key in keys:
+        name = getattr(key, "key", None)
+        owner = getattr(key, "class_", None)
+        if (
+            name is None
+            or owner is None
+            or not issubclass(model, owner)
+            or name not in mapper.column_attrs
+        ):
+            raise UnknownFieldError(model.__name__, str(key))
+        names.append(name)
+    return names
+
+
+def keyed(
+    rows: Iterable[Any], model: type[Any], names: Sequence[str]
+) -> dict[Any, Any]:
+    """Return the rows under the value each has in these attributes, one row per key.
+
+    One name keys by its value, several by the tuple of theirs, in the order
+    the rows arrived.
+
+    Raises:
+        DuplicateKeyError: if two rows share a key.
+
+    """
+    result: dict[Any, Any] = {}
+    for row in rows:
+        values = tuple(getattr(row, name) for name in names)
+        key = values[0] if len(values) == 1 else values
+        if key in result:
+            raise DuplicateKeyError(model.__name__, names, key)
+        result[key] = row
+    return result
 
 
 def one_row(rows: _Rows[RowT], name: str) -> RowT:

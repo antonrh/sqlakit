@@ -27,6 +27,7 @@ from sqlakit import (
     BulkQueryError,
     ConflictingJoinError,
     Database,
+    DuplicateKeyError,
     InstanceNotFoundError,
     InvalidCursorError,
     InvalidNullsError,
@@ -38,6 +39,7 @@ from sqlakit import (
     RawStatementError,
     UncomparableOrderingError,
     UncountedPage,
+    UnknownFieldError,
     UnknownOrderFieldError,
     UnorderedPageError,
 )
@@ -819,6 +821,51 @@ def test_nested_loading(teams: Database) -> None:
         team = Team.query.joinedload(Team.members, Member.team).one()
 
         assert team.members[0].team is team
+
+
+def test_in_bulk_keys_the_rows_by_a_column(db: Database) -> None:
+    with db.connect():
+        by_name = db.query(User).where(User.id > 3).in_bulk(User.name)
+        by_key = db.query(User).order_by(User.name.desc()).in_bulk()
+        by_seat = db.query(User).in_bulk(User.team, User.name)
+
+        assert_type(by_name, dict[str, User])
+        assert_type(by_key, dict[Any, User])
+        assert_type(by_seat, dict[tuple[str, str], User])
+        assert {name: user.id for name, user in by_name.items()} == {"d": 4, "e": 5}
+        assert list(by_key) == [5, 4, 3, 2, 1]  # the query's order
+        assert list(by_seat)[:2] == [("blue", "a"), ("red", "b")]
+        assert by_seat["red", "b"] is db.query(User).get(2)
+
+
+def test_in_bulk_refuses_two_rows_under_one_key(db: Database) -> None:
+    with db.connect():
+        with pytest.raises(
+            DuplicateKeyError, match="by team, and two rows share 'blue'"
+        ):
+            db.query(User).in_bulk(User.team)
+        assert db.query(User).where(User.id < 3).in_bulk(User.team) == {
+            "blue": db.query(User).get(1),
+            "red": db.query(User).get(2),
+        }
+
+
+def test_in_bulk_reads_a_deferred_key_with_the_row(db: Database) -> None:
+    with db.connect(), db.assert_queries(1):
+        by_name = db.query(User).load_only(User.team).in_bulk(User.name)
+
+        assert list(by_name) == list("abcde")
+
+
+def test_in_bulk_keys_only_by_a_column_of_the_model(db: Database) -> None:
+    with db.connect():
+        with pytest.raises(UnknownFieldError, match=r"`User` has no field `lower"):
+            db.query(User).in_bulk(sa.func.lower(User.name))
+        # Another table's column of the same name would read the model's.
+        with pytest.raises(
+            UnknownFieldError, match=r"`User` has no field `Team\.name`"
+        ):
+            db.query(User).in_bulk(Team.name)
 
 
 def test_only_columns(db: Database) -> None:

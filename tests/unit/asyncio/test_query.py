@@ -183,6 +183,17 @@ async def test_unfiltered(db: Database) -> None:
 
 
 @pytest.mark.anyio
+async def test_in_bulk_keys_the_rows_by_a_column(db: Database) -> None:
+    async with db.connect():
+        by_name = await db.query(User).where(User.id > 3).in_bulk(User.name)
+        by_key = await db.query(User).in_bulk()
+
+        assert_type(by_name, dict[str, User])
+        assert {name: user.id for name, user in by_name.items()} == {"d": 4, "e": 5}
+        assert list(by_key) == [1, 2, 3, 4, 5]
+
+
+@pytest.mark.anyio
 async def test_only_columns(db: Database) -> None:
     async with db.connect():
         query = User.query.order_by(User.id)

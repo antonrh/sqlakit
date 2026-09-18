@@ -479,6 +479,22 @@ class InvalidNullsError(SQLAKitError, ValueError):
         super().__init__(f"`nulls` is `first` or `last`, not `{nulls!r}`.")
 
 
+class DuplicateKeyError(SQLAKitError, ValueError):
+    """Raised when `in_bulk` finds two rows under one key."""
+
+    def __init__(
+        self, model: str, key: Iterable[str] = (), value: object = None
+    ) -> None:
+        super().__init__(
+            f"`in_bulk` keys {model} rows by {', '.join(key) or 'the primary key'}, "
+            f"and two rows share {value!r}. Key by something unique, or narrow "
+            f"the query to one row per key."
+        )
+        self.model = model
+        self.key = tuple(key)
+        self.value = value
+
+
 class KeyLookupError(SQLAKitError, TypeError):
     """Raised when a lookup by primary key is asked to honour what it cannot."""
 

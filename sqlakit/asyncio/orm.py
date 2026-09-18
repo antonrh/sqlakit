@@ -31,6 +31,8 @@ from sqlakit._query import (
     BaseQuery,
     CursorPage,
     Page,
+    key_names,
+    keyed,
     merged,
     one_row,
     one_row_or_none,
@@ -151,6 +153,61 @@ class Query(BaseQuery[ModelT]):
         """Return every matching row."""
         result = await self._rows(self._executable())
         return result.all()
+
+    @overload
+    async def in_bulk(self) -> dict[Any, ModelT]: ...
+
+    @overload
+    async def in_bulk(
+        self, key: _TypedColumnClauseArgument[C0], /
+    ) -> dict[C0, ModelT]: ...
+
+    @overload
+    async def in_bulk(
+        self,
+        key: _TypedColumnClauseArgument[C0],
+        other: _TypedColumnClauseArgument[C1],
+        /,
+    ) -> dict[tuple[C0, C1], ModelT]: ...
+
+    @overload
+    async def in_bulk(
+        self,
+        key: _TypedColumnClauseArgument[C0],
+        other: _TypedColumnClauseArgument[C1],
+        third: _TypedColumnClauseArgument[C2],
+        /,
+    ) -> dict[tuple[C0, C1, C2], ModelT]: ...
+
+    @overload
+    async def in_bulk(
+        self, *keys: _TypedColumnClauseArgument[Any]
+    ) -> dict[Any, ModelT]: ...
+
+    async def in_bulk(
+        self, *keys: _TypedColumnClauseArgument[Any]
+    ) -> dict[Any, ModelT]:
+        """Return every matching row, under the value it has in these columns.
+
+        ```python
+        User.query.where(User.id.in_(ids)).in_bulk()  # dict[int, User], by key
+        User.query.in_bulk(User.email)  # dict[str, User]
+        Seat.query.in_bulk(Seat.row, Seat.col)  # dict[tuple[int, str], Seat]
+        ```
+
+        One column keys by its value and several by the tuple of theirs, so
+        the checker knows the key's type. The rows keep the query's order, and
+        a key column the query defers is loaded with the row.
+
+        Raises:
+            DuplicateKeyError: if two rows share a key.
+            UnknownFieldError: if a key is not a column of the model.
+
+        """
+        # A key the model defers is read with the row rather than one row at a time.
+        names = key_names(self.model, keys)
+        rows = await self.undefer(*keys).all()
+        return keyed(rows, self.model, names)
 
     async def first(self) -> ModelT | None:
         """Return the first matching row, or None."""
