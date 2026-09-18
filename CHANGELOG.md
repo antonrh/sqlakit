@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.19.0
+
+### Added
+
+- `in_bulk()` on a query returns the matching rows as a dict. With no argument
+  the key is the primary key, a column keys by its value, and several columns
+  by the tuple of theirs, with the key's type carried through:
+  `User.query.in_bulk(User.email)` is a `dict[str, User]`. A key column the
+  query defers is loaded with the row, a key that is not a column of the model
+  raises `UnknownFieldError`, and two rows under one key raise
+  `DuplicateKeyError` rather than losing a row.
+- A [comparison page](https://sqlakit.readthedocs.io/en/stable/comparison/):
+  connection, session and transaction management, each block next to the
+  `SQLAlchemy` code it stands in for.
+
+### Fixed
+
+- `with_expression()` reads an instance the session already holds again, so
+  the attribute takes this read's expression. Before, a query method called
+  twice with different parameters in one session left the first value on the
+  instances the second read returned.
+
 ## 0.18.0
 
 ### Changed
