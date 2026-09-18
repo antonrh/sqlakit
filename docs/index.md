@@ -397,6 +397,7 @@ On shutdown, `dispose()` closes the pool.
 | | |
 | --- | --- |
 | [Getting started](getting-started.md) | a database, a model and a test from an empty file |
+| [Compared to SQLAlchemy](comparison.md) | the blocks next to the `SQLAlchemy` code they stand in for |
 | [The database](databases.md) | building one, an instance or the registry, engine arguments |
 | [Context](context.md) | the blocks, what each commits, how they nest |
 | [Queries](queries.md) | the builder, ordering, limit-offset and cursor pagination, reading in batches |

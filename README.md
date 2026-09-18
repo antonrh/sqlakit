@@ -396,10 +396,11 @@ On shutdown, `dispose()` closes the pool.
 
 [Getting started](docs/getting-started.md) builds a database, a model and a
 test from an empty file. The rest is under [`docs/`](docs/):
-[queries](docs/queries.md), [SQL templates](docs/sql.md),
-[models](docs/models.md), [testing](docs/testing.md),
-[debugging](docs/debugging.md), [multiple databases](docs/routing.md) and
-[the reference](docs/reference.md). Complete example apps live in
-[`examples/`](examples/), and each one is run by the test suite.
+[compared to SQLAlchemy](docs/comparison.md), [queries](docs/queries.md),
+[SQL templates](docs/sql.md), [models](docs/models.md),
+[testing](docs/testing.md), [debugging](docs/debugging.md),
+[multiple databases](docs/routing.md) and [the reference](docs/reference.md).
+Complete example apps live in [`examples/`](examples/), and each one is run by
+the test suite.
 
 What changed in each version is in the [changelog](CHANGELOG.md).
