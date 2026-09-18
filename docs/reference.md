@@ -330,6 +330,8 @@ except ValueError:  # any bad input, from here or elsewhere
 
 ::: sqlakit.KeyLookupError
 
+::: sqlakit.DuplicateKeyError
+
 ::: sqlakit.UnknownFieldError
 
 ::: sqlakit.BulkQueryError
