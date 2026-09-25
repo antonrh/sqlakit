@@ -10,7 +10,8 @@ import pytest
 
 from sqlakit import ProjectConfigError
 from sqlakit._cli import main
-from sqlakit._lsp import (
+from sqlakit._sql import signature_of, sql_macros
+from sqlakit.editor._lsp import (
     Completion,
     Diagnostic,
     Target,
@@ -20,8 +21,7 @@ from sqlakit._lsp import (
     offset_of,
     position_of,
 )
-from sqlakit._project import load_project
-from sqlakit._sql import signature_of, sql_macros
+from sqlakit.editor._project import load_project
 
 PYPROJECT = """
 [project]

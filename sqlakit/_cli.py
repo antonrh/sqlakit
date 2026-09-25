@@ -5,14 +5,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
-import tomllib
 from pathlib import Path
 
-from ._lsp import serve
-from ._project import LINT_EXCLUDED, Problem, load_project
 from ._sql import registered, signature_of
+from .editor._lsp import serve
+from .editor._project import Problem, load_project
+from .editor._pycharm import DIALECTS, ddl, dialects
+from .editor._sqruff import settings, stale
 from .exceptions import ProjectConfigError
 
 
@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
     export = commands.add_parser(
         "export", help="write what another tool needs to read the templates"
     )
-    export.add_argument("tool", choices=("sqruff",))
+    export.add_argument("tool", choices=("sqruff", "pycharm"))
     export.add_argument(
         "--project",
         default=".",
@@ -71,7 +71,8 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.command == "check":
         return _check(Path(arguments.project), json_output=arguments.format == "json")
     if arguments.command == "export":
-        return _export(
+        export = _export_pycharm if arguments.tool == "pycharm" else _export
+        return export(
             Path(arguments.project), dialect=arguments.dialect, check=arguments.check
         )
     if arguments.command == "lsp":  # pragma: no cover - run by an editor
@@ -118,86 +119,74 @@ def _check(directory: Path, *, json_output: bool) -> int:
 
 
 def _export(directory: Path, *, dialect: str | None, check: bool) -> int:
-    """Write the `sqruff` settings into `pyproject.toml`.
-
-    The values the templates need are written again each time, and a value you
-    added to the table stays. The rest of `[tool.sqruff.core]` is yours: it is
-    written only when the table is missing.
-    """
+    """Write the `sqruff` settings that read the templates into `pyproject.toml`."""
     try:
         project = load_project(directory)
     except ProjectConfigError as error:
         _say(str(error))
         return 2
     pyproject = project.root / "pyproject.toml"
-    text = pyproject.read_text(encoding="utf-8")
-    values = project.placeholder_values()
-    sqruff = tomllib.loads(text).get("tool", {}).get("sqruff", {})
-    written = dict(sqruff.get("templater", {}).get("placeholder", {}))
-    written.pop("param_style", None)
+    text = pyproject.read_text(encoding="utf-8") if pyproject.exists() else ""
     if check:
-        stale = [
-            name
-            for name, fresh in (
-                ("[tool.sqruff.core]", "core" in sqruff),
-                (
-                    "[tool.sqruff.templater.placeholder]",
-                    all(written.get(name) == value for name, value in values.items()),
-                ),
-            )
-            if not fresh
-        ]
-        if stale:
-            _say(f"{', '.join(stale)} out of date: run `sqlakit export sqruff`")
+        tables = stale(project, text)
+        if tables:
+            _say(f"{', '.join(tables)} out of date: run `sqlakit export sqruff`")
             return 1
         return 0
-    if "core" not in sqruff:
-        core = [
-            "[tool.sqruff.core]",
-            *(
-                [f'dialect = "{dialect or project.dialect}"']
-                if dialect or project.dialect
-                else []
-            ),
-            'templater = "placeholder"',
-            f'exclude_rules = "{",".join(LINT_EXCLUDED)}"',
-        ]
-        text = text.rstrip("\n") + "\n\n" + "\n".join(core) + "\n"
-    merged = dict(sorted({**written, **values}.items()))
-    table = "\n".join(
-        [
-            "[tool.sqruff.templater.placeholder]",
-            "# `sqlakit export sqruff` writes what the templates need, and keeps",
-            "# what you add.",
-            'param_style = "colon"',
-            *(f"{name} = {_toml_value(value)}" for name, value in merged.items()),
-        ]
-    )
-    header = re.compile(r"^\[tool\.sqruff\.templater\.placeholder\]\s*$", re.MULTILINE)
-    if found := header.search(text):
-        following = re.compile(r"^\[", re.MULTILINE).search(text, found.end())
-        end = following.start() if following else len(text)
-        text = (
-            text[: found.start()]
-            + table
-            + "\n"
-            + ("\n" if following else "")
-            + text[end:]
-        )
-    else:
-        text = text.rstrip("\n") + "\n\n" + table + "\n"
-    pyproject.write_text(text, encoding="utf-8")
+    pyproject.write_text(settings(project, text, dialect), encoding="utf-8")
     _say(f"wrote {_relative(pyproject)}")
     return 0
 
 
-def _toml_value(value: object) -> str:
-    """Return a value as TOML writes it: a string quoted, a flag in lower case."""
-    if isinstance(value, bool):
-        return str(value).lower()
-    if isinstance(value, int | float):
-        return str(value)
-    return json.dumps(str(value))
+def _export_pycharm(directory: Path, *, dialect: str | None, check: bool) -> int:
+    """Write what PyCharm needs into `.idea/`: the macros as DDL, and the dialect."""
+    try:
+        project = load_project(directory)
+    except ProjectConfigError as error:
+        _say(str(error))
+        return 2
+    chosen = (dialect or project.dialect or "postgresql").lower()
+    if chosen not in DIALECTS:
+        _say(
+            f"PyCharm has no dialect `{chosen}`: pass one of {', '.join(sorted(DIALECTS))}"
+        )
+        return 2
+    idea = project.root / ".idea"
+    ddl_path = idea / "sqlakit.sql"
+    mappings_path = idea / "sqldialects.xml"
+    written = (
+        mappings_path.read_text(encoding="utf-8") if mappings_path.exists() else None
+    )
+    wanted = {
+        ddl_path: ddl(project, "snowflake" if chosen == "snowflake" else "postgresql"),
+        mappings_path: dialects(
+            project.root,
+            [Path(path) for path in project.templates.paths],
+            chosen,
+            written,
+        ),
+    }
+    if check:
+        stale = [
+            _relative(path)
+            for path, text in wanted.items()
+            if not path.exists() or path.read_text(encoding="utf-8") != text
+        ]
+        if stale:
+            _say(f"{', '.join(stale)} out of date: run `sqlakit export pycharm`")
+            return 1
+        return 0
+    idea.mkdir(exist_ok=True)
+    for path, text in wanted.items():
+        path.write_text(text, encoding="utf-8")
+    _say(
+        f"wrote {_relative(ddl_path)} and {_relative(mappings_path)}\n\n"
+        "Once, in PyCharm:\n"
+        f"  Database > + > DDL Data Source, and add {_relative(ddl_path)} to it\n"
+        "  Settings > Tools > Database > User Parameters: add the pattern\n"
+        r"    :(\w+(?:\.\w+)*)  with SQL checked"
+    )
+    return 0
 
 
 def _as_json(problem: Problem) -> dict[str, object]:

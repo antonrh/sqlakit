@@ -23,8 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ._sql import NAMESPACE, Context, Macro, Param, Sql, _Slot
-from .exceptions import MacroArgumentError
+from sqlakit._sql import NAMESPACE, Context, Macro, Param, Sql, _Slot
+from sqlakit.exceptions import MacroArgumentError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

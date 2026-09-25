@@ -25,8 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlparse
 
-from ._project import Project, load_project
-from ._sql import (
+from sqlakit._sql import (
     INCLUDE,
     Macro,
     Param,
@@ -34,14 +33,16 @@ from ._sql import (
     _required,
     signature_of,
 )
-from ._static import SKIPPED
-from .exceptions import (
+from sqlakit.exceptions import (
     MacroArgumentError,
     MacroSyntaxError,
     ProjectConfigError,
     SQLAKitError,
     UnknownMacroError,
 )
+
+from ._project import Project, load_project
+from ._static import SKIPPED
 
 if TYPE_CHECKING:
     from lsprotocol import types
