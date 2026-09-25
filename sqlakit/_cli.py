@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     check = commands.add_parser(
-        "check", help="check every template the project's pyproject.toml names"
+        "check", help="check every template the project's code builds `Templates` with"
     )
     check.add_argument(
         "--project",
@@ -55,7 +55,9 @@ def main(argv: list[str] | None = None) -> int:
         default=".",
         help="a directory in the project, the current one by default",
     )
-    export.add_argument("--dialect", help="the dialect, when pyproject.toml says none")
+    export.add_argument(
+        "--dialect", help="the dialect, when the code and pyproject.toml name none"
+    )
     export.add_argument(
         "--check",
         action="store_true",
@@ -102,6 +104,7 @@ def _check(directory: Path, *, json_output: bool) -> int:
     if json_output:
         _say(json.dumps([_as_json(problem) for problem in problems], indent=2))
     else:
+        _say(_paint("\n".join(project.found), DIM) + "\n")
         for problem in problems:
             line, column = problem.position()
             _say(f"{_relative(problem.path)}:{line}:{column}: {problem.message}")

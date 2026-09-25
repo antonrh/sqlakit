@@ -1,13 +1,15 @@
-"""A project's templates, as its `pyproject.toml` describes them.
+"""A project's templates, read from its code without running it.
 
 The command line and the language server have no `Database` to ask, so they
-read where the templates are, and which macros they call, from the project:
+read the `Templates(...)` the code builds and the macros it defines: see
+`discover`. `[tool.sqlakit.templates]` in `pyproject.toml` overrides what the
+reading finds, for code that builds its paths in a way the reading cannot
+follow:
 
 ```toml
 [tool.sqlakit.templates]
 paths = ["app/sql"]
-macros = ["app.sql.macros"]
-namespace = "tpl"
+dialect = "postgresql"
 ```
 """
 
@@ -15,7 +17,7 @@ from __future__ import annotations
 
 import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -33,7 +35,7 @@ from ._sql import (
     inline_position,
     sql_macros,
 )
-from ._static import discover
+from ._static import StaticMacro, discover
 from .exceptions import (
     MacroArgumentError,
     MacroDefinitionError,
@@ -90,12 +92,14 @@ class Problem:
 
 @dataclass(frozen=True, slots=True)
 class Project:
-    """The directory `pyproject.toml` is in, and the templates it describes."""
+    """The directory `pyproject.toml` is in, and the templates its code builds."""
 
     root: Path
     templates: Templates
     dialect: str | None = None
     """The dialect the templates are written in, for a linter to read them in."""
+    found: tuple[str, ...] = field(default=())
+    """What was read, and where from, one line each: see `load_project`."""
 
     def name_of(self, path: Path) -> str | None:
         """Return a file's template name, or None when no template path holds it."""
@@ -257,7 +261,8 @@ def load_project(start: Path | None = None) -> Project:
     if not paths:
         problem = (
             f"no code under {root} builds `Templates(...)` with a path it can read, "
-            f"and no directory there is named `sql`"
+            f"and no directory there is named `sql`. Name the directories in "
+            f'`pyproject.toml`: [tool.sqlakit.templates] paths = ["app/sql"]'
         )
         raise ProjectConfigError(problem)
     sql_macros = (
@@ -271,7 +276,44 @@ def load_project(start: Path | None = None) -> Project:
         macros=[*python_macros, *sql_macros],
         namespace=config.get("namespace", found.namespace),
     )
-    return Project(root, templates, config.get("dialect"))
+    origins = dict(found.origins)
+    for key in ("namespace", "dialect"):
+        if key in config:
+            origins[key] = "pyproject.toml"
+    if "paths" in config:
+        origins.update(dict.fromkeys(paths, "pyproject.toml"))
+    project = Project(root, templates, config.get("dialect", found.dialect))
+    return replace(project, found=_found(project, origins, python_macros))
+
+
+def _found(
+    project: Project, origins: dict[Path | str, str], python_macros: list[Any]
+) -> tuple[str, ...]:
+    """Say what the project was read as, a line for each part and its source."""
+
+    def shown(path: Path) -> str:
+        try:
+            return path.relative_to(project.root).as_posix()
+        except ValueError:
+            return str(path)
+
+    lines = [
+        f"templates: {shown(Path(path))} ({origins.get(Path(path), 'given')})"
+        for path in project.templates.paths
+    ]
+    namespace = project.templates.namespace
+    lines.append(f"namespace: {namespace} ({origins.get('namespace', 'the default')})")
+    python = sum(isinstance(macro, StaticMacro) for macro in python_macros)
+    files = len(project.macro_files())
+    lines.append(
+        f"macros: {python} in Python, {files} "
+        f"{'file' if files == 1 else 'files'} of SQL macros"
+    )
+    if project.dialect is None:
+        lines.append("dialect: not in the code, so `sqlakit export` takes --dialect")
+    else:
+        lines.append(f"dialect: {project.dialect} ({origins['dialect']})")
+    return tuple(lines)
 
 
 def _pyproject(start: Path) -> Path | None:

@@ -639,6 +639,11 @@ The command line checks them without an application to start:
 
 ```console
 $ sqlakit check
+templates: app/sql (app/db.py:12)
+namespace: tpl (the default)
+macros: 3 in Python, 1 file of SQL macros
+dialect: postgresql (app/db.py:10)
+
 app/sql/users/search.sql:4:7: Unknown macro tpl.nope in users/search.sql:4; ...
 12 templates, 1 problems
 ```
@@ -647,20 +652,30 @@ It exits with `1` when it finds a problem, so it fits CI and a pre-commit hook.
 `--format json` prints a list of `path`, `line`, `column` and `message` for a
 tool to read, and `--project app` checks the project around another directory.
 
-It reads your code rather than running it. The `Templates(...)` you build says
-where the templates are, which files hold SQL macros and the namespace, and a
-function decorated `@sql_macro` is a macro wherever it lives. A path spelled
-with a string, `Path(__file__)`, `.parent` and `/`, or a name assigned one of
-those, is read. Nothing is imported, so settings that need the environment
-don't get in the way. When the code builds its paths some other way, from an
-environment variable, every directory named `sql` is taken, or you say where
-in `pyproject.toml`:
+There's nothing to configure. `sqlakit check`, `sqlakit export` and
+`sqlakit-lsp` read your code without running it, and find what the application
+already says:
+
+- the template directories, the files of SQL macros and the namespace, from the
+  `Templates(...)` you build
+- the Python macros, from `@sql_macro`, wherever they live
+- the dialect, from the URL in `Database(...)` when the code writes it out, or
+  from the default of `os.environ.get("DATABASE_URL", "postgresql://...")`.
+
+The first lines of `sqlakit check` say what was found and in which file and
+line. A path is read when it is spelled with a string, `Path(__file__)`,
+`.parent` and `/`, or a name assigned one of those. Nothing is imported, so
+settings that need the environment don't get in the way.
+
+### Paths the code builds in another way
+
+A path taken from a settings object or an environment variable can't be read
+without running the code. Then every directory named `sql` is taken, or
+you say where in `pyproject.toml`:
 
 ```toml
 [tool.sqlakit.templates]
 paths = ["app/sql"]
-macros = ["app/sql/_macros.sql"]
-namespace = "tpl"
 dialect = "postgresql"
 ```
 
@@ -672,8 +687,8 @@ dialect = "postgresql"
 | `dialect` | the dialect `sqlakit export` writes for, unless `--dialect` says another |
 
 Each key replaces what the reading found, and a key left out keeps it. Python
-macros are always found by their decorator. `sqlakit check`, `sqlakit export`
-and `sqlakit-lsp` all read this table, and the application never does.
+macros are always found by their decorator. The application never reads this
+table.
 
 ## Editor support
 
@@ -691,6 +706,9 @@ In a `.sql` template it gives:
 - the macro's signature and docstring on hover
 - go to definition on a macro, to its function or its SQL, and on an included
   template, to the file
+- find references: every call of a macro, from a call or from its definition,
+  and everything that reads a template, `tpl.include` and `db.sql(...)`, asked
+  from anywhere in the template
 
 In your Python, the name in `db.sql("users/search.sql")`, `from_file` or
 `from_sql` completes, links to the file, and is marked when no template

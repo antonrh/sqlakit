@@ -15,11 +15,30 @@ from sqlakit._sql import signature_of
 PYPROJECT = """
 [project]
 name = "app"
-
-[tool.sqlakit.templates]
-paths = ["sql"]
-macros = ["lsp_macros", "_macros.sql"]
 """
+
+DB = """
+import os
+from pathlib import Path
+
+from sqlakit import Database
+from sqlakit.sql import Templates
+
+HERE = Path(__file__).parent
+
+db = Database(
+    os.environ["DATABASE_URL"],
+    templates=Templates(HERE / "sql", macros=[HERE / "_macros.sql"]),
+)
+"""
+
+FOUND = [
+    "templates: sql (db.py:12)",
+    "namespace: tpl (the default)",
+    "macros: 1 in Python, 1 file of SQL macros",
+    "dialect: not in the code, so `sqlakit export` takes --dialect",
+]
+"""What `sqlakit check` says it read of the project below."""
 
 MACROS = '''
 from sqlakit.sql import Param, sql_macro
@@ -91,6 +110,7 @@ def side(which: Literal["'left'", "'right'"] = "'left'") -> str:
 @pytest.fixture
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (tmp_path / "pyproject.toml").write_text(PYPROJECT)
+    (tmp_path / "db.py").write_text(DB)
     (tmp_path / "lsp_macros.py").write_text(MACROS)
     (tmp_path / "_macros.sql").write_text(SQL_MACROS)
     for name, source in TEMPLATES.items():
@@ -102,11 +122,47 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def test_a_project_reads_its_templates_from_pyproject(project: Path) -> None:
+def test_a_project_is_read_from_the_templates_its_code_builds(project: Path) -> None:
     loaded = load_project(project / "sql")
+
     assert loaded.root == project
     assert loaded.templates.paths == (project / "sql",)
     assert "mine" in loaded.templates.macros
+    assert list(loaded.found) == FOUND
+
+
+def test_pyproject_overrides_what_the_code_says(project: Path) -> None:
+    (project / "queries").mkdir()
+    (project / "pyproject.toml").write_text(
+        PYPROJECT
+        + '[tool.sqlakit.templates]\npaths = ["queries"]\ndialect = "snowflake"\n'
+    )
+    loaded = load_project(project)
+
+    assert loaded.templates.paths == (project / "queries",)
+    assert loaded.dialect == "snowflake"
+    assert loaded.found[0] == "templates: queries (pyproject.toml)"
+    assert loaded.found[-1] == "dialect: snowflake (pyproject.toml)"
+
+
+@pytest.mark.parametrize(
+    ("url", "dialect"),
+    [
+        ('"postgresql+psycopg://localhost/app"', "postgresql"),
+        ('os.environ.get("DATABASE_URL", "snowflake://account/db")', "snowflake"),
+        ("URL", "mysql"),
+        ('os.environ["DATABASE_URL"]', None),
+    ],
+)
+def test_the_dialect_is_read_from_a_url_the_code_writes_out(
+    tmp_path: Path, url: str, dialect: str | None
+) -> None:
+    (tmp_path / "sql").mkdir()
+    (tmp_path / "db.py").write_text(
+        f'import os\n\nURL = "mysql+pymysql://localhost/app"\ndb = Database({url})\n'
+    )
+
+    assert load_project(tmp_path).dialect == dialect
 
 
 @pytest.mark.parametrize(
@@ -175,6 +231,8 @@ def test_check_names_every_problem_once_where_it_is(
     available = ", ".join(sorted([*load_project(project).templates.macros, "include"]))
     assert main(["check"]) == 1
     assert capsys.readouterr().out.splitlines() == [
+        *FOUND,
+        "",
         (
             "sql/inner.sql:2:7: Unknown macro tpl.nope in inner.sql:2; "
             f"available: {available}. Register one with "
@@ -202,7 +260,7 @@ def test_check_names_a_missing_include_where_the_include_is(
     assert main(["check"]) == 1
     assert (
         capsys.readouterr()
-        .out.splitlines()[0]
+        .out.splitlines()[len(FOUND) + 1]
         .startswith("sql/outer.sql:2:6: tpl.include: No SQL template named `inner.sql`")
     )
 
@@ -213,7 +271,11 @@ def test_check_passes_a_clean_project(
     for name in ("inner.sql", "outer.sql", "open.sql"):
         (project / "sql" / name).unlink()
     assert main(["check"]) == 0
-    assert capsys.readouterr().out == "1 templates, 0 problems\n"
+    assert capsys.readouterr().out.splitlines() == [
+        *FOUND,
+        "",
+        "1 templates, 0 problems",
+    ]
 
 
 def test_check_says_when_the_project_says_nothing(
@@ -232,7 +294,7 @@ def test_check_names_a_broken_sql_macro(
     assert main(["check"]) == 1
     assert (
         capsys.readouterr()
-        .out.splitlines()[0]
+        .out.splitlines()[len(FOUND) + 1]
         .startswith("_macros.sql:4:1: Unknown macro tpl.nope in _macros.sql:4")
     )
 
@@ -308,7 +370,14 @@ def test_check_passes_a_file_of_macros_among_the_templates(
         "SELECT t.team = :team AS for_team FROM t;\n"
     )
     assert main(["check", "--project", str(app)]) == 0
-    assert capsys.readouterr().out == "1 templates, 0 problems\n"
+    assert capsys.readouterr().out.splitlines() == [
+        "templates: shop/sql (shop/db.py:11)",
+        "namespace: q (shop/db.py:11)",
+        "macros: 2 in Python, 1 file of SQL macros",
+        "dialect: sqlite (shop/db.py:9)",
+        "",
+        "1 templates, 0 problems",
+    ]
 
 
 def test_export_gives_a_stage_and_a_sample_the_value_a_linter_reads(

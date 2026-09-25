@@ -13,6 +13,11 @@ is parsed, never imported.
   out as far as the code spells them plainly: a string, `Path(__file__)`,
   `.parent`, `/`, and a name the module assigned one of those to.
 - When no call says where the templates are, every directory named `sql` is.
+- A database URL written as a string, `Database("postgresql://...")` or the
+  default of `os.environ.get(...)`, gives the dialect.
+
+Each finding keeps the file and the line it came from, so a check can say
+what it read and where.
 """
 
 from __future__ import annotations
@@ -94,11 +99,14 @@ class StaticMacro(Macro):
 
 @dataclass
 class Discovered:
-    """The templates and the macros a project's code names."""
+    """The templates and the macros a project's code names, and where it does."""
 
     paths: list[Path] = field(default_factory=list)
     macros: list[Macro | Path] = field(default_factory=list)
     namespace: str = NAMESPACE
+    dialect: str | None = None
+    origins: dict[Path | str, str] = field(default_factory=dict)
+    """Where each path, `namespace` and `dialect` was read: `shop/db.py:8`."""
 
 
 def discover(root: Path) -> Discovered:
@@ -124,6 +132,8 @@ def discover(root: Path) -> Discovered:
             for directory in root.rglob("sql")
             if directory.is_dir() and not _skipped(directory, root)
         )
+        for directory in found.paths:
+            found.origins[directory] = "a directory named `sql`"
     return found
 
 
@@ -161,28 +171,59 @@ def _read_call(
     root: Path,
     found: Discovered,
 ) -> None:
-    """Take what a `Templates(...)` or a `templates=` says."""
+    """Take what a `Templates(...)`, a `templates=` or a database URL says."""
     called = _last_name(node.func)
     keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+    at = f"{path.relative_to(root).as_posix()}:{node.lineno}"
     if called == "Templates":
         where = node.args[0] if node.args else keywords.get("path")
-        _add_paths(where, names, path, root, found)
+        _add_paths(where, names, path, root, found, at=at)
         for macro in _values(keywords.get("macros"), names, path, root):
             if isinstance(macro, Path) and macro.suffix == ".sql":
                 found.macros.append(macro)
         namespace = keywords.get("namespace")
         if isinstance(namespace, ast.Constant) and isinstance(namespace.value, str):
             found.namespace = namespace.value
-    elif "templates" in keywords and not isinstance(keywords["templates"], ast.Call):
-        _add_paths(keywords["templates"], names, path, root, found)
+            found.origins["namespace"] = at
+        return
+    if called == "Database" and found.dialect is None:
+        url = node.args[0] if node.args else keywords.get("url")
+        if dialect := _dialect_of(url, names):
+            found.dialect = dialect
+            found.origins["dialect"] = at
+    if "templates" in keywords and not isinstance(keywords["templates"], ast.Call):
+        _add_paths(keywords["templates"], names, path, root, found, at=at)
 
 
-def _add_paths(
+def _dialect_of(node: ast.expr | None, names: dict[str, ast.expr]) -> str | None:
+    """Return the dialect a URL names, when the code writes the URL out.
+
+    `"postgresql+psycopg://..."` is `postgresql`. A URL from the environment
+    counts when the code gives a default: `os.environ.get("URL", "sqlite://")`.
+    """
+    if isinstance(node, ast.Name):
+        node = names.get(node.id)
+    if (
+        isinstance(node, ast.Call)
+        and _last_name(node.func) in ("get", "getenv")
+        and len(node.args) > 1
+    ):
+        node = node.args[1]
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        scheme, separator, _ = node.value.partition("://")
+        if separator and scheme:
+            return scheme.split("+", 1)[0]
+    return None
+
+
+def _add_paths(  # noqa: PLR0913 - the call, and where it was read
     node: ast.expr | None,
     names: dict[str, ast.expr],
     path: Path,
     root: Path,
     found: Discovered,
+    *,
+    at: str,
 ) -> None:
     for value in _values(node, names, path, root):
         directory = root / value if isinstance(value, str) else value
@@ -192,6 +233,7 @@ def _add_paths(
             and directory not in found.paths
         ):
             found.paths.append(directory)
+            found.origins[directory] = at
 
 
 def _values(
