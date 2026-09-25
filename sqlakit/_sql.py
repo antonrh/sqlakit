@@ -8,6 +8,7 @@ from dataclasses import dataclass, is_dataclass
 from functools import cache, cached_property, lru_cache
 from inspect import iscoroutinefunction
 from pathlib import Path
+from types import SimpleNamespace
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -77,10 +78,14 @@ __all__ = [
     "signature_of",
     "sql_macro",
     "templates_of",
+    "tpl",
 ]
 
 _preparer: ContextVar[Any] = ContextVar("sqlakit.identifier_preparer")
 """The preparer of the database a template is rendering for."""
+
+_context: ContextVar[Context] = ContextVar("sqlakit.macro_context")
+"""The call a macro template is rendering, for a macro that calls another."""
 
 RowT = TypeVar("RowT")
 OtherT = TypeVar("OtherT")
@@ -102,9 +107,9 @@ PathLike = str | Path
 SUFFIX = ".tpl.sql"
 """The extension that picks macros over Jinja."""
 
-_NEXT = re.compile(r"""['"$(\[{)\]},]|--|/\*|(?<![\w.])tpl\.""", re.IGNORECASE)
-"""Where the scanner has something to decide; the text between is copied as is."""
-_CALL = re.compile(r"tpl\.([A-Za-z_]\w*)\s*\(", re.IGNORECASE)
+NAMESPACE = "tpl"
+"""The schema name macros are called under unless `Templates` says otherwise."""
+_IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
 _PARAMETER = re.compile(r"\s*:([A-Za-z_]\w*)\s*")
 _DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$")
 _COLUMN_AS = re.compile(r"\s*([A-Za-z_]\w*)\s*=(?!=)\s*(.+?)\s*", re.DOTALL)
@@ -130,6 +135,34 @@ class Param:
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.name!r}, {self.value!r})"
+
+
+class _Value(Param):
+    """A value passed where a `:parameter` goes, bound when the SQL names it.
+
+    A macro that only reads the value binds nothing, and one that binds each
+    item of a list binds only those.
+    """
+
+    __slots__ = ("_ctx", "_macro", "_placeholder")
+
+    def __init__(self, value: Any, ctx: Context | None, macro: str) -> None:  # noqa: ANN401
+        super().__init__("value", value)
+        self._ctx = ctx
+        self._macro = macro
+        self._placeholder: str | None = None
+
+    def __str__(self) -> str:
+        if self._placeholder is None:
+            if self._ctx is None:
+                raise _outside_a_template(self._macro)
+            self._placeholder = self._ctx.bind(self.value)
+        return self._placeholder
+
+
+def _outside_a_template(macro: str) -> MacroArgumentError:
+    problem = "called outside a template, where there is nothing to bind to"
+    return MacroArgumentError(macro, problem)
 
 
 class Sql(str):
@@ -214,7 +247,42 @@ class Macro:
         return f"{type(self).__name__}({self.name!r})"
 
     def __call__(self, *args: Any) -> str:  # noqa: ANN401
-        return self.func(*args)
+        """Call the macro from another one, the way a template calls it.
+
+        ```python
+        tpl.icontains("name", q)
+        tpl.each([1, 2, 3])
+        ```
+
+        The context is the render's, a string is SQL, and a value where a
+        `:parameter` goes is bound as one.
+
+        Raises:
+            MacroArgumentError: if it needs a context and no template is rendering.
+
+        """
+        if args and isinstance(args[0], Context):
+            ctx, args = args[0], args[1:]
+        else:
+            ctx = _context.get(None)
+        if ctx is None and self.context:
+            raise _outside_a_template(self.name)
+        converted = [self._converted(index, arg, ctx) for index, arg in enumerate(args)]
+        return self.func(*([ctx] if self.context else []), *converted)
+
+    def _converted(self, index: int, arg: Any, ctx: Context | None) -> Any:  # noqa: ANN401
+        kind = self._kind_or_none(index)
+        if kind is Param and not isinstance(arg, Param):
+            return _Value(arg, ctx, self.name)
+        if kind is Sql and not isinstance(arg, Sql):
+            return Sql(arg)
+        return arg
+
+    def _kind_or_none(self, index: int) -> type[Param | Sql] | None:
+        """Return what an argument is, or None past what the macro takes."""
+        if index < len(self.slots) or self.variadic is not None:
+            return self.kind_at(index)
+        return None
 
     @property
     def minimum(self) -> int:
@@ -299,7 +367,7 @@ def _slots_of(
     return context, tuple(slots), variadic
 
 
-def signature_of(macro: Macro) -> str:
+def signature_of(macro: Macro, namespace: str = NAMESPACE) -> str:
     """Return how a template calls a macro: `tpl.if_set(:p, expr[, otherwise])`."""
     written = ""
     for index, slot in enumerate(macro.slots):
@@ -310,7 +378,7 @@ def signature_of(macro: Macro) -> str:
         separator = ", " if macro.slots else ""
         shown = macro.variadic.name
         written += f"{separator}*{':' if macro.variadic.kind is Param else ''}{shown}"
-    return f"tpl.{macro.name}({written})"
+    return f"{namespace}.{macro.name}({written})"
 
 
 # The template, cut into text and calls.
@@ -330,12 +398,25 @@ class _Call:
     line: int
 
 
+@cache
+def _patterns(namespace: str) -> tuple[re.Pattern[str], re.Pattern[str]]:
+    """Return where the scanner has something to decide, and what a call is."""
+    prefix = re.escape(namespace)
+    decide = re.compile(
+        rf"""['"$(\[{{)\]}},]|--|/\*|(?<![\w.]){prefix}\.""", re.IGNORECASE
+    )
+    call = re.compile(rf"{prefix}\.([A-Za-z_]\w*)\s*\(", re.IGNORECASE)
+    return decide, call
+
+
 class _Scanner:
     """Cut a template into text and `tpl.` calls, past strings and comments."""
 
-    def __init__(self, source: str, template: str) -> None:
+    def __init__(self, source: str, template: str, namespace: str) -> None:
         self.source = source
         self.template = template
+        self.namespace = namespace
+        self.decide, self.call = _patterns(namespace)
 
     def parts(self) -> tuple[str | _Call, ...]:
         return self._scan(0, in_args=False)[0]
@@ -348,12 +429,14 @@ class _Scanner:
         parts: list[str | _Call] = []
         text_from = index = start
         depth = 0
-        while found := _NEXT.search(source, index):
+        while found := self.decide.search(source, index):
             index = found.start()
             char = source[index]
             if (skipped := self._past_literal(index)) != index:
                 index = skipped
-            elif (call := _CALL.match(source, index)) and not self._inside_name(index):
+            elif (call := self.call.match(source, index)) and not self._inside_name(
+                index
+            ):
                 parts.append(source[text_from:index])
                 args, index = self._args(call.end())
                 parts.append(
@@ -381,7 +464,7 @@ class _Scanner:
         while True:
             parts, index, closer = self._scan(index, in_args=True)
             if closer is None:
-                problem = "a `tpl.` call is never closed"
+                problem = f"a `{self.namespace}.` call is never closed"
                 raise self._error(problem, start - 1)
             args.append(_argument(parts))
             index += 1
@@ -468,18 +551,28 @@ class MacroTemplate:
     """A `.tpl.sql` file, read and checked against the macros it calls."""
 
     def __init__(
-        self, name: str, source: str, macros: Mapping[str, Macro], mtime: float = 0
+        self,
+        name: str,
+        source: str,
+        macros: Mapping[str, Macro],
+        mtime: float = 0,
+        namespace: str = NAMESPACE,
     ) -> None:
         self.name = name
         self.mtime = mtime
         self.macros = macros
-        self.parts = _Scanner(source, name).parts()
+        self.namespace = namespace
+        self.parts = _Scanner(source, name, namespace).parts()
         self._check(self.parts)
         self._compiled = self._compile(self.parts)
 
     def render(self, ctx: Context) -> str:
         """Return the SQL for this call, the values it bound going to ``ctx``."""
-        return self._render(self._compiled, ctx)
+        token = _context.set(ctx)
+        try:
+            return self._render(self._compiled, ctx)
+        finally:
+            _context.reset(token)
 
     def _compile(self, parts: Sequence[str | _Call]) -> tuple[str | _Expansion, ...]:
         """Resolve every call to its macro once, so rendering only calls them."""
@@ -515,33 +608,27 @@ class MacroTemplate:
                 and isinstance(after, str)
                 and _NULLS_AFTER.match(after)
             ):
-                raise MacroArgumentError(
-                    part.name,
+                problem = (
                     "a NULLS after the call would follow a NULLS of a sort string. "
-                    "Pass the default as an argument: 'nulls_last' or 'nulls_first'",
-                    self.name,
-                    part.line,
+                    "Pass the default as an argument: 'nulls_last' or 'nulls_first'"
                 )
+                raise self._refuse(part.name, problem, part.line)
             macro = self.macros.get(part.name)
             if macro is None:
-                raise UnknownMacroError(part.name, self.name, part.line, self.macros)
+                raise UnknownMacroError(
+                    part.name, self.name, part.line, self.macros, self.namespace
+                )
             count = len(part.args)
             if not macro.minimum <= count <= macro.maximum:
-                raise MacroArgumentError(
-                    macro.name,
-                    f"takes {_arity(macro)} arguments, got {count}",
-                    self.name,
-                    part.line,
-                )
+                problem = f"takes {_arity(macro)} arguments, got {count}"
+                raise self._refuse(macro.name, problem, part.line)
             for position, arg in enumerate(part.args):
                 if macro.kind_at(position) is Param and arg.param is None:
-                    written = _written(arg.parts)
-                    raise MacroArgumentError(
-                        macro.name,
-                        f"argument {position + 1} must be a :parameter, got {written!r}",
-                        self.name,
-                        part.line,
+                    written = self._written(arg.parts)
+                    problem = (
+                        f"argument {position + 1} must be a :parameter, got {written!r}"
                     )
+                    raise self._refuse(macro.name, problem, part.line)
                 self._check(arg.parts)
 
     def _render(self, parts: Sequence[str | _Expansion], ctx: Context) -> str:
@@ -556,20 +643,31 @@ class MacroTemplate:
         macro = call.macro
         values = ctx.values
         missing = [name for name in call.params if name not in values]
-        if not missing:
-            return macro.func(*self._arguments(call, ctx))
-        if not macro.optional:
-            raise MacroArgumentError(
-                macro.name, f"`:{missing[0]}` was not passed", self.name, call.line
-            )
+        if missing and not macro.optional:
+            problem = f"`:{missing[0]}` was not passed"
+            raise self._refuse(macro.name, problem, call.line)
         # An optional macro reads what was not passed as None, and so do the
-        # calls inside its arguments: `if_set(:q, ci_contains(name, :q))`.
+        # calls inside its arguments: `if_set(:q, icontains(name, :q))`.
         values.update(dict.fromkeys(missing))
         try:
             return macro.func(*self._arguments(call, ctx))
+        except MacroArgumentError as error:
+            if error.template:
+                raise
+            # A macro's own refusal, said where the call is.
+            raise self._refuse(macro.name, error.problem, call.line) from None
         finally:
             for name in missing:
                 del values[name]
+
+    def _refuse(self, macro: str, problem: str, line: int) -> MacroArgumentError:
+        return MacroArgumentError(macro, problem, self.name, line, self.namespace)
+
+    def _written(self, parts: Sequence[str | _Call]) -> str:
+        return "".join(
+            part if isinstance(part, str) else f"{self.namespace}.{part.name}(...)"
+            for part in parts
+        )
 
     def _arguments(self, call: _Expansion, ctx: Context) -> list[Any]:
         args: list[Any] = [ctx] if call.macro.context else []
@@ -600,12 +698,6 @@ def _arity(macro: Macro) -> str:
     return f"{macro.minimum} to {int(macro.maximum)}"
 
 
-def _written(parts: Sequence[str | _Call]) -> str:
-    return "".join(
-        part if isinstance(part, str) else f"tpl.{part.name}(...)" for part in parts
-    )
-
-
 class MacroEngine:
     """Renders templates with `tpl.` macros, each file read once and kept."""
 
@@ -615,14 +707,18 @@ class MacroEngine:
         macros: Mapping[str, Macro],
         *,
         auto_reload: bool = False,
+        namespace: str = NAMESPACE,
     ) -> None:
         self.paths = tuple(Path(path) for path in paths)
         self.macros = macros
         self.auto_reload = auto_reload
+        self.namespace = namespace
         self._loaded: dict[str, MacroTemplate] = {}
         # A string is read once too: the same few are written out again and again.
         self._from_string = lru_cache(maxsize=256)(
-            lambda source: MacroTemplate("<string>", source, self.macros)
+            lambda source: MacroTemplate(
+                "<string>", source, self.macros, namespace=namespace
+            )
         )
 
     def render_file(
@@ -662,7 +758,11 @@ class MacroEngine:
         mtime = path.stat().st_mtime
         if loaded is None or loaded.mtime != mtime:
             loaded = MacroTemplate(
-                name, path.read_text(encoding="utf-8"), self.macros, mtime
+                name,
+                path.read_text(encoding="utf-8"),
+                self.macros,
+                mtime,
+                self.namespace,
             )
             self._loaded[name] = loaded
         return loaded
@@ -716,11 +816,20 @@ def if_set(value: Param, expr: Sql, otherwise: Sql = Sql("TRUE")) -> str:  # noq
     """`expr` when the parameter holds a value, `otherwise` when it does not.
 
     `None`, an empty string, an empty list and `False` hold none, and so does a
-    parameter the call did not pass. `otherwise` is
-    `TRUE`, which leaves a `WHERE` or an `AND` as though the condition were not
-    there.
+    parameter the call did not pass. `otherwise` is `TRUE`, which leaves a
+    `WHERE` or an `AND` as though the condition were not there.
     """
     return expr if _is_set(value.value) else otherwise
+
+
+@sql_macro(optional=True)
+def unless_set(value: Param, expr: Sql, otherwise: Sql = Sql("TRUE")) -> str:  # noqa: B008
+    """`expr` when the parameter holds no value, `otherwise` when it does.
+
+    The other way round from `if_set`, for what applies only when a filter is
+    not given: `AND tpl.unless_set(:status, status <> 'archived')`.
+    """
+    return otherwise if _is_set(value.value) else expr
 
 
 def _is_set(value: Any) -> bool:  # noqa: ANN401
@@ -808,7 +917,7 @@ def _last_name(column: str) -> str:
 
 
 @sql_macro
-def ci_contains(
+def icontains(
     ctx: Context,
     column: Sql,
     text: Param,
@@ -864,11 +973,11 @@ def identifier(ctx: Context, name: Param, *allowed: Sql) -> str:
 
 
 @sql_macro
-def inclause(ctx: Context, values: Param) -> str:
+def each(ctx: Context, values: Param) -> str:
     """Each value of a list as a parameter of its own, for `IN (...)`.
 
     What the `inclause` filter does in a Jinja template. The parentheses are the
-    template's, so the SQL stays SQL: `WHERE team IN (tpl.inclause(:teams))`.
+    template's, so the SQL stays SQL: `WHERE team IN (tpl.each(:teams))`.
     `IN :teams` binds the list as one expanding parameter instead, which is what
     a template usually wants.
 
@@ -879,13 +988,26 @@ def inclause(ctx: Context, values: Param) -> str:
     items = list(values.value or ())
     if not items:
         problem = f"`:{values.name}` is empty, and `IN ()` is not SQL"
-        raise MacroArgumentError(inclause.name, problem)
+        raise MacroArgumentError(each.name, problem)
     return ", ".join(ctx.bind(item) for item in items)
 
 
 BUILTIN_MACROS: Mapping[str, Macro] = {
-    macro.name: macro for macro in (if_set, order_by, ci_contains, identifier, inclause)
+    macro.name: macro
+    for macro in (if_set, unless_set, order_by, icontains, identifier, each)
 }
+
+tpl = SimpleNamespace(**BUILTIN_MACROS)
+"""The built-in macros, to call from a macro of your own as a template would.
+
+```python
+@sql_macro
+def search(q: Param, *columns: Sql) -> str:
+    if not q.value:
+        return "TRUE"
+    return " OR ".join(tpl.icontains(column, q) for column in columns)
+```
+"""
 
 
 class Filter:
@@ -1028,11 +1150,16 @@ class Templates:
 
     A file named `*.tpl.sql` is not Jinja: it is SQL with `:name` parameters and
     `tpl.<macro>(...)` calls. ``macros`` are the ones an application adds to the
-    built-in `if_set`, `order_by`, `ci_contains`, `identifier` and `inclause`:
+    built-in `if_set`, `unless_set`, `order_by`, `icontains`, `identifier` and
+    `each`:
 
     ```python
     Templates("app/sql", macros=[for_accounts])
     ```
+
+    ``namespace`` is the schema name calls are written under, `tpl` unless a
+    real schema has that name: `Templates("app/sql", namespace="q")` reads
+    `q.if_set(...)`.
 
     ``engine`` says what renders everything else, a `.sql` file and
     `db.sql.from_string(...)`: `jinja`, or `tpl` once no template needs Jinja,
@@ -1048,6 +1175,7 @@ class Templates:
         globals: Mapping[str, Any] | None = None,  # noqa: A002
         macros: Iterable[Macro] = (),
         engine: Literal["jinja", "tpl"] = "jinja",
+        namespace: str = NAMESPACE,
     ) -> None:
         self.paths = (
             (path,) if isinstance(path, str | Path) else tuple(path)  # type: ignore[misc]
@@ -1060,6 +1188,10 @@ class Templates:
             msg = f"`engine` is `jinja` or `tpl`, not {engine!r}"
             raise ValueError(msg)
         self.engine = engine
+        if not _IDENTIFIER.fullmatch(namespace):
+            msg = f"`namespace` is a plain name, such as `tpl`, not {namespace!r}"
+            raise ValueError(msg)
+        self.namespace = namespace
         for name, value in (*self.filters.items(), *self.globals.items()):
             called = value.func if isinstance(value, Filter) else value
             if iscoroutinefunction(called):
@@ -1072,7 +1204,12 @@ class Templates:
     @cached_property
     def macro_engine(self) -> MacroEngine:
         """What renders templates with `tpl.` macros."""
-        return MacroEngine(self.paths, self.macros, auto_reload=self.auto_reload)
+        return MacroEngine(
+            self.paths,
+            self.macros,
+            auto_reload=self.auto_reload,
+            namespace=self.namespace,
+        )
 
     @cached_property
     def jinja_engine(self) -> JinjaEngine:

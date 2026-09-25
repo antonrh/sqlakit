@@ -22,14 +22,14 @@ from sqlakit import (
     UnknownOrderFieldError,
 )
 from sqlakit import _sql as sql_module
-from sqlakit.sql import Context, Param, Sql, Templates, sql_macro
+from sqlakit.sql import Context, Param, Sql, Templates, sql_macro, tpl
 
 TEMPLATES = {
     "users/list.tpl.sql": """
         SELECT name FROM users
         WHERE
             team IN :teams
-            AND tpl.if_set(:search, tpl.ci_contains(name, :search))
+            AND tpl.if_set(:search, tpl.icontains(name, :search))
         ORDER BY tpl.order_by(:order_by, id, name, team, 'nulls_last')
         LIMIT :limit
     """,
@@ -37,10 +37,16 @@ TEMPLATES = {
         SELECT name FROM users WHERE tpl.for_teams(:teams) ORDER BY id
     """,
     "users/in_teams.tpl.sql": """
-        SELECT name FROM users WHERE team IN (tpl.inclause(:teams)) ORDER BY id
+        SELECT name FROM users WHERE team IN (tpl.each(:teams)) ORDER BY id
     """,
     "users/in_teams.sql": """
         SELECT name FROM users WHERE team IN {{ teams | inclause }} ORDER BY id
+    """,
+    "users/search.tpl.sql": """
+        SELECT name FROM users WHERE tpl.search(:q, name, team) ORDER BY id
+    """,
+    "users/blue_or.tpl.sql": """
+        SELECT name FROM users WHERE tpl.blue_or(:teams) ORDER BY id
     """,
     "users/jinja.sql": """
         SELECT name FROM users WHERE team = {{ team }} ORDER BY id
@@ -61,6 +67,20 @@ def json_object(ctx: Context, *pairs: Sql) -> str:
     return f"{name}({', '.join(pairs)})"
 
 
+@sql_macro
+def search(q: Param, *columns: Sql) -> str:
+    """Rows where any of the columns holds the text, regardless of case."""
+    if not q.value:
+        return "TRUE"
+    return " OR ".join(tpl.icontains(column, q) for column in columns)
+
+
+@sql_macro
+def blue_or(teams: Param) -> str:
+    """Rows of the blue team, or of any of the teams."""
+    return f"team IN ({tpl.each(['blue'])}) OR team IN ({tpl.each(teams)})"
+
+
 def write(root: Path, templates: dict[str, str]) -> Path:
     for name, source in templates.items():
         path = root / name
@@ -71,7 +91,9 @@ def write(root: Path, templates: dict[str, str]) -> Path:
 
 @pytest.fixture
 def db(tmp_path: Path) -> Iterator[Database]:
-    templates = Templates(write(tmp_path, TEMPLATES), macros=[for_teams, json_object])
+    templates = Templates(
+        write(tmp_path, TEMPLATES), macros=[for_teams, json_object, search, blue_or]
+    )
     db = Database(
         "sqlite://", engine_args={"poolclass": sa.StaticPool}, templates=templates
     )
@@ -96,7 +118,9 @@ def names(db: Database, template: str, **values: Any) -> list[str]:
 def render(source: str, dialect: sa.Dialect, **values: object) -> str:
     """Return what a template becomes on a dialect, parameters left as written."""
     template = sql_module.MacroTemplate(
-        "inline.tpl.sql", source, sql_module.registered([for_teams, json_object])
+        "inline.tpl.sql",
+        source,
+        sql_module.registered([for_teams, json_object, search, blue_or]),
     )
     ctx = Context(dialect.name, dialect.identifier_preparer, values)
     return " ".join(template.render(ctx).split())
@@ -119,7 +143,7 @@ def test_if_set_keeps_the_condition_when_the_value_is_there(db: Database) -> Non
     assert names(db, "users/list.tpl.sql", **values) == ["Ann", "dan_x"]
 
 
-def test_ci_contains_matches_a_percent_or_underscore_only_as_itself(
+def test_icontains_matches_a_percent_or_underscore_only_as_itself(
     db: Database,
 ) -> None:
     assert names(db, "users/list.tpl.sql", **LIST | {"search": "_"}) == ["dan_x"]
@@ -202,8 +226,8 @@ def test_a_macro_writes_sql_for_the_dialect() -> None:
     )
 
 
-def test_ci_contains_is_ilike_on_postgres() -> None:
-    sql = render("WHERE tpl.ci_contains(u.name, :q)", postgresql.dialect(), q="a")
+def test_icontains_is_ilike_on_postgres() -> None:
+    sql = render("WHERE tpl.icontains(u.name, :q)", postgresql.dialect(), q="a")
     assert sql == "WHERE u.name ILIKE :__p1 ESCAPE '!'"
 
 
@@ -247,8 +271,9 @@ def test_an_unknown_macro_is_refused_when_the_file_is_read() -> None:
     with pytest.raises(UnknownMacroError) as raised:
         render("SELECT 1\nWHERE tpl.foo(:x)", postgresql.dialect(), x=1)
     assert str(raised.value) == (
-        "Unknown macro tpl.foo in inline.tpl.sql:2; available: ci_contains, "
-        "for_teams, identifier, if_set, inclause, json_object, order_by. "
+        "Unknown macro tpl.foo in inline.tpl.sql:2; available: blue_or, each, "
+        "for_teams, icontains, identifier, if_set, json_object, order_by, "
+        "search, unless_set. "
         "Register one with "
         "`Templates(..., macros=[...])`."
     )
@@ -269,11 +294,11 @@ def test_a_call_with_too_few_arguments_is_refused() -> None:
 
 def test_a_parameter_the_call_did_not_pass_is_refused() -> None:
     with pytest.raises(MacroArgumentError, match="`:q` was not passed"):
-        render("WHERE tpl.ci_contains(name, :q)", postgresql.dialect())
+        render("WHERE tpl.icontains(name, :q)", postgresql.dialect())
 
 
 def test_if_set_reads_a_parameter_the_call_did_not_pass_as_unset() -> None:
-    source = "WHERE tpl.if_set(:q, tpl.ci_contains(name, :q)) AND x = :q"
+    source = "WHERE tpl.if_set(:q, tpl.icontains(name, :q)) AND x = :q"
     assert render(source, postgresql.dialect()) == "WHERE TRUE AND x = :q"
 
 
@@ -297,12 +322,12 @@ def test_a_dollar_quoted_string_is_text() -> None:
     )
 
 
-def test_ci_contains_takes_the_collation_snowflake_compares_under() -> None:
+def test_icontains_takes_the_collation_snowflake_compares_under() -> None:
     from sqlalchemy.engine import default
 
     snowflake = default.DefaultDialect()
     snowflake.name = "snowflake"
-    assert render("WHERE tpl.ci_contains(name, :q, 'en-ci-ai')", snowflake, q="é") == (
+    assert render("WHERE tpl.icontains(name, :q, 'en-ci-ai')", snowflake, q="é") == (
         "WHERE CONTAINS(COLLATE(name, 'en-ci-ai'), :q)"
     )
 
@@ -374,10 +399,11 @@ def test_signature_says_how_a_template_calls_a_macro() -> None:
         for macro in sql_module.registered([json_object]).values()
     ] == [
         "tpl.if_set(:value, expr[, otherwise])",
+        "tpl.unless_set(:value, expr[, otherwise])",
         "tpl.order_by(:sort, column, *columns)",
-        "tpl.ci_contains(column, :text[, collation])",
+        "tpl.icontains(column, :text[, collation])",
         "tpl.identifier(:name, *allowed)",
-        "tpl.inclause(:values)",
+        "tpl.each(:values)",
         "tpl.json_object(*pairs)",
     ]
 
@@ -429,9 +455,12 @@ def test_the_cli_lists_the_macros_of_a_module(
 ) -> None:
     from sqlakit._cli import main
 
-    assert main(["macros", f"{__name__}:json_object", "--markdown"]) == 0
+    assert (
+        main(["macros", f"{__name__}:json_object", "--markdown", "--namespace", "q"])
+        == 0
+    )
     assert capsys.readouterr().out.endswith(
-        "### `tpl.json_object(*pairs)`\n\n"
+        "### `q.json_object(*pairs)`\n\n"
         "JSON_BUILD_OBJECT on PostgreSQL, OBJECT_CONSTRUCT on Snowflake.\n\n"
     )
 
@@ -445,10 +474,18 @@ def anyio_backend() -> str:
 async def test_the_async_api_renders_the_same_macros(tmp_path: Path) -> None:
     from sqlakit.asyncio import Database as AsyncDatabase
 
-    write(tmp_path, {"one.tpl.sql": "SELECT tpl.if_set(:x, 1, 2)"})
-    db = AsyncDatabase("sqlite+aiosqlite://", templates=tmp_path)
+    write(
+        tmp_path,
+        {
+            "one.tpl.sql": "SELECT team FROM (SELECT 'red' AS team) WHERE tpl.blue_or(:teams)"
+        },
+    )
+    db = AsyncDatabase(
+        "sqlite+aiosqlite://", templates=Templates(tmp_path, macros=[blue_or])
+    )
     async with db.connect():
-        assert await db.sql("one.tpl.sql", x=None).scalars().one() == 2
+        assert await db.sql("one.tpl.sql", teams=["red"]).scalars().all() == ["red"]
+        assert await db.sql("one.tpl.sql", teams=["green"]).scalars().all() == []
     await db.dispose()
 
 
@@ -492,8 +529,8 @@ def test_identifier_refuses_an_empty_name(value: Any) -> None:
         render("SELECT tpl.identifier(:c)", postgresql.dialect(), c=value)
 
 
-def test_inclause_binds_each_value_as_the_jinja_filter_does(db: Database) -> None:
-    source = "WHERE team IN (tpl.inclause(:teams))"
+def test_each_binds_each_value_as_the_jinja_filter_does(db: Database) -> None:
+    source = "WHERE team IN (tpl.each(:teams))"
     assert render(source, postgresql.dialect(), teams=["red", "blue"]) == (
         "WHERE team IN (:__p1, :__p2)"
     )
@@ -501,6 +538,95 @@ def test_inclause_binds_each_value_as_the_jinja_filter_does(db: Database) -> Non
     assert names(db, "users/in_teams.sql", teams=["blue"]) == ["bob"]
 
 
-def test_inclause_refuses_an_empty_list() -> None:
+def test_each_refuses_an_empty_list() -> None:
     with pytest.raises(MacroArgumentError, match="`:teams` is empty"):
-        render("WHERE team IN (tpl.inclause(:teams))", postgresql.dialect(), teams=[])
+        render("WHERE team IN (tpl.each(:teams))", postgresql.dialect(), teams=[])
+
+
+def test_a_namespace_replaces_tpl_where_a_schema_has_that_name(tmp_path: Path) -> None:
+    write(tmp_path, {"one.tpl.sql": "SELECT q.if_set(:x, 1, 2), tpl.f(1) FROM tpl.t"})
+    db = Database(
+        "sqlite://",
+        templates=Templates(tmp_path, namespace="q", macros=[for_teams]),
+    )
+    statement = db.sql("one.tpl.sql", x=None).statement
+    assert str(statement).splitlines()[-1] == "SELECT 2, tpl.f(1) FROM tpl.t"
+
+
+def test_errors_name_the_namespace_in_use() -> None:
+    template = "WHERE q.nope(:x)"
+    with pytest.raises(UnknownMacroError, match=r"Unknown macro q\.nope in <string>"):
+        sql_module.MacroTemplate(
+            "<string>", template, sql_module.registered([]), 0, "q"
+        )
+
+
+def test_a_namespace_is_a_plain_name() -> None:
+    with pytest.raises(ValueError, match="`namespace` is a plain name"):
+        Templates(namespace="my schema")
+
+
+def test_a_macros_own_refusal_says_where_the_call_is() -> None:
+    with pytest.raises(MacroArgumentError) as raised:
+        render(
+            "SELECT 1\nWHERE x IN (tpl.each(:teams))",
+            postgresql.dialect(),
+            teams=[],
+        )
+    assert str(raised.value) == (
+        "tpl.each: `:teams` is empty, and `IN ()` is not SQL in inline.tpl.sql:2."
+    )
+
+
+def test_a_macro_calls_a_builtin_one_as_a_template_would(db: Database) -> None:
+    assert names(db, "users/search.tpl.sql", q="BLU") == ["bob"]
+    assert names(db, "users/search.tpl.sql", q="") == ["Ann", "bob", "Cid", "dan_x"]
+    assert render("WHERE tpl.search(:q, a, b)", postgresql.dialect(), q="x") == (
+        "WHERE a ILIKE :__p1 ESCAPE '!' OR b ILIKE :__p2 ESCAPE '!'"
+    )
+
+
+def test_a_value_where_a_parameter_goes_is_bound(db: Database) -> None:
+    assert names(db, "users/blue_or.tpl.sql", teams=["red"]) == [
+        "Ann",
+        "bob",
+        "Cid",
+        "dan_x",
+    ]
+    assert render("WHERE tpl.blue_or(:teams)", postgresql.dialect(), teams=["red"]) == (
+        "WHERE team IN (:__p1) OR team IN (:__p2)"
+    )
+
+
+def test_a_macro_that_binds_cannot_be_called_outside_a_template() -> None:
+    with pytest.raises(
+        MacroArgumentError, match=r"tpl\.each: called outside a template"
+    ):
+        tpl.each([1])
+
+
+def test_a_macro_that_only_writes_sql_can() -> None:
+    assert tpl.if_set(Param("q", None), "x = 1") == "TRUE"
+
+
+@pytest.mark.parametrize(
+    ("values", "sql"),
+    [
+        ({}, "WHERE status <> 'archived'"),
+        ({"status": None}, "WHERE status <> 'archived'"),
+        ({"status": []}, "WHERE status <> 'archived'"),
+        ({"status": "open"}, "WHERE TRUE"),
+        ({"status": 0}, "WHERE TRUE"),
+    ],
+)
+def test_unless_set_applies_only_when_the_value_is_not_there(
+    values: dict[str, Any], sql: str
+) -> None:
+    source = "WHERE tpl.unless_set(:status, status <> 'archived')"
+    assert render(source, postgresql.dialect(), **values) == sql
+
+
+def test_unless_set_takes_what_to_write_when_the_value_is_there() -> None:
+    source = "WHERE tpl.unless_set(:ids, FALSE, id IN :ids)"
+    assert render(source, postgresql.dialect(), ids=[1]) == "WHERE id IN :ids"
+    assert render(source, postgresql.dialect(), ids=[]) == "WHERE FALSE"

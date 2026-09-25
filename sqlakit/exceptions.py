@@ -385,12 +385,13 @@ class UnknownMacroError(SQLAKitError, ValueError):
         template: str = "",
         line: int = 0,
         available: Iterable[str] = (),
+        namespace: str = "tpl",
     ) -> None:
         self.name = name
         self.template = template
         self.line = line
         super().__init__(
-            f"Unknown macro tpl.{name} in {template}:{line}; available: "
+            f"Unknown macro {namespace}.{name} in {template}:{line}; available: "
             f"{', '.join(sorted(available)) or 'none'}. Register one with "
             f"`Templates(..., macros=[...])`."
         )
@@ -400,11 +401,18 @@ class MacroArgumentError(SQLAKitError, ValueError):
     """Raised when a `tpl.` call has arguments its macro cannot take."""
 
     def __init__(
-        self, name: str = "", problem: str = "", template: str = "", line: int = 0
+        self,
+        name: str = "",
+        problem: str = "",
+        template: str = "",
+        line: int = 0,
+        namespace: str = "tpl",
     ) -> None:
         self.name = name
+        self.problem = problem
+        self.template = template
         where = f" in {template}:{line}" if template else ""
-        super().__init__(f"tpl.{name}: {problem}{where}.")
+        super().__init__(f"{namespace}.{name}: {problem}{where}.")
 
 
 class MacroDefinitionError(SQLAKitError, TypeError):

@@ -16,6 +16,7 @@ from ._sql import (
     require_pydantic,
     sql_macro,
     templates_of,
+    tpl,
 )
 
 if TYPE_CHECKING:
@@ -37,6 +38,7 @@ __all__ = [
     "Sql",
     "Templates",
     "sql_macro",
+    "tpl",
 ]
 
 RowT = TypeVar("RowT")

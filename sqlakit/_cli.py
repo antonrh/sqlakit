@@ -28,20 +28,27 @@ def main(argv: list[str] | None = None) -> int:
     macros.add_argument(
         "--markdown", action="store_true", help="write Markdown, for documentation"
     )
+    macros.add_argument(
+        "--namespace", default="tpl", help="the schema name calls are written under"
+    )
 
     arguments = parser.parse_args(argv)
     if arguments.command == "macros":
-        return _macros(arguments.modules, markdown=arguments.markdown)
+        return _macros(
+            arguments.modules,
+            markdown=arguments.markdown,
+            namespace=arguments.namespace,
+        )
     return 1
 
 
-def _macros(modules: list[str], *, markdown: bool) -> int:
+def _macros(modules: list[str], *, markdown: bool, namespace: str) -> int:
     """Print every macro: the built-in ones, and those the modules define."""
     found: list[Macro] = []
     for path in modules:
         found.extend(_macros_in(path))
     for macro in registered(found).values():
-        signature = signature_of(macro)
+        signature = signature_of(macro, namespace)
         if markdown:
             _say(f"### `{signature}`\n\n{macro.doc}\n")
         else:
