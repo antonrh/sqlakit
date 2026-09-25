@@ -32,6 +32,7 @@ __all__ = [
     "MultipleInstancesFoundError",
     "NullCursorValueError",
     "ParameterPathError",
+    "ProjectConfigError",
     "RawStatementError",
     "RetryNotSupportedError",
     "SQLAKitError",
@@ -369,6 +370,21 @@ class StrayParameterError(SQLAKitError, ValueError):
         )
 
 
+Chain = tuple[tuple[str, int], ...]
+"""The templates one was included from, outermost first, and the line of each call."""
+
+Span = tuple[int, int] | None
+"""Where in its template a problem is, as offsets into the text."""
+
+
+def _included_from(chain: Chain) -> str:
+    """Return where a template was included from, as an error says it."""
+    if not chain:
+        return ""
+    calls = ", from ".join(f"{name}:{line}" for name, line in reversed(chain))
+    return f" (included from {calls})"
+
+
 class MacroSyntaxError(SQLAKitError, ValueError):
     """Raised when a `.tpl.sql` template cannot be cut into text and macro calls."""
 
@@ -377,11 +393,16 @@ class MacroSyntaxError(SQLAKitError, ValueError):
         template: str = "",
         line: int = 0,
         problem: str = "",
-        included_from: str = "",
+        *,
+        chain: Chain = (),
+        span: Span = None,
     ) -> None:
         self.template = template
         self.line = line
-        super().__init__(f"{template}:{line}{included_from}: {problem}.")
+        self.problem = problem
+        self.chain = chain
+        self.span = span
+        super().__init__(f"{template}:{line}{_included_from(chain)}: {problem}.")
 
 
 class UnknownMacroError(SQLAKitError, ValueError):
@@ -395,14 +416,21 @@ class UnknownMacroError(SQLAKitError, ValueError):
         available: Iterable[str] = (),
         *,
         namespace: str = "tpl",
-        included_from: str = "",
+        chain: Chain = (),
+        span: Span = None,
     ) -> None:
         self.name = name
         self.template = template
         self.line = line
+        self.chain = chain
+        self.span = span
+        self.problem = (
+            f"unknown macro {namespace}.{name}; available: "
+            f"{', '.join(sorted(available)) or 'none'}"
+        )
         super().__init__(
-            f"Unknown macro {namespace}.{name} in {template}:{line}{included_from}; "
-            f"available: "
+            f"Unknown macro {namespace}.{name} in {template}:{line}"
+            f"{_included_from(chain)}; available: "
             f"{', '.join(sorted(available)) or 'none'}. Register one with "
             f"`Templates(..., macros=[...])`."
         )
@@ -419,13 +447,29 @@ class MacroArgumentError(SQLAKitError, ValueError):
         line: int = 0,
         *,
         namespace: str = "tpl",
-        included_from: str = "",
+        chain: Chain = (),
+        span: Span = None,
     ) -> None:
         self.name = name
         self.problem = problem
         self.template = template
-        where = f" in {template}:{line}{included_from}" if template else ""
+        self.line = line
+        self.chain = chain
+        self.span = span
+        where = f" in {template}:{line}{_included_from(chain)}" if template else ""
         super().__init__(f"{namespace}.{name}: {problem}{where}.")
+
+
+class ProjectConfigError(SQLAKitError, ValueError):
+    """Raised when a project's `pyproject.toml` does not say where its templates are."""
+
+    def __init__(self, problem: str = "") -> None:
+        self.problem = problem
+        super().__init__(
+            f"Cannot read the project's templates: {problem}. Say where they are "
+            f"in `pyproject.toml`, under `[tool.sqlakit.templates]`, with `paths` "
+            f"and, for macros of your own, `macros`."
+        )
 
 
 class MacroDefinitionError(SQLAKitError, TypeError):

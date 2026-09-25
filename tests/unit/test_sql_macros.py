@@ -1108,9 +1108,9 @@ def test_a_path_inside_a_string_or_a_comment_stays_text() -> None:
 
 def test_a_path_that_reads_nothing_is_refused() -> None:
     with pytest.raises(ParameterPathError) as raised:
-        render("WHERE x = :c.serch", postgresql.dialect(), c=Criteria(teams=[]))
+        render("WHERE x = :c.nickname", postgresql.dialect(), c=Criteria(teams=[]))
     assert str(raised.value) == (
-        "`:c.serch` reads `serch`, and the value before it has no key or attribute "
+        "`:c.nickname` reads `nickname`, and the value before it has no key or attribute "
         "of that name."
     )
 

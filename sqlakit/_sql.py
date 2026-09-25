@@ -30,6 +30,7 @@ from ._discovery import import_string
 from ._query import _field_named, _parse_sort_field
 from .exceptions import (
     AsyncFilterError,
+    Chain,
     InvalidSortStringError,
     MacroArgumentError,
     MacroDefinitionError,
@@ -100,13 +101,13 @@ DatabaseT = TypeVar("DatabaseT", bound="BaseDatabase[Any, Any]")
 QueryT = TypeVar("QueryT", bound="BaseSQLQuery[Any, Any]")
 
 PathLike = str | Path
-"""Where templates are looked for: one directory, or several."""
+"""The directories templates are looked for in: one, or several."""
 
 
 # Templates that stay SQL: `tpl.` macros in place of Jinja.
 #
 # A `.tpl.sql` file is SQL in the production dialect, with `:name` parameters.
-# What changes per call is a `tpl.<macro>(...)` call, which every SQL tool reads
+# Each part that changes per call is a `tpl.<macro>(...)` call, which every SQL tool reads
 # as a function of a schema named `tpl`. A file is cut into text and calls once,
 # when it is first read; rendering joins the pieces and calls the macros.
 
@@ -194,7 +195,7 @@ class Sql(str):
 
 
 class Context:
-    """What a macro knows about the call beyond its arguments.
+    """The call as a macro sees it, beyond its arguments.
 
     ``dialect`` is the name of the database's dialect, such as `postgresql` or
     `snowflake`. `bind` adds a value of the macro's own to the statement.
@@ -212,7 +213,7 @@ class Context:
         self._bound = 0
 
     no_order = "(SELECT NULL)"
-    """What orders by nothing, for a macro that may have nothing to sort by.
+    """An `ORDER BY` term that orders by nothing, for a macro with nothing to sort by.
 
     Every database takes it after `ORDER BY`, and a direction after it: `NULL`
     and `NULL DESC` are refused by PostgreSQL, and `0` is a column's position.
@@ -224,7 +225,7 @@ class Context:
     def bind(self, value: Any, name: str | None = None) -> str:  # noqa: ANN401
         """Bind a value, and return the placeholder to write in its place.
 
-        ``name`` is what the log and the debug server call it: `search_like`
+        ``name`` names the value in the log and the debug server: `search_like`
         binds `:search_like__1`, and no name binds `:__p1`.
         """
         while True:
@@ -248,7 +249,7 @@ class _Slot:
     kind: type[Param | Sql]
     default: Any = inspect.Parameter.empty
     choices: tuple[str, ...] = ()
-    """What a `Literal` annotation lets the argument be, written as in the SQL."""
+    """The SQL a `Literal` annotation lets the argument be, written as in the template."""
 
     @property
     def required(self) -> bool:
@@ -436,6 +437,8 @@ class _Arg:
     parts: tuple[str | _Call, ...]
     param: str | None
     """The name, when the argument is `:name` and nothing else."""
+    span: tuple[int, int]
+    """The argument's place in the template, without the space around it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -443,6 +446,8 @@ class _Call:
     name: str
     args: tuple[_Arg, ...]
     line: int
+    span: tuple[int, int]
+    """The call's place in the template, from the namespace to its `)`."""
 
 
 @cache
@@ -460,12 +465,12 @@ class _Scanner:
     """Cut a template into text and `tpl.` calls, past strings and comments."""
 
     def __init__(
-        self, source: str, template: str, namespace: str, included_from: str = ""
+        self, source: str, template: str, namespace: str, chain: Chain = ()
     ) -> None:
         self.source = source
         self.template = template
         self.namespace = namespace
-        self.included_from = included_from
+        self.chain = chain
         self.decide, self.call = _patterns(namespace)
 
     def parts(self) -> tuple[str | _Call, ...]:
@@ -490,7 +495,12 @@ class _Scanner:
                 parts.append(source[text_from:index])
                 args, index = self._args(call.end())
                 parts.append(
-                    _Call(call.group(1).lower(), args, self._line(call.start()))
+                    _Call(
+                        call.group(1).lower(),
+                        args,
+                        self._line(call.start()),
+                        (call.start(), index),
+                    )
                 )
                 text_from = index
             elif in_args and char in "([{":
@@ -512,11 +522,12 @@ class _Scanner:
         args = []
         index = start
         while True:
+            begin = index
             parts, index, closer = self._scan(index, in_args=True)
             if closer is None:
                 problem = f"a `{self.namespace}.` call is never closed"
                 raise self._error(problem, start - 1)
-            args.append(_argument(parts))
+            args.append(_argument(parts, self._trimmed(begin, index)))
             index += 1
             if closer == ")":
                 break
@@ -527,7 +538,7 @@ class _Scanner:
     def past_literal(self, index: int) -> int:
         """Return where a string, a quoted name or a comment starting here ends.
 
-        Where none starts, that is where it was asked about.
+        When none starts there, the offset comes back unchanged.
         """
         source = self.source
         if source[index] in "'\"":
@@ -568,12 +579,22 @@ class _Scanner:
         before = self.source[index - 1] if index else ""
         return before == "." or before.isalnum() or before == "_"
 
+    def _trimmed(self, start: int, end: int) -> tuple[int, int]:
+        """Return a span without the space at either end."""
+        text = self.source[start:end]
+        lead = len(text) - len(text.lstrip())
+        return start + lead, max(start + lead, end - (len(text) - len(text.rstrip())))
+
     def _line(self, index: int) -> int:
         return self.source.count("\n", 0, index) + 1
 
     def _error(self, problem: str, index: int) -> MacroSyntaxError:
         return MacroSyntaxError(
-            self.template, self._line(index), problem, self.included_from
+            self.template,
+            self._line(index),
+            problem,
+            chain=self.chain,
+            span=(index, index + 1),
         )
 
 
@@ -581,7 +602,7 @@ def _joined(parts: list[str | _Call]) -> tuple[str | _Call, ...]:
     return tuple(part for part in parts if part != "")
 
 
-def _argument(parts: tuple[str | _Call, ...]) -> _Arg:
+def _argument(parts: tuple[str | _Call, ...], span: tuple[int, int]) -> _Arg:
     """Return an argument, trimmed, and whether it is a parameter alone."""
     trimmed = list(parts)
     if trimmed and isinstance(trimmed[0], str):
@@ -593,7 +614,7 @@ def _argument(parts: tuple[str | _Call, ...]) -> _Arg:
     if len(trimmed_parts) == 1 and isinstance(trimmed_parts[0], str):
         match = _PARAMETER.fullmatch(trimmed_parts[0])
         param = match.group(1) if match else None
-    return _Arg(trimmed_parts, param)
+    return _Arg(trimmed_parts, param, span)
 
 
 # Loading and rendering.
@@ -638,12 +659,11 @@ class MacroTemplate:
         self.load = load
         self.chain = chain
         """The templates this one was included from, and the line of each call."""
-        self.included_from = _included_from(chain)
         self.includes: dict[str, float] = {}
         """Every template this one includes, however deep, and when it changed."""
         self.paths: dict[str, tuple[str, ...]] = {}
         """Every `:a.b` read here, by the name it binds as, `a__b`, and its path."""
-        self.parts = _Scanner(source, name, namespace, self.included_from).parts()
+        self.parts = _Scanner(source, name, namespace, chain).parts()
         self._check(self.parts)
         self._compiled = self._compile(self.parts)
 
@@ -681,19 +701,19 @@ class MacroTemplate:
         chain = (*self.chain, (self.name, call.line))
         if name in {template for template, _ in chain}:
             cycle = " -> ".join((*(template for template, _ in chain), name))
-            raise self._refuse(INCLUDE, f"includes itself: {cycle}", call.line)
+            raise self._refuse(INCLUDE, f"includes itself: {cycle}", call)
         if self.load is None:
             problem = "has no template paths to read from"
-            raise self._refuse(INCLUDE, problem, call.line)
+            raise self._refuse(INCLUDE, problem, call)
         try:
             source, mtime = self.load(name)
         except MacroArgumentError as error:
-            raise self._refuse(INCLUDE, error.problem, call.line) from None
+            raise self._refuse(INCLUDE, error.problem, call) from None
         included = MacroTemplate(
             name,
             _without_semicolon(
                 source,
-                _Scanner(source, name, self.namespace, _included_from(chain)),
+                _Scanner(source, name, self.namespace, chain),
             ),
             self.macros,
             mtime,
@@ -728,7 +748,7 @@ class MacroTemplate:
             for index, arg in enumerate(call.args)
         )
         params = tuple(param for param, _ in args if param is not None)
-        return _Expansion(macro, call.line, args, params, self.name, self.included_from)
+        return _Expansion(macro, call.line, args, params, self.name, self.chain)
 
     def _check(self, parts: Sequence[str | _Call]) -> None:
         """Refuse an unknown macro or a call it cannot take, where the file is read.
@@ -751,7 +771,7 @@ class MacroTemplate:
                     "a NULLS after the call would follow a NULLS of a sort string. "
                     "Pass the default as an argument: 'nulls_last' or 'nulls_first'"
                 )
-                raise self._refuse(part.name, problem, part.line)
+                raise self._refuse(part.name, problem, part)
             if part.name == INCLUDE:
                 self._check_include(part)
                 continue
@@ -763,12 +783,13 @@ class MacroTemplate:
                     part.line,
                     [*self.macros, INCLUDE],
                     namespace=self.namespace,
-                    included_from=self.included_from,
+                    chain=self.chain,
+                    span=part.span,
                 )
             count = len(part.args)
             if not macro.minimum <= count <= macro.maximum:
                 problem = f"takes {_arity(macro)} arguments, got {count}"
-                raise self._refuse(macro.name, problem, part.line)
+                raise self._refuse(macro.name, problem, part)
             for position, arg in enumerate(part.args):
                 slot = macro.slot_at(position)
                 written = self._written(arg.parts)
@@ -776,11 +797,11 @@ class MacroTemplate:
                     problem = (
                         f"argument {position + 1} must be a :parameter, got {written!r}"
                     )
-                    raise self._refuse(macro.name, problem, part.line)
+                    raise self._refuse(macro.name, problem, part, arg.span)
                 if slot.choices and written not in slot.choices:
                     allowed = " or ".join(slot.choices)
                     problem = f"argument {position + 1} is {allowed}, got {written}"
-                    raise self._refuse(macro.name, problem, part.line)
+                    raise self._refuse(macro.name, problem, part, arg.span)
                 self._check(arg.parts)
 
     def _check_include(self, call: _Call) -> None:
@@ -790,7 +811,7 @@ class MacroTemplate:
                 "takes the path of a template as a string, such as "
                 f"'reports/ids.tpl.sql', got {', '.join(written)!r}"
             )
-            raise self._refuse(INCLUDE, problem, call.line)
+            raise self._refuse(INCLUDE, problem, call)
 
     def _render(self, parts: Sequence[str | _Expansion], ctx: Context) -> str:
         return "".join(
@@ -821,14 +842,21 @@ class MacroTemplate:
             for name in missing:
                 del values[name]
 
-    def _refuse(self, macro: str, problem: str, line: int) -> MacroArgumentError:
+    def _refuse(
+        self,
+        macro: str,
+        problem: str,
+        call: _Call,
+        span: tuple[int, int] | None = None,
+    ) -> MacroArgumentError:
         return MacroArgumentError(
             macro,
             problem,
             self.name,
-            line,
+            call.line,
             namespace=self.namespace,
-            included_from=self.included_from,
+            chain=self.chain,
+            span=span or call.span,
         )
 
     def _written(self, parts: Sequence[str | _Call]) -> str:
@@ -857,7 +885,7 @@ class _Expansion:
     params: tuple[str, ...]
     template: str
     """The template the call is written in, which an include makes another."""
-    included_from: str
+    chain: Chain
 
     def refuse(self, problem: str, namespace: str) -> MacroArgumentError:
         return MacroArgumentError(
@@ -866,7 +894,7 @@ class _Expansion:
             self.template,
             self.line,
             namespace=namespace,
-            included_from=self.included_from,
+            chain=self.chain,
         )
 
 
@@ -885,14 +913,6 @@ def _followed(value: Any, root: str, path: Sequence[str]) -> Any:  # noqa: ANN40
         except (KeyError, AttributeError):
             raise ParameterPathError(".".join(read), step) from None
     return value
-
-
-def _included_from(chain: Sequence[tuple[str, int]]) -> str:
-    """Return where a template was included from, as an error says it."""
-    if not chain:
-        return ""
-    calls = ", from ".join(f"{name}:{line}" for name, line in reversed(chain))
-    return f" (included from {calls})"
 
 
 def _without_semicolon(source: str, scanner: _Scanner) -> str:
@@ -1500,7 +1520,7 @@ def _for_dialect(ctx: Context, macro: str, **forms: Any) -> Any:  # noqa: ANN401
 def identifier(ctx: Context, name: Param, *allowed: Sql) -> str:
     """Write a name from a parameter, quoted the way this database quotes one.
 
-    What the `identifier` filter does in a Jinja template, and the same SQL: a
+    The Jinja `identifier` filter does the same, and writes the same SQL: a
     name that needs no quoting is left alone. A tuple or a list is a qualified
     name, `("reports", "events")` for `reports.events`.
 
@@ -1533,10 +1553,10 @@ def identifier(ctx: Context, name: Param, *allowed: Sql) -> str:
 def each(ctx: Context, values: Param) -> str:
     """Each value of a list as a parameter of its own, for `IN (...)`.
 
-    What the `inclause` filter does in a Jinja template. The parentheses are the
+    The Jinja `inclause` filter does the same. The parentheses are the
     template's, so the SQL stays SQL: `WHERE team IN (tpl.each(:teams))`.
-    `IN :teams` binds the list as one expanding parameter instead, which is what
-    a template usually wants.
+    `IN :teams` binds the list as one expanding parameter instead, and a
+    template usually wants that.
 
     Raises:
         MacroArgumentError: if the list is empty: `IN ()` is not SQL.
@@ -1777,7 +1797,7 @@ class Templates:
 
     @cached_property
     def macro_engine(self) -> MacroEngine:
-        """What renders templates with `tpl.` macros."""
+        """The engine that renders templates with `tpl.` macros."""
         return MacroEngine(
             self.paths,
             self.macros,
@@ -1788,7 +1808,7 @@ class Templates:
 
     @cached_property
     def jinja_engine(self) -> JinjaEngine:
-        """What renders Jinja templates."""
+        """The engine that renders Jinja templates."""
         return JinjaEngine(
             self.paths,
             auto_reload=self.auto_reload,

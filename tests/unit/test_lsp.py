@@ -1,0 +1,333 @@
+"""`sqlakit check` and `sqlakit lsp`: a project's templates, read from pyproject.toml."""
+
+import asyncio
+import json
+import re
+import sys
+from pathlib import Path
+
+import pytest
+
+from sqlakit import ProjectConfigError
+from sqlakit._cli import main
+from sqlakit._lsp import (
+    Completion,
+    Diagnostic,
+    Target,
+    _Assistant,
+    offset_of,
+    position_of,
+)
+from sqlakit._project import load_project
+
+PYPROJECT = """
+[project]
+name = "app"
+
+[tool.sqlakit.templates]
+paths = ["sql"]
+macros = ["lsp_macros"]
+"""
+
+MACROS = '''
+from sqlakit.sql import Param, sql_macro
+
+
+@sql_macro
+def mine(teams: Param) -> str:
+    """Rows of any of the teams."""
+    return f"team IN {teams}"
+'''
+
+TEMPLATES = {
+    "good.tpl.sql": "SELECT * FROM users\nWHERE tpl.mine(:teams)\n  AND tpl.if_set(:q, name = :q)",
+    "inner.tpl.sql": "SELECT 1\nWHERE tpl.nope(:x)",
+    "outer.tpl.sql": "SELECT *\nFROM tpl.include('inner.tpl.sql') AS i",
+    "jinja.sql": "SELECT {{ x }",
+}
+
+
+@pytest.fixture
+def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    (tmp_path / "pyproject.toml").write_text(PYPROJECT)
+    (tmp_path / "lsp_macros.py").write_text(MACROS)
+    for name, source in TEMPLATES.items():
+        path = tmp_path / "sql" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delitem(sys.modules, "lsp_macros", raising=False)
+    return tmp_path
+
+
+@pytest.fixture
+def assistant(project: Path) -> _Assistant:
+    return _Assistant(load_project(project))
+
+
+# the project
+
+
+def test_a_project_reads_its_templates_from_pyproject(project: Path) -> None:
+    loaded = load_project(project / "sql")
+    assert loaded.root == project
+    assert loaded.templates.paths == (project / "sql",)
+    assert "mine" in loaded.templates.macros
+
+
+@pytest.mark.parametrize(
+    ("pyproject", "problem"),
+    [
+        (None, "there is no `pyproject.toml`"),
+        ("[project]\nname = 'app'\n", "has no `[tool.sqlakit.templates]` table"),
+        (
+            "[tool.sqlakit.templates]\npath = ['sql']\n",
+            "has path, and takes engine, macros, namespace, paths",
+        ),
+    ],
+)
+def test_a_project_without_a_say_about_templates_is_refused(
+    tmp_path: Path, pyproject: str | None, problem: str
+) -> None:
+    if pyproject is not None:
+        (tmp_path / "pyproject.toml").write_text(pyproject)
+    with pytest.raises(ProjectConfigError, match=re.escape(problem)):
+        load_project(tmp_path)
+
+
+# sqlakit check
+
+
+def test_check_names_every_problem_once_where_it_is(
+    project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["check"]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        (
+            "sql/inner.tpl.sql:2:7: Unknown macro tpl.nope in inner.tpl.sql:2; "
+            "available: array_agg, array_contains, between, each, icollate, "
+            "icontains, identifier, if_set, include, json_object, mine, "
+            "on_dialect, order_by, string_agg, unless_set, values. Register one "
+            "with `Templates(..., macros=[...])`."
+        ),
+        "sql/jinja.sql:1:1: unexpected '}'",
+        "4 templates, 2 problems",
+    ]
+
+
+def test_check_writes_json(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["check", "--format", "json"]) == 1
+    found = json.loads(capsys.readouterr().out)
+    assert [(one["path"], one["line"], one["column"]) for one in found] == [
+        ("sql/inner.tpl.sql", 2, 7),
+        ("sql/jinja.sql", 1, 1),
+    ]
+
+
+def test_check_names_a_missing_include_where_the_include_is(
+    project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (project / "sql" / "inner.tpl.sql").unlink()
+    (project / "sql" / "jinja.sql").unlink()
+    assert main(["check"]) == 1
+    assert (
+        capsys.readouterr()
+        .out.splitlines()[0]
+        .startswith(
+            "sql/outer.tpl.sql:2:6: tpl.include: No SQL template named `inner.tpl.sql`"
+        )
+    )
+
+
+def test_check_passes_a_clean_project(
+    project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for name in ("inner.tpl.sql", "outer.tpl.sql", "jinja.sql"):
+        (project / "sql" / name).unlink()
+    assert main(["check"]) == 0
+    assert capsys.readouterr().out == "1 templates, 0 problems\n"
+
+
+def test_check_says_when_the_project_says_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["check", "--project", str(tmp_path)]) == 2
+    assert "Cannot read the project's templates" in capsys.readouterr().out
+
+
+# problems as you type
+
+
+def test_a_good_template_has_no_problems(assistant: _Assistant, project: Path) -> None:
+    path = project / "sql" / "good.tpl.sql"
+    assert assistant.diagnose(path, path.read_text()) == []
+
+
+def test_an_unknown_macro_is_marked_where_the_call_is(
+    assistant: _Assistant, project: Path
+) -> None:
+    source = "SELECT 1\nWHERE tpl.nope(:x) AND TRUE"
+    [found] = assistant.diagnose(project / "sql" / "new.tpl.sql", source)
+    assert source[found.start : found.end] == "tpl.nope(:x)"
+    assert found.message.startswith("unknown macro tpl.nope; available: ")
+
+
+def test_an_argument_is_marked_where_it_is(
+    assistant: _Assistant, project: Path
+) -> None:
+    source = "WHERE tpl.mine( teams )"
+    [found] = assistant.diagnose(project / "sql" / "new.tpl.sql", source)
+    assert found == Diagnostic(
+        16, 21, "tpl.mine: argument 1 must be a :parameter, got 'teams'"
+    )
+
+
+def test_what_is_never_closed_is_marked_where_it_opens(
+    assistant: _Assistant, project: Path
+) -> None:
+    source = "SELECT 1,\n  'open"
+    [found] = assistant.diagnose(project / "sql" / "new.tpl.sql", source)
+    assert (found.start, found.message) == (12, "a quoted string is never closed")
+
+
+def test_a_problem_in_an_included_template_is_marked_on_the_include(
+    assistant: _Assistant, project: Path
+) -> None:
+    path = project / "sql" / "outer.tpl.sql"
+    source = path.read_text()
+    [found] = assistant.diagnose(path, source)
+    assert source[found.start : found.end] == "FROM tpl.include('inner.tpl.sql') AS i"
+    assert "(included from outer.tpl.sql:2)" in found.message
+
+
+def test_a_jinja_template_is_left_alone(assistant: _Assistant, project: Path) -> None:
+    assert assistant.applies_to(project / "sql" / "good.tpl.sql")
+    assert not assistant.applies_to(project / "sql" / "jinja.sql")
+    assert not assistant.applies_to(project / "elsewhere.tpl.sql")
+
+
+# completion, hover, definition
+
+
+def test_macros_complete_after_the_namespace(assistant: _Assistant) -> None:
+    source = "WHERE tpl.i"
+    labels = [one.label for one in assistant.complete(source, len(source))]
+    assert labels == ["if_set", "icontains", "icollate", "identifier", "include"]
+
+
+def test_a_macro_completes_as_a_call_with_placeholders(assistant: _Assistant) -> None:
+    source = "WHERE tpl.if_"
+    assert assistant.complete(source, len(source)) == [
+        Completion(
+            "if_set",
+            "macro",
+            "tpl.if_set(:value, expr[, otherwise])",
+            assistant.project.templates.macros["if_set"].doc,
+            "if_set(:${1:value}, ${2:expr})",
+        )
+    ]
+
+
+def test_an_include_completes_the_macro_templates(assistant: _Assistant) -> None:
+    source = "FROM tpl.include('in"
+    assert assistant.complete(source, len(source)) == [
+        Completion("inner.tpl.sql", "template")
+    ]
+
+
+def test_a_parameter_completes_from_the_file(assistant: _Assistant) -> None:
+    source = "WHERE a = :alpha AND b IN :beta AND c = :"
+    labels = [one.label for one in assistant.complete(source, len(source))]
+    assert labels == ["alpha", "beta"]
+    assert assistant.complete("SELECT x::", 10) == []
+
+
+def test_hover_shows_how_a_macro_is_called(assistant: _Assistant) -> None:
+    source = "WHERE tpl.mine(:teams)"
+    assert assistant.hover(source, 12) == (
+        "```sql\ntpl.mine(:teams)\n```\n\nRows of any of the teams."
+    )
+    assert assistant.hover(source, 2) is None
+
+
+def test_definition_goes_to_the_macro_and_to_the_included_file(
+    assistant: _Assistant, project: Path
+) -> None:
+    assert assistant.definition("WHERE tpl.mine(:t)", 11) == Target(
+        project / "lsp_macros.py", 4
+    )
+    source = "FROM tpl.include('inner.tpl.sql') AS i"
+    assert assistant.definition(source, 20) == Target(
+        project / "sql" / "inner.tpl.sql", 0
+    )
+
+
+# positions
+
+
+@pytest.mark.parametrize(
+    ("source", "offset", "position"),
+    [
+        ("ab\ncd", 4, (1, 1)),
+        ("имя\nx", 2, (0, 2)),
+        ("😀x\ny", 1, (0, 2)),
+        ("😀x\ny", 2, (0, 3)),
+    ],
+)
+def test_positions_count_utf16_as_the_protocol_does(
+    source: str, offset: int, position: tuple[int, int]
+) -> None:
+    assert position_of(source, offset) == position
+    assert offset_of(source, *position) == offset
+
+
+# the server
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"  # pygls runs on asyncio
+
+
+@pytest.mark.anyio
+async def test_the_server_answers_an_editor(project: Path) -> None:
+    from lsprotocol import types
+    from pygls.lsp.client import LanguageClient
+
+    client = LanguageClient("test", "1")
+    published: asyncio.Future[types.PublishDiagnosticsParams] = (
+        asyncio.get_running_loop().create_future()
+    )
+
+    @client.feature(types.TEXT_DOCUMENT_PUBLISH_DIAGNOSTICS)
+    def diagnostics(params: types.PublishDiagnosticsParams) -> None:
+        if not published.done():
+            published.set_result(params)
+
+    await client.start_io(sys.executable, "-m", "sqlakit._cli", "lsp", cwd=str(project))
+    await client.initialize_async(
+        types.InitializeParams(
+            capabilities=types.ClientCapabilities(), root_uri=project.as_uri()
+        )
+    )
+    client.initialized(types.InitializedParams())
+    uri = (project / "sql" / "new.tpl.sql").as_uri()
+    client.text_document_did_open(
+        types.DidOpenTextDocumentParams(
+            types.TextDocumentItem(uri, "sql", 1, "SELECT 1\nWHERE tpl.nope(:x)")
+        )
+    )
+    found = await asyncio.wait_for(published, 10)
+    [diagnostic] = found.diagnostics
+    assert (diagnostic.range.start.line, diagnostic.range.start.character) == (1, 6)
+    assert diagnostic.message.startswith("unknown macro tpl.nope")
+
+    completion = await client.text_document_completion_async(
+        types.CompletionParams(types.TextDocumentIdentifier(uri), types.Position(1, 10))
+    )
+    assert isinstance(completion, types.CompletionList)
+    assert "mine" in [item.label for item in completion.items]
+
+    await client.shutdown_async(None)
+    client.exit(None)
+    await client.stop()

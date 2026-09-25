@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
+from pathlib import Path
 
+from ._lsp import serve
+from ._project import Problem, load_project
 from ._sql import registered, signature_of
+from .exceptions import ProjectConfigError
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -30,7 +35,26 @@ def main(argv: list[str] | None = None) -> int:
         "--namespace", default="tpl", help="the schema name calls are written under"
     )
 
+    check = commands.add_parser(
+        "check", help="check every template the project's pyproject.toml names"
+    )
+    check.add_argument(
+        "--project",
+        default=".",
+        help="a directory in the project, the current one by default",
+    )
+    check.add_argument("--format", choices=("text", "json"), default="text")
+
+    commands.add_parser(
+        "lsp", help="run the language server for .tpl.sql templates, over stdio"
+    )
+
     arguments = parser.parse_args(argv)
+    if arguments.command == "check":
+        return _check(Path(arguments.project), json_output=arguments.format == "json")
+    if arguments.command == "lsp":  # pragma: no cover - run by an editor
+        serve()
+        return 0
     if arguments.command == "macros":
         return _macros(
             arguments.modules,
@@ -52,9 +76,46 @@ def _macros(modules: list[str], *, markdown: bool, namespace: str) -> int:
     return 0
 
 
+def _check(directory: Path, *, json_output: bool) -> int:
+    """Print what is wrong with the project's templates, and fail if anything is."""
+    try:
+        project = load_project(directory)
+    except ProjectConfigError as error:
+        _say(str(error))
+        return 2
+    problems = list(project.problems())
+    if json_output:
+        _say(json.dumps([_as_json(problem) for problem in problems], indent=2))
+    else:
+        for problem in problems:
+            line, column = problem.position()
+            _say(f"{_relative(problem.path)}:{line}:{column}: {problem.message}")
+        count = len(project.templates.names())
+        _say(_paint(f"{count} templates, {len(problems)} problems", DIM))
+    return 1 if problems else 0
+
+
+def _as_json(problem: Problem) -> dict[str, object]:
+    line, column = problem.position()
+    return {
+        "path": _relative(problem.path),
+        "line": line,
+        "column": column,
+        "message": problem.message,
+    }
+
+
+def _relative(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(Path.cwd()).as_posix()
+    except ValueError:
+        return str(path)
+
+
 
 
 BOLD = "1"
+DIM = "2"
 
 
 def _colours() -> bool:
