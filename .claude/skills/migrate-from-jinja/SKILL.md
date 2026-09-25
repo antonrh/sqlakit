@@ -63,7 +63,7 @@ by path: `Templates("app/sql", macros=["app.sql.macros"])`.
 | `{{ x }}` | `:x` |
 | `{{ criteria.search }}`, `{{ d['key'] }}` | `:criteria.search`, `:d.key` (attribute, or key of a mapping) |
 | `{{ Status.OPEN.value }}` from a global | pass `status=Status`, write `:status.OPEN.value` |
-| `col IN {{ ids }}`, `col IN {{ ids \| inclause }}` | `col IN :ids` |
+| `col IN {{ ids }}`, `col IN {{ ids \| inclause }}` | `col IN (:ids)` |
 | `ARRAY[{{ ids \| inclause }}]`, a list outside `IN` | `ARRAY[tpl.each(:ids)]` |
 | `{{ col \| identifier }}` | `tpl.identifier(:col, id, name, ...)`, with the names it may be |
 | an ordering filter of the application, `ORDER BY {{ o \| sort }} NULLS LAST` | `ORDER BY tpl.order_by(:o, id, name, 'nulls_last')` |
@@ -83,7 +83,7 @@ by path: `Templates("app/sql", macros=["app.sql.macros"])`.
 | a plain filter, `{{ x \| f }}` | compute the value in Python and pass it |
 | `Filter(func, bind=True)` | an `@sql_macro` taking `ctx: Context`, binding with `ctx.bind(value, "name")` |
 | a global, `{{ settings.x }}`, `{% if feature_enabled(...) %}` | a parameter, or an `@sql_macro` that reads it |
-| `{% for %}` over values | `IN :list`, `tpl.values(:rows)`, or an `@sql_macro` |
+| `{% for %}` over values | `IN (:list)`, `tpl.values(:rows)`, or an `@sql_macro` |
 | `{% set %}` | compute it in the caller, or in a macro |
 | `{# comment #}` | `-- comment` |
 | an optional `UNION` branch or CTE | keep it, and make its condition `tpl.if_set(:flag, TRUE, FALSE)` |
@@ -127,9 +127,9 @@ limits an argument to that SQL, checked when the file is read.
 - **Truthiness.** `if_set`, `unless_set` and `between` treat `None`, `False`,
   `""`, an empty list and a parameter not passed as missing, and `0` as there.
   Jinja's `{% if x %}` treats `0` as false. Look for numeric flags and ids.
-- **An empty list in `IN :ids`** matches nothing. A Jinja template that
+- **An empty list in `IN (:ids)`** matches nothing. A Jinja template that
   wrapped the condition in `{% if ids %}` meant "no filter": write
-  `tpl.if_set(:ids, col IN :ids)`.
+  `tpl.if_set(:ids, col IN (:ids))`.
 - **Search wildcards.** `'%' ~ q ~ '%'` in Jinja let `%` and `_` in the text
   act as wildcards. `icontains` matches them only as themselves.
 - **Case in ordering.** `tpl.icollate` orders without regard to case on every

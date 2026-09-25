@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
+import tomllib
 from pathlib import Path
 
 from ._lsp import serve
-from ._project import Problem, load_project
+from ._project import LINT_EXCLUDED, Problem, load_project
 from ._sql import registered, signature_of
 from .exceptions import ProjectConfigError
 
@@ -49,9 +51,29 @@ def main(argv: list[str] | None = None) -> int:
         "lsp", help="run the language server for .tpl.sql templates, over stdio"
     )
 
+    export = commands.add_parser(
+        "export", help="write what another tool needs to read the templates"
+    )
+    export.add_argument("tool", choices=("sqruff",))
+    export.add_argument(
+        "--project",
+        default=".",
+        help="a directory in the project, the current one by default",
+    )
+    export.add_argument("--dialect", help="the dialect, when pyproject.toml says none")
+    export.add_argument(
+        "--check",
+        action="store_true",
+        help="write nothing, and fail if what is written is out of date",
+    )
+
     arguments = parser.parse_args(argv)
     if arguments.command == "check":
         return _check(Path(arguments.project), json_output=arguments.format == "json")
+    if arguments.command == "export":
+        return _export(
+            Path(arguments.project), dialect=arguments.dialect, check=arguments.check
+        )
     if arguments.command == "lsp":  # pragma: no cover - run by an editor
         serve()
         return 0
@@ -93,6 +115,87 @@ def _check(directory: Path, *, json_output: bool) -> int:
         count = len(project.templates.names())
         _say(_paint(f"{count} templates, {len(problems)} problems", DIM))
     return 1 if problems else 0
+
+
+def _export(directory: Path, *, dialect: str | None, check: bool) -> int:
+    """Write the `sqruff` settings into `pyproject.toml`, and `.sqruffignore`.
+
+    The values of the parameters are written again each time. The rest of
+    `[tool.sqruff.core]` is yours: it is written only when the table is missing.
+    """
+    try:
+        project = load_project(directory)
+    except ProjectConfigError as error:
+        _say(str(error))
+        return 2
+    pyproject = project.root / "pyproject.toml"
+    text = pyproject.read_text(encoding="utf-8")
+    values = project.placeholder_values()
+    sqruff = tomllib.loads(text).get("tool", {}).get("sqruff", {})
+    written = dict(sqruff.get("templater", {}).get("placeholder", {}))
+    written.pop("param_style", None)
+    ignore = project.root / ".sqruffignore"
+    ignored = ignore.read_text(encoding="utf-8").splitlines() if ignore.exists() else []
+    missing = [
+        path.relative_to(project.root).as_posix()
+        for path in project.macro_files()
+        if path.relative_to(project.root).as_posix() not in ignored
+    ]
+    if check:
+        stale = [
+            name
+            for name, fresh in (
+                ("[tool.sqruff.core]", "core" in sqruff),
+                ("[tool.sqruff.templater.placeholder]", written == values),
+                (".sqruffignore", not missing),
+            )
+            if not fresh
+        ]
+        if stale:
+            _say(f"{', '.join(stale)} out of date: run `sqlakit export sqruff`")
+            return 1
+        return 0
+    if "core" not in sqruff:
+        core = [
+            "[tool.sqruff.core]",
+            *(
+                [f'dialect = "{dialect or project.dialect}"']
+                if dialect or project.dialect
+                else []
+            ),
+            'templater = "placeholder"',
+            f'exclude_rules = "{",".join(LINT_EXCLUDED)}"',
+        ]
+        text = text.rstrip("\n") + "\n\n" + "\n".join(core) + "\n"
+    table = "\n".join(
+        [
+            "[tool.sqruff.templater.placeholder]",
+            "# Written by `sqlakit export sqruff`: a value for each parameter.",
+            'param_style = "colon"',
+            *(f'{name} = "{value}"' for name, value in values.items()),
+        ]
+    )
+    header = re.compile(r"^\[tool\.sqruff\.templater\.placeholder\]\s*$", re.MULTILINE)
+    if found := header.search(text):
+        following = re.compile(r"^\[", re.MULTILINE).search(text, found.end())
+        end = following.start() if following else len(text)
+        text = (
+            text[: found.start()]
+            + table
+            + "\n"
+            + ("\n" if following else "")
+            + text[end:]
+        )
+    else:
+        text = text.rstrip("\n") + "\n\n" + table + "\n"
+    pyproject.write_text(text, encoding="utf-8")
+    if missing:
+        ignore.write_text("\n".join([*ignored, *missing]) + "\n", encoding="utf-8")
+    _say(
+        f"wrote {_relative(pyproject)}"
+        + (f" and {_relative(ignore)}" if missing else "")
+    )
+    return 0
 
 
 def _as_json(problem: Problem) -> dict[str, object]:

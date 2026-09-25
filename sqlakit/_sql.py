@@ -815,12 +815,15 @@ class MacroTemplate:
         An included template is read here, and its pieces become these.
         """
         compiled: list[str | _Expansion] = []
-        for part in parts:
+        for index, part in enumerate(parts):
             if isinstance(part, str):
                 compiled.append(_DOTTED.sub(self._flattened, part))
             elif part.name == INCLUDE:
                 # On a line of its own: the query may end in a `--` comment.
-                compiled.extend(("(", *self._include(part), "\n)"))
+                if _bracketed(parts, index):
+                    compiled.extend((*self._include(part), "\n"))
+                else:
+                    compiled.extend(("(", *self._include(part), "\n)"))
             elif isinstance(macro := self.macros[part.name], SqlMacro):
                 compiled.extend(self._inline(part, macro))
             else:
@@ -1107,6 +1110,18 @@ def _followed(value: Any, root: str, path: Sequence[str]) -> Any:  # noqa: ANN40
     return value
 
 
+def _bracketed(parts: Sequence[str | _Call], index: int) -> bool:
+    """Whether the call at ``index`` stands alone in brackets of its own."""
+    before = parts[index - 1] if index else ""
+    after = parts[index + 1] if index + 1 < len(parts) else ""
+    return (
+        isinstance(before, str)
+        and isinstance(after, str)
+        and before.rstrip().endswith("(")
+        and after.lstrip().startswith(")")
+    )
+
+
 def _without_semicolon(source: str, scanner: _Scanner) -> str:
     """Return a query without the `;` that ends it, which a subquery cannot hold.
 
@@ -1248,7 +1263,45 @@ def _rendered(
 ) -> tuple[str, Mapping[str, Any]]:
     dialect = getattr(getattr(preparer, "dialect", None), "name", "")
     ctx = Context(dialect, preparer, context)
-    return template.render(ctx), ctx.values
+    return _as_bound(template.render(ctx), ctx.values, dialect), ctx.values
+
+
+_IN_ONE = re.compile(r"\bIN\s*\(\s*:([A-Za-z_]\w*)\s*\)", re.IGNORECASE)
+_LIMIT = re.compile(r"\b(LIMIT|OFFSET)(\s+):([A-Za-z_]\w*)\b", re.IGNORECASE)
+_UNLIMITED = {
+    "postgresql": "ALL",
+    "snowflake": "NULL",
+    "mysql": "18446744073709551615",
+    "mariadb": "18446744073709551615",
+    "sqlite": "-1",
+}
+"""What each database reads after `LIMIT` as every row."""
+
+
+def _as_bound(sql: str, values: Mapping[str, Any], dialect: str) -> str:
+    """Return the SQL with what a parameter's value decides written in.
+
+    `IN (:ids)` is how a linter reads a list, and a list binds as one expanding
+    parameter, which writes the brackets itself: `IN :ids`. A `LIMIT :limit`
+    or an `OFFSET :offset` the call passes no value for takes every row and
+    skips none, on the databases that read no `NULL` there.
+    """
+
+    def in_list(found: re.Match[str]) -> str:
+        return (
+            f"IN :{found.group(1)}"
+            if _expands(values.get(found.group(1)))
+            else found.group()
+        )
+
+    def limit(found: re.Match[str]) -> str:
+        clause, space, name = found.groups()
+        if name not in values or values[name] is not None:
+            return found.group()
+        written = "0" if clause.upper() == "OFFSET" else _UNLIMITED.get(dialect)
+        return found.group() if written is None else f"{clause}{space}{written}"
+
+    return _LIMIT.sub(limit, _IN_ONE.sub(in_list, sql))
 
 
 def registered(
@@ -1330,51 +1383,19 @@ def unless_set(value: Param, expr: Sql, otherwise: Sql = Sql("TRUE")) -> str:  #
 
 
 @sql_macro(optional=True, lazy=True)
-def only_if(value: Param, sql: Sql, *more: Sql) -> str:
+def when(value: Param, sql: Sql, *more: Sql) -> str:
     """Write `sql` when the parameter holds a value, and nothing when it does not.
 
     For a clause that is there or not, rather than a condition that is true or
-    not: `tpl.only_if(:team, JOIN teams AS t ON t.id = u.team_id)`. `if_set`
+    not: `tpl.when(:team, JOIN teams AS t ON t.id = u.team_id)`. `if_set`
     writes `TRUE` in its place, which only a condition can stand.
 
     Everything after the parameter is the clause, commas and all:
-    `tpl.only_if(:limit, ORDER BY score DESC, created_at DESC LIMIT :limit)`.
+    `tpl.when(:limit, ORDER BY score DESC, created_at DESC LIMIT :limit)`.
     """
     if not _is_set(value.value):
         return ""
     return ", ".join(str(part) for part in (sql, *more))
-
-
-@sql_macro(optional=True)
-def limit(ctx: Context, count: Param) -> str:
-    """Write the count after `LIMIT`, or what takes every row when there is none.
-
-    ```sql
-    ORDER BY tpl.order_by(:sort, id, name)
-    LIMIT tpl.limit(:limit) OFFSET tpl.offset(:offset)
-    ```
-
-    `ALL` on PostgreSQL, `NULL` on Snowflake, and the largest count MySQL,
-    MariaDB and SQLite take, which read no `ALL`. `0` is a count, and reads no
-    rows.
-    """
-    if _is_set(count.value):
-        return str(count)
-    return _for_dialect(
-        ctx,
-        limit.name,
-        postgresql="ALL",
-        snowflake="NULL",
-        mysql="18446744073709551615",
-        mariadb="18446744073709551615",
-        sqlite="-1",
-    )
-
-
-@sql_macro(optional=True)
-def offset(start: Param) -> str:
-    """Write how many rows to skip after `OFFSET`, `0` when the call says none."""
-    return str(start) if _is_set(start.value) else "0"
 
 
 @sql_macro(optional=True)
@@ -1558,7 +1579,7 @@ def icollate(
     WHERE tpl.icollate(email) = tpl.icollate(:email)
     ```
 
-    `COLLATE` on Snowflake, under ``collation``: `'en-ci'` unless it says
+    `COLLATE(column, ...)` on Snowflake, under ``collation``: `'en-ci'` unless it says
     `'und-ci-ai'` to ignore accents as well. `lower()` elsewhere, which minds
     accents, and the column as it is on MySQL, which compares without regard
     to case already.
@@ -1567,7 +1588,7 @@ def icollate(
     groups `A` with `a` on Snowflake, and `lower()` returns `a` for both.
     """
     if ctx.dialect == "snowflake":
-        return f"{column} COLLATE {collation}"
+        return f"COLLATE({column}, {collation})"
     if ctx.dialect in ("mysql", "mariadb"):
         return column
     return f"lower({column})"
@@ -1615,13 +1636,13 @@ def in_list(column: Sql, values: Param, exclude: Param) -> str:
     WHERE tpl.in_list(o.status, :statuses, :exclude_statuses)
     ```
 
-    `column IN :values`, or `column NOT IN :values` when ``exclude`` holds a
-    value. `TRUE` when the list holds none: no filter either way.
+    `column IN (:values)`, or `column NOT IN (:values)` when ``exclude`` holds
+    a value. `TRUE` when the list holds none: no filter either way.
     """
     if not _is_set(values.value):
         return "TRUE"
     negated = "NOT " if _is_set(exclude.value) else ""
-    return f"{column} {negated}IN {values}"
+    return f"{column} {negated}IN ({values})"
 
 
 @sql_macro
@@ -1914,10 +1935,8 @@ BUILTIN_MACROS: Mapping[str, Macro] = {
     for macro in (
         if_set,
         unless_set,
-        only_if,
+        when,
         order_by,
-        limit,
-        offset,
         icontains,
         icollate,
         json_object,

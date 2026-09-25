@@ -18,12 +18,12 @@
 
   -- after
   SELECT * FROM users
-  WHERE team IN :teams
+  WHERE team IN (:teams)
     AND tpl.if_set(:search, tpl.icontains(name, :search))
   ORDER BY tpl.identifier(:column, id, name)
   ```
 
-  `{{ x.y }}` is `:x.y`, `| inclause` is `IN :x` or `tpl.each(:x)`, a
+  `{{ x.y }}` is `:x.y`, `| inclause` is `IN (:x)` or `tpl.each(:x)`, a
   `{% include %}` of a whole query is `tpl.include('q.sql')`, and a filter or a
   global is an `@sql_macro` function. The `migrate-from-jinja` skill in the
   repository has the whole mapping.
@@ -33,8 +33,8 @@
 
 ### Added
 
-- Built-in macros: `if_set`, `unless_set`, `only_if`, `between`, `order_by`,
-  `limit`, `offset`, `icontains`, `icollate`, `identifier`, `each`,
+- Built-in macros: `if_set`, `unless_set`, `when`, `between`, `order_by`,
+  `icontains`, `icollate`, `identifier`, `each`,
   `in_list`, `array`, `arrays_overlap`, `array_contains_all`, `values`,
   `json_object`, `array_agg`, `string_agg`, `array_contains`, `on_dialect` and
   `include`.
@@ -45,6 +45,12 @@
 - `sqlakit macros` lists the macros, `sqlakit check` checks every template a
   project's `pyproject.toml` names, and `sqlakit lsp` serves the same checks to
   an editor, with completion and hover. The server needs the `lsp` extra.
+- `sqlakit export sqruff` writes the `sqruff` settings that read the templates
+  as SQL into `pyproject.toml`: the `placeholder` templater and a value for
+  every parameter.
+- `IN (:ids)` binds a list as `IN :ids` does, and a `LIMIT :limit` or
+  `OFFSET :offset` with no value takes every row and skips none, on every
+  database.
 
 - `sqlakit_models = app` in the pytest settings imports every `models` module
   under the package before the plugin creates the tables, so a run of a few

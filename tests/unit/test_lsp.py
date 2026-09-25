@@ -90,7 +90,7 @@ def test_a_project_reads_its_templates_from_pyproject(project: Path) -> None:
         ("[project]\nname = 'app'\n", "has no `[tool.sqlakit.templates]` table"),
         (
             "[tool.sqlakit.templates]\npath = ['sql']\n",
-            "has path, and takes macros, namespace, paths",
+            "has path, and takes dialect, macros, namespace, paths",
         ),
     ],
 )
@@ -410,3 +410,69 @@ def test_check_names_a_broken_sql_macro(
         .out.splitlines()[0]
         .startswith("_macros.sql:5:1: Unknown macro tpl.nope in _macros.sql:5")
     )
+
+
+# sqlakit export sqruff
+
+
+def test_export_writes_what_sqruff_needs_into_pyproject(
+    project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (project / "sql" / "dotted.sql").write_text(
+        "SELECT * FROM users WHERE team = :c.team LIMIT :limit"
+    )
+    assert main(["export", "sqruff", "--check"]) == 1
+    assert main(["export", "sqruff", "--dialect", "snowflake"]) == 0
+    assert main(["export", "sqruff", "--check"]) == 0
+    written = (project / "pyproject.toml").read_text()
+    assert written == PYPROJECT + (
+        "\n"
+        "[tool.sqruff.core]\n"
+        'dialect = "snowflake"\n'
+        'templater = "placeholder"\n'
+        'exclude_rules = "RF01,AL05,ST03"\n'
+        "\n"
+        "[tool.sqruff.templater.placeholder]\n"
+        "# Written by `sqlakit export sqruff`: a value for each parameter.\n"
+        'param_style = "colon"\n'
+        'c = "c"\n'
+        'limit = "1"\n'
+        'q = "1"\n'
+        'teams = "1"\n'
+        'x = "1"\n'
+    )
+    assert (project / ".sqruffignore").read_text() == "_macros.sql\n"
+    assert main(["export", "sqruff"]) == 0
+    assert (project / "pyproject.toml").read_text() == written
+    assert capsys.readouterr().out.splitlines()[-1] == "wrote pyproject.toml"
+
+
+def test_export_keeps_what_is_yours(project: Path) -> None:
+    (project / "pyproject.toml").write_text(
+        PYPROJECT
+        + '\n[tool.sqruff.core]\ndialect = "postgres"\nrules = "core"\n'
+        + '\n[tool.sqruff.templater.placeholder]\nparam_style = "colon"\nold = "1"\n'
+        + "\n[tool.other]\nkept = true\n"
+    )
+    assert main(["export", "sqruff"]) == 0
+    written = (project / "pyproject.toml").read_text()
+    assert 'dialect = "postgres"\nrules = "core"\n' in written
+    assert 'old = "1"' not in written
+    assert written.endswith('x = "1"\n\n[tool.other]\nkept = true\n')
+
+
+def test_sqruff_reads_a_template_with_what_export_wrote(project: Path) -> None:
+    import shutil
+    import subprocess
+
+    assert main(["export", "sqruff", "--dialect", "postgres"]) == 0
+    sqruff = shutil.which("sqruff")
+    assert sqruff is not None
+    ran = subprocess.run(  # noqa: S603 - the linter the project installs
+        [sqruff, "lint", "--parsing-errors", "sql/good.tpl.sql"],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert "Unparsable" not in ran.stdout + ran.stderr

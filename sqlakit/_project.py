@@ -13,6 +13,7 @@ namespace = "tpl"
 
 from __future__ import annotations
 
+import re
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -33,7 +34,21 @@ if TYPE_CHECKING:
 
 __all__ = ["Problem", "Project", "load_project"]
 
-_KEYS = {"paths", "macros", "namespace"}
+_KEYS = {"paths", "macros", "namespace", "dialect"}
+
+_PARAMETER_IN_TEXT = re.compile(
+    r"""'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|/\*.*?\*/"""
+    r"|(?<![:\w\\]):([A-Za-z_]\w*)(\.\w+)?",
+    re.DOTALL,
+)
+"""A `:parameter`, past the strings and comments that may hold a colon."""
+
+LINT_EXCLUDED = ("RF01", "AL05", "ST03")
+"""Rules a `tpl.` call trips without anything being wrong with the template.
+
+`RF01` reads `tpl.if_set` as a column of a table named `tpl`, and `AL05` and
+`ST03` miss an alias or a CTE used only inside a macro's argument.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +74,8 @@ class Project:
 
     root: Path
     templates: Templates
+    dialect: str | None = None
+    """The dialect the templates are written in, for a linter to read them in."""
 
     def name_of(self, path: Path) -> str | None:
         """Return a file's template name, or None when no template path holds it."""
@@ -113,6 +130,25 @@ class Project:
             for line, message in self.macro_problems(path, source):
                 start = _line_start(source, line)
                 yield Problem(path, start, start, message)
+
+    def placeholder_values(self) -> dict[str, str]:
+        """Return a value to stand for each parameter, for a linter to read SQL.
+
+        `1` reads wherever a value goes, `LIMIT :limit` included. A parameter
+        read with a path, `:criteria.search`, stands for its own name instead,
+        which reads as a column.
+        """
+        values: dict[str, str] = {}
+        for name in self.templates.names():
+            path = self.path_of(name)
+            assert path is not None  # noqa: S101 - `names` lists files
+            for found in _PARAMETER_IN_TEXT.finditer(path.read_text(encoding="utf-8")):
+                param, dotted = found.groups()
+                if param is not None:
+                    values[param] = (
+                        param if dotted or values.get(param) == param else "1"
+                    )
+        return dict(sorted(values.items()))
 
     def macro_files(self) -> list[Path]:
         """Return the files the project's SQL macros are written in."""
@@ -188,7 +224,7 @@ def load_project(start: Path | None = None) -> Project:
         ],
         namespace=config.get("namespace", "tpl"),
     )
-    return Project(root, templates)
+    return Project(root, templates, config.get("dialect"))
 
 
 def _pyproject(start: Path) -> Path:

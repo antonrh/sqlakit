@@ -14,7 +14,7 @@ which `SQLAKit` expands before the query runs:
 ```sql
 SELECT id, name
 FROM users
-WHERE team IN :teams
+WHERE team IN (:teams)
   AND tpl.if_set(:search, tpl.icontains(name, :search))
 ORDER BY tpl.order_by(:sort, id, name)
 ```
@@ -279,11 +279,19 @@ anywhere.
 SELECT * FROM users WHERE team = :team AND joined_at > :since
 ```
 
-A list reaches the database as a list, so `IN` works without parentheses. An
-empty list matches nothing and doesn't break the query:
+A list reaches the database as a list. Write it in brackets, as SQL reads a
+list, and `SQLAKit` binds it as one parameter whatever its length. An empty
+list matches nothing and doesn't break the query:
 
 ```sql
-SELECT * FROM users WHERE id IN :ids
+SELECT * FROM users WHERE id IN (:ids)
+```
+
+A `LIMIT` or an `OFFSET` the call passes no value for takes every row and skips
+none, on every database:
+
+```sql
+SELECT * FROM users ORDER BY id LIMIT :limit OFFSET :offset
 ```
 
 A dotted name reads an attribute of the value, or a key of a mapping, so a
@@ -294,7 +302,7 @@ rows = db.sql("users/search.sql", criteria=criteria).all()
 ```
 
 ```sql
-SELECT * FROM users WHERE team IN :criteria.teams AND status = :status.OPEN.value
+SELECT * FROM users WHERE team IN (:criteria.teams) AND status = :status.OPEN.value
 ```
 
 A name that reads nothing raises `ParameterPathError`, naming the step that
@@ -324,11 +332,10 @@ docstrings:
 | --- | --- |
 | `tpl.if_set(:x, expr[, otherwise])` | `expr` when `:x` holds a value, `otherwise` (`TRUE`) when it doesn't |
 | `tpl.unless_set(:x, expr[, otherwise])` | `expr` when `:x` holds no value |
-| `tpl.only_if(:x, sql)` | `sql` when `:x` holds a value, nothing when it doesn't: a `JOIN` that is there or not. Everything after `:x` is `sql`, commas and all |
-| `tpl.in_list(col, :values, :exclude)` | `col IN :values`, or `NOT IN` when `:exclude` is set, and `TRUE` when the list is empty |
+| `tpl.when(:x, sql)` | `sql` when `:x` holds a value, nothing when it doesn't: a `JOIN` that is there or not. Everything after `:x` is `sql`, commas and all |
+| `tpl.in_list(col, :values, :exclude)` | `col IN (:values)`, or `NOT IN` when `:exclude` is set, and `TRUE` when the list is empty |
 | `tpl.between(col, :from, :to[, '[)'])` | a range whose ends may each be missing |
 | `tpl.order_by(:sort, col, ...)` | the terms of an `ORDER BY` from sort strings, only by the columns listed |
-| `LIMIT tpl.limit(:n) OFFSET tpl.offset(:m)` | the count and the rows to skip, every row and none when the call passes no value |
 | `tpl.icontains(col, text)` | a search for the text without regard to case |
 | `tpl.icollate(col)` | the column compared and sorted without regard to case |
 | `tpl.identifier(:name, col, ...)` | a name from a parameter, quoted, only one of those listed |
@@ -345,7 +352,7 @@ A value is missing when it is `None`, `False`, empty, or not passed at all.
 
 ```sql
 SELECT * FROM users
-WHERE tpl.if_set(:teams, team IN :teams)
+WHERE tpl.if_set(:teams, team IN (:teams))
   AND tpl.between(joined_at, :since, :until, '[)')
   AND tpl.unless_set(:include_archived, NOT archived)
 ```
@@ -358,6 +365,7 @@ SQL on its own. `name = <expression>` sorts by an expression under a name, and
 string in quotes is the sort when the call passes none:
 
 ```sql
+SELECT * FROM users
 ORDER BY tpl.order_by(:sort, id, created_at, name = tpl.icollate(name), 'created_at.desc', 'nulls_last')
 ```
 
@@ -365,7 +373,7 @@ ORDER BY tpl.order_by(:sort, id, created_at, name = tpl.icollate(name), 'created
 `GROUP BY name`, sorting by it no longer matches the grouped column, so group
 by the same expression.
 
-`if_set`, `unless_set` and `only_if` expand only the branch they write. A macro
+`if_set`, `unless_set` and `when` expand only the branch they write. A macro
 in the other one never runs, so it can't fail on a value that wasn't meant for
 it.
 
@@ -374,11 +382,12 @@ writes the right form for each: `icontains` is `ILIKE` on PostgreSQL and
 `CONTAINS(COLLATE(...))` on Snowflake. `on_dialect` is the way out for what
 has no name, such as a table that lives elsewhere on one database.
 
-`tpl.include` puts a whole query from another file where a table goes. The
-two share their parameters:
+`tpl.include` puts a whole query from another file where a table goes, in
+brackets of its own or in the ones around it. The two share their parameters:
 
 ```sql
-SELECT count(*) FROM tpl.include('users/search.sql') AS found
+WITH found AS (SELECT * FROM tpl.include('users/search.sql') AS s)
+SELECT count(*) FROM found
 ```
 
 ## Macros of your own
@@ -487,6 +496,37 @@ FROM users
 WHERE joined_at > :since
 GROUP BY team
 ```
+
+## Linters
+
+A template is SQL, so `sqruff` or `sqlfluff` reads it with the `placeholder`
+templater, which puts a value in place of each `:name`. A value has to read
+wherever the parameter stands: `LIMIT :limit` reads `LIMIT limit` without
+one. `sqlakit export sqruff` writes a value for every parameter of your
+templates into `pyproject.toml`, next to the rest of the settings:
+
+```console
+$ sqlakit export sqruff --dialect snowflake
+wrote pyproject.toml and .sqruffignore
+$ sqruff lint app/sql
+```
+
+Run it again when templates gain parameters. `sqlakit export sqruff --check`
+fails in CI when it's out of date. It writes `[tool.sqruff.core]` only when the
+table is missing, so the rules you set there stay yours. `.sqruffignore` gets
+the files of SQL macros, which hold expressions rather than statements.
+
+The exported settings turn off three rules a `tpl.` call trips while the
+template is fine: `RF01` reads `tpl.if_set` as a column of a table named `tpl`,
+and `AL05` and `ST03` miss an alias or a CTE used only inside a macro's
+argument.
+
+A linter reads a macro call where a value goes: in `WHERE`, in `SELECT`, after
+`ORDER BY`, and where a table goes in `FROM`. A call that stands for a whole
+clause, `tpl.when(:tag, JOIN tags AS t ON t.order_id = o.id)`, is not SQL to
+it, and it skips that part. Where you can, keep the clause and make its
+condition the macro: `LEFT JOIN tags AS t ON t.order_id = o.id AND
+tpl.if_set(:tag, TRUE, FALSE)`, or `EXISTS` in place of an optional `JOIN`.
 
 ## Template validation
 

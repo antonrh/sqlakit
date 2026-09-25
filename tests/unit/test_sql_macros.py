@@ -415,10 +415,8 @@ def test_signature_says_how_a_template_calls_a_macro() -> None:
     ] == [
         "tpl.if_set(:value, expr[, otherwise])",
         "tpl.unless_set(:value, expr[, otherwise])",
-        "tpl.only_if(:value, sql, *more)",
+        "tpl.when(:value, sql, *more)",
         "tpl.order_by(:sort, column, *columns)",
-        "tpl.limit(:count)",
-        "tpl.offset(:start)",
         "tpl.icontains(column, text[, collation])",
         "tpl.icollate(column[, collation])",
         "tpl.json_object(*pairs)",
@@ -812,7 +810,7 @@ def mariadb() -> sa.Dialect:
 @pytest.mark.parametrize(
     ("dialect", "sql"),
     [
-        (snowflake(), "ORDER BY name COLLATE 'und-ci-ai'"),
+        (snowflake(), "ORDER BY COLLATE(name, 'und-ci-ai')"),
         (postgresql.dialect(), "ORDER BY lower(name)"),
         (sqlite.dialect(), "ORDER BY lower(name)"),
         (mysql.dialect(), "ORDER BY name"),
@@ -828,7 +826,7 @@ def test_icollate_compares_without_case_on_each_dialect(
 def test_icollate_is_en_ci_on_snowflake_unless_told() -> None:
     source = "WHERE tpl.icollate(email) = tpl.icollate(:email)"
     assert render(source, snowflake(), email="A") == (
-        "WHERE email COLLATE 'en-ci' = :email COLLATE 'en-ci'"
+        "WHERE COLLATE(email, 'en-ci') = COLLATE(:email, 'en-ci')"
     )
 
 
@@ -1254,12 +1252,19 @@ def test_order_by_orders_by_nothing_when_the_sort_was_not_passed() -> None:
     )
 
 
-def test_only_if_writes_nothing_when_the_value_is_not_there() -> None:
-    source = "FROM users AS u tpl.only_if(:team, JOIN teams AS t ON t.id = u.team_id)"
+def test_when_writes_nothing_when_the_value_is_not_there() -> None:
+    source = "FROM users AS u tpl.when(:team, JOIN teams AS t ON t.id = u.team_id)"
     assert render(source, postgresql.dialect(), team="red") == (
         "FROM users AS u JOIN teams AS t ON t.id = u.team_id"
     )
     assert render(source, postgresql.dialect()) == "FROM users AS u"
+
+
+def bound(source: str, dialect: sa.Dialect, **values: Any) -> str:
+    """Return what a template becomes on a dialect, values written in where they decide."""
+    template = sql_module.MacroTemplate("x.sql", source, sql_module.registered([]))
+    sql, _ = sql_module._rendered(template, values, dialect.identifier_preparer)
+    return sql
 
 
 @pytest.mark.parametrize(
@@ -1272,36 +1277,51 @@ def test_only_if_writes_nothing_when_the_value_is_not_there() -> None:
         (sqlite.dialect(), "-1"),
     ],
 )
-def test_limit_takes_every_row_when_there_is_no_count(
+def test_a_limit_without_a_value_takes_every_row(
     dialect: sa.Dialect, unlimited: str
 ) -> None:
-    source = "LIMIT tpl.limit(:limit) OFFSET tpl.offset(:offset)"
-    assert render(source, dialect, limit=None) == f"LIMIT {unlimited} OFFSET 0"
-    assert render(source, dialect, limit=0, offset=5) == ("LIMIT :limit OFFSET :offset")
+    source = "LIMIT :limit OFFSET :offset"
+    assert bound(source, dialect, limit=None, offset=None) == (
+        f"LIMIT {unlimited} OFFSET 0"
+    )
+    assert bound(source, dialect, limit=0, offset=5) == source
 
 
-def test_limit_and_offset_run(db: Database, tmp_path: Path) -> None:
+def test_a_limit_without_a_value_runs(db: Database, tmp_path: Path) -> None:
     write(
         tmp_path,
         {
             "users/page.sql": (
                 "SELECT name FROM users ORDER BY tpl.order_by(:sort, id) "
-                "LIMIT tpl.limit(:limit) OFFSET tpl.offset(:offset)"
+                "LIMIT :limit OFFSET :offset"
             )
         },
     )
-    assert names(db, "users/page.sql") == ["Ann", "bob", "Cid", "dan_x"]
+    assert names(db, "users/page.sql", limit=None, offset=None) == [
+        "Ann",
+        "bob",
+        "Cid",
+        "dan_x",
+    ]
     assert names(db, "users/page.sql", sort="id.desc", limit=2, offset=1) == [
         "Cid",
         "bob",
     ]
 
 
-def test_limit_refuses_a_database_it_has_no_form_for() -> None:
-    from sqlalchemy.dialects import oracle
-
-    with pytest.raises(MacroArgumentError, match="has no form for oracle"):
-        render("LIMIT tpl.limit(:n)", oracle.dialect())
+def test_a_list_in_brackets_binds_as_a_list(db: Database, tmp_path: Path) -> None:
+    source = "WHERE team IN (:teams) AND id NOT IN ( :ids )"
+    assert bound(source, postgresql.dialect(), teams=["a"], ids=(1, 2)) == (
+        "WHERE team IN :teams AND id NOT IN :ids"
+    )
+    assert bound(source, postgresql.dialect(), teams="a", ids=1) == source
+    write(
+        tmp_path,
+        {"users/in.sql": "SELECT name FROM users WHERE team IN (:teams) ORDER BY id"},
+    )
+    assert names(db, "users/in.sql", teams=["blue"]) == ["bob"]
+    assert names(db, "users/in.sql", teams=[]) == []
+    assert names(db, "users/in.sql", teams="blue") == ["bob"]
 
 
 @pytest.mark.parametrize(
@@ -1348,8 +1368,8 @@ def test_only_the_branch_taken_is_rendered() -> None:
     assert ctx.values == {"x": None}
 
 
-def test_only_if_takes_a_clause_with_commas() -> None:
-    source = "SELECT * FROM t tpl.only_if(:n, ORDER BY a DESC, b DESC LIMIT :n)"
+def test_when_takes_a_clause_with_commas() -> None:
+    source = "SELECT * FROM t tpl.when(:n, ORDER BY a DESC, b DESC LIMIT :n)"
     assert render(source, postgresql.dialect(), n=3) == (
         "SELECT * FROM t ORDER BY a DESC, b DESC LIMIT :n"
     )
@@ -1369,8 +1389,8 @@ def test_order_by_falls_back_to_the_sort_the_template_names() -> None:
 @pytest.mark.parametrize(
     ("values", "exclude", "sql"),
     [
-        (["a"], None, "WHERE s IN :v"),
-        (["a"], True, "WHERE s NOT IN :v"),
+        (["a"], None, "WHERE s IN (:v)"),
+        (["a"], True, "WHERE s NOT IN (:v)"),
         ([], True, "WHERE TRUE"),
         (None, None, "WHERE TRUE"),
     ],
@@ -1564,3 +1584,22 @@ def test_the_cli_lists_sql_macros(
     assert "tpl.for_tenant(t)\n    rows of the tenant, and of one team when asked." in (
         capsys.readouterr().out
     )
+
+
+def test_an_include_in_brackets_of_its_own_adds_none(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "inner.sql": "SELECT 1 AS n",
+            "outer.sql": (
+                "WITH one AS (tpl.include('inner.sql'))\n"
+                "SELECT n FROM (tpl.include('inner.sql')) AS i"
+            ),
+        },
+    )
+    db = Database("sqlite://", templates=tmp_path)
+    assert str(db.sql("outer.sql").statement).split("\n", 1)[1] == (
+        "WITH one AS (SELECT 1 AS n\n)\nSELECT n FROM (SELECT 1 AS n\n) AS i"
+    )
+    with db.connect():
+        assert db.sql("outer.sql").scalars().one() == 1
