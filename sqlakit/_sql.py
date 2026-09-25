@@ -5,7 +5,7 @@ import re
 from collections.abc import Mapping, Sized
 from contextvars import ContextVar
 from dataclasses import dataclass, is_dataclass
-from functools import cache, cached_property
+from functools import cache, cached_property, lru_cache
 from inspect import iscoroutinefunction
 from pathlib import Path
 from typing import (
@@ -101,6 +101,8 @@ PathLike = str | Path
 SUFFIX = ".tpl.sql"
 """The extension that picks macros over Jinja."""
 
+_NEXT = re.compile(r"""['"$(\[{)\]},]|--|/\*|(?<![\w.])tpl\.""", re.IGNORECASE)
+"""Where the scanner has something to decide; the text between is copied as is."""
 _CALL = re.compile(r"tpl\.([A-Za-z_]\w*)\s*\(", re.IGNORECASE)
 _PARAMETER = re.compile(r"\s*:([A-Za-z_]\w*)\s*")
 _DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$")
@@ -345,7 +347,8 @@ class _Scanner:
         parts: list[str | _Call] = []
         text_from = index = start
         depth = 0
-        while index < len(source):
+        while found := _NEXT.search(source, index):
+            index = found.start()
             char = source[index]
             if (skipped := self._past_literal(index)) != index:
                 index = skipped
@@ -368,7 +371,7 @@ class _Scanner:
             else:
                 index += 1
         parts.append(source[text_from:])
-        return _joined(parts), index, None
+        return _joined(parts), len(source), None
 
     def _args(self, start: int) -> tuple[tuple[_Arg, ...], int]:
         """Read a call's arguments, and return where the call ends."""
@@ -471,10 +474,28 @@ class MacroTemplate:
         self.macros = macros
         self.parts = _Scanner(source, name).parts()
         self._check(self.parts)
+        self._compiled = self._compile(self.parts)
 
     def render(self, ctx: Context) -> str:
         """Return the SQL for this call, the values it bound going to ``ctx``."""
-        return self._render(self.parts, ctx)
+        return self._render(self._compiled, ctx)
+
+    def _compile(self, parts: Sequence[str | _Call]) -> tuple[str | _Expansion, ...]:
+        """Resolve every call to its macro once, so rendering only calls them."""
+        return tuple(
+            part if isinstance(part, str) else self._expansion(part) for part in parts
+        )
+
+    def _expansion(self, call: _Call) -> _Expansion:
+        macro = self.macros[call.name]
+        args = tuple(
+            (arg.param, None)
+            if macro.kind_at(index) is Param
+            else (None, self._compile(arg.parts))
+            for index, arg in enumerate(call.args)
+        )
+        params = tuple(param for param, _ in args if param is not None)
+        return _Expansion(macro, call.line, args, params)
 
     def _check(self, parts: Sequence[str | _Call]) -> None:
         """Refuse an unknown macro or a call it cannot take, where the file is read.
@@ -489,7 +510,7 @@ class MacroTemplate:
                 continue
             after = parts[index + 1] if index + 1 < len(parts) else ""
             if (
-                part.name == "sort_by"
+                part.name == "order_by"
                 and isinstance(after, str)
                 and _NULLS_AFTER.match(after)
             ):
@@ -522,42 +543,51 @@ class MacroTemplate:
                     )
                 self._check(arg.parts)
 
-    def _render(self, parts: Sequence[str | _Call], ctx: Context) -> str:
+    def _render(self, parts: Sequence[str | _Expansion], ctx: Context) -> str:
         return "".join(
-            part if isinstance(part, str) else self._expand(part, ctx) for part in parts
+            [
+                part if isinstance(part, str) else self._expand(part, ctx)
+                for part in parts
+            ]
         )
 
-    def _expand(self, call: _Call, ctx: Context) -> str:
-        macro = self.macros[call.name]
-        missing = {
-            arg.param
-            for index, arg in enumerate(call.args)
-            if macro.kind_at(index) is Param
-            and arg.param is not None
-            and arg.param not in ctx.values
-        }
-        if missing and not macro.optional:
+    def _expand(self, call: _Expansion, ctx: Context) -> str:
+        macro = call.macro
+        values = ctx.values
+        missing = [name for name in call.params if name not in values]
+        if not missing:
+            return macro.func(*self._arguments(call, ctx))
+        if not macro.optional:
             raise MacroArgumentError(
-                macro.name,
-                f"`:{min(missing)}` was not passed",
-                self.name,
-                call.line,
+                macro.name, f"`:{missing[0]}` was not passed", self.name, call.line
             )
         # An optional macro reads what was not passed as None, and so do the
         # calls inside its arguments: `if_set(:q, ci_contains(name, :q))`.
-        ctx.values.update(dict.fromkeys(missing))
+        values.update(dict.fromkeys(missing))
         try:
-            args: list[Any] = [ctx] if macro.context else []
-            for index, arg in enumerate(call.args):
-                if macro.kind_at(index) is Param:
-                    assert arg.param is not None  # noqa: S101 - checked on load
-                    args.append(Param(arg.param, ctx.values[arg.param]))
-                else:
-                    args.append(Sql(self._render(arg.parts, ctx)))
-            return macro(*args)
+            return macro.func(*self._arguments(call, ctx))
         finally:
             for name in missing:
-                del ctx.values[name]
+                del values[name]
+
+    def _arguments(self, call: _Expansion, ctx: Context) -> list[Any]:
+        args: list[Any] = [ctx] if call.macro.context else []
+        for param, parts in call.args:
+            if param is not None:
+                args.append(Param(param, ctx.values[param]))
+            else:
+                args.append(Sql(self._render(parts or (), ctx)))
+        return args
+
+
+@dataclass(frozen=True, slots=True)
+class _Expansion:
+    """A call resolved to its macro: each argument a parameter's name, or parts."""
+
+    macro: Macro
+    line: int
+    args: tuple[tuple[str | None, tuple[str | _Expansion, ...] | None], ...]
+    params: tuple[str, ...]
 
 
 def _arity(macro: Macro) -> str:
@@ -589,6 +619,10 @@ class MacroEngine:
         self.macros = macros
         self.auto_reload = auto_reload
         self._loaded: dict[str, MacroTemplate] = {}
+        # A string is read once too: the same few are written out again and again.
+        self._from_string = lru_cache(maxsize=256)(
+            lambda source: MacroTemplate("<string>", source, self.macros)
+        )
 
     def render_file(
         self,
@@ -606,9 +640,7 @@ class MacroEngine:
         preparer: Any,  # noqa: ANN401
     ) -> tuple[str, Mapping[str, Any]]:
         """Return the SQL of a template written out, and the values to bind to it."""
-        return _rendered(
-            MacroTemplate("<string>", source, self.macros), context, preparer
-        )
+        return _rendered(self._from_string(source), context, preparer)
 
     def check(self, names: Iterable[str]) -> None:
         """Read these templates, which checks every call in them."""
@@ -698,7 +730,7 @@ def _is_set(value: Any) -> bool:  # noqa: ANN401
 
 
 @sql_macro
-def sort_by(ctx: Context, order_by: Param, column: Sql, *columns: Sql) -> str:
+def order_by(ctx: Context, sort: Param, column: Sql, *columns: Sql) -> str:
     """`ORDER BY` terms from sort strings: `name`, `name.desc`, `name.desc.nulls_last`.
 
     One string or a list of them, sorting only by the columns listed after the
@@ -707,7 +739,7 @@ def sort_by(ctx: Context, order_by: Param, column: Sql, *columns: Sql) -> str:
     `name = <expression>` sorts by something else under that name:
 
     ```sql
-    ORDER BY tpl.sort_by(:order_by, id, name = name COLLATE 'und-ci-ai', 'nulls_last')
+    ORDER BY tpl.order_by(:order_by, id, name = name COLLATE 'und-ci-ai', 'nulls_last')
     ```
 
     `'nulls_last'` or `'nulls_first'` places the nulls of every term whose sort
@@ -724,7 +756,7 @@ def sort_by(ctx: Context, order_by: Param, column: Sql, *columns: Sql) -> str:
             offered[named.group(1)] = named.group(2)
         else:
             offered[_last_name(written)] = written.strip()
-    requested = order_by.value
+    requested = sort.value
     if not requested:
         return _NO_ORDER
     fields = [requested] if isinstance(requested, str) else list(requested)
@@ -786,7 +818,7 @@ def ci_contains(
 
 
 BUILTIN_MACROS: Mapping[str, Macro] = {
-    macro.name: macro for macro in (if_set, sort_by, ci_contains)
+    macro.name: macro for macro in (if_set, order_by, ci_contains)
 }
 
 
@@ -930,7 +962,7 @@ class Templates:
 
     A file named `*.tpl.sql` is not Jinja: it is SQL with `:name` parameters and
     `tpl.<macro>(...)` calls. ``macros`` are the ones an application adds to the
-    built-in `if_set`, `sort_by` and `ci_contains`:
+    built-in `if_set`, `order_by` and `ci_contains`:
 
     ```python
     Templates("app/sql", macros=[for_accounts])
@@ -1222,12 +1254,7 @@ def _statement(
     if label is not None:
         # `*/` in a name would end the comment early and leak into the SQL.
         sql = f"/* {label.replace('*/', '* /')} */\n{sql}"
-    clause = sa.text(sql)
-    named = {
-        element.key
-        for element in clause.get_children()
-        if isinstance(element, sa.BindParameter)
-    }
+    clause, named = _text(sql)
     stray = named - set(params)
     if stray:
         raise StrayParameterError(sorted(stray), label)
@@ -1235,6 +1262,23 @@ def _statement(
     return clause.bindparams(
         *(_bound(name, value) for name, value in params.items() if name in named)
     )
+
+
+@lru_cache(maxsize=1024)
+def _text(sql: str) -> tuple[sa.TextClause, frozenset[str]]:
+    """Return the SQL as `text()`, and the names of the parameters it holds.
+
+    Reading the parameters out of the SQL is most of what building a statement
+    costs, and a template renders the same SQL whenever its values have the same
+    shape. Sharing the clause is safe: `bindparams` returns a copy.
+    """
+    clause = sa.text(sql)
+    named = frozenset(
+        element.key
+        for element in clause.get_children()
+        if isinstance(element, sa.BindParameter)
+    )
+    return clause, named
 
 
 def _bound(name: str, value: Any) -> sa.BindParameter[Any]:  # noqa: ANN401

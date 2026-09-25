@@ -29,7 +29,7 @@ TEMPLATES = {
         WHERE
             team IN :teams
             AND tpl.if_set(:search, tpl.ci_contains(name, :search))
-        ORDER BY tpl.sort_by(:order_by, id, name, team, 'nulls_last')
+        ORDER BY tpl.order_by(:order_by, id, name, team, 'nulls_last')
         LIMIT :limit
     """,
     "users/for_teams.tpl.sql": """
@@ -119,61 +119,61 @@ def test_ci_contains_matches_a_percent_or_underscore_only_as_itself(
     assert names(db, "users/list.tpl.sql", **LIST | {"search": "%"}) == []
 
 
-def test_sort_by_orders_by_sort_strings(db: Database) -> None:
+def test_order_by_orders_by_sort_strings(db: Database) -> None:
     values = LIST | {"order_by": ["team.desc", "name.desc"]}
     assert names(db, "users/list.tpl.sql", **values) == ["dan_x", "Cid", "Ann", "bob"]
 
 
-def test_sort_by_folds_the_case_convention_of_a_request(db: Database) -> None:
+def test_order_by_folds_the_case_convention_of_a_request(db: Database) -> None:
     values = LIST | {"order_by": "Name"}
     assert names(db, "users/list.tpl.sql", **values) == ["Ann", "Cid", "bob", "dan_x"]
 
 
-def test_sort_by_refuses_a_field_it_was_not_given(db: Database) -> None:
+def test_order_by_refuses_a_field_it_was_not_given(db: Database) -> None:
     with pytest.raises(UnknownOrderFieldError, match="password"):
         names(db, "users/list.tpl.sql", **LIST | {"order_by": "password"})
 
 
-def test_sort_by_refuses_what_is_not_a_sort_string() -> None:
+def test_order_by_refuses_what_is_not_a_sort_string() -> None:
     with pytest.raises(UnknownOrderFieldError):
-        render("ORDER BY tpl.sort_by(:o, id)", postgresql.dialect(), o="id.sideways")
+        render("ORDER BY tpl.order_by(:o, id)", postgresql.dialect(), o="id.sideways")
 
 
-def test_sort_by_needs_the_columns_it_may_sort_by() -> None:
+def test_order_by_needs_the_columns_it_may_sort_by() -> None:
     with pytest.raises(MacroArgumentError, match="takes at least 2 arguments"):
-        render("ORDER BY tpl.sort_by(:o)", postgresql.dialect(), o="id")
+        render("ORDER BY tpl.order_by(:o)", postgresql.dialect(), o="id")
 
 
-def test_sort_by_sorts_by_an_expression_under_a_name() -> None:
-    source = "ORDER BY tpl.sort_by(:o, u.id, name = name COLLATE 'und-ci-ai')"
+def test_order_by_sorts_by_an_expression_under_a_name() -> None:
+    source = "ORDER BY tpl.order_by(:o, u.id, name = name COLLATE 'und-ci-ai')"
     assert render(source, postgresql.dialect(), o=["name.desc", "id"]) == (
         "ORDER BY name COLLATE 'und-ci-ai' DESC, u.id ASC"
     )
 
 
-def test_sort_by_places_nulls_where_the_template_says_unless_asked() -> None:
-    source = "ORDER BY tpl.sort_by(:o, id, name, 'nulls_last')"
+def test_order_by_places_nulls_where_the_template_says_unless_asked() -> None:
+    source = "ORDER BY tpl.order_by(:o, id, name, 'nulls_last')"
     assert render(source, postgresql.dialect(), o=["name.asc.nulls_first", "id"]) == (
         "ORDER BY name ASC NULLS FIRST, id ASC NULLS LAST"
     )
 
 
-def test_sort_by_places_nulls_on_mysql_without_nulls_last() -> None:
-    source = "ORDER BY tpl.sort_by(:o, id, 'nulls_last')"
+def test_order_by_places_nulls_on_mysql_without_nulls_last() -> None:
+    source = "ORDER BY tpl.order_by(:o, id, 'nulls_last')"
     assert render(source, mysql.dialect(), o="id.desc") == (
         "ORDER BY id IS NULL ASC, id DESC"
     )
 
 
-def test_sort_by_refuses_nulls_after_the_call() -> None:
+def test_order_by_refuses_nulls_after_the_call() -> None:
     with pytest.raises(MacroArgumentError, match="Pass the default as an argument"):
         render(
-            "ORDER BY tpl.sort_by(:o, id)\n  nulls last", postgresql.dialect(), o=None
+            "ORDER BY tpl.order_by(:o, id)\n  nulls last", postgresql.dialect(), o=None
         )
 
 
-def test_sort_by_orders_by_nothing_when_nothing_is_asked() -> None:
-    assert render("ORDER BY tpl.sort_by(:o, id)", postgresql.dialect(), o=[]) == (
+def test_order_by_orders_by_nothing_when_nothing_is_asked() -> None:
+    assert render("ORDER BY tpl.order_by(:o, id)", postgresql.dialect(), o=[]) == (
         "ORDER BY (SELECT NULL)"
     )
 
@@ -241,7 +241,7 @@ def test_an_unknown_macro_is_refused_when_the_file_is_read() -> None:
         render("SELECT 1\nWHERE tpl.foo(:x)", postgresql.dialect(), x=1)
     assert str(raised.value) == (
         "Unknown macro tpl.foo in inline.tpl.sql:2; available: ci_contains, "
-        "for_teams, if_set, json_object, sort_by. Register one with "
+        "for_teams, if_set, json_object, order_by. Register one with "
         "`Templates(..., macros=[...])`."
     )
 
@@ -366,7 +366,7 @@ def test_signature_says_how_a_template_calls_a_macro() -> None:
         for macro in sql_module.registered([json_object]).values()
     ] == [
         "tpl.if_set(:value, expr[, otherwise])",
-        "tpl.sort_by(:order_by, column, *columns)",
+        "tpl.order_by(:sort, column, *columns)",
         "tpl.ci_contains(column, :text[, collation])",
         "tpl.json_object(*pairs)",
     ]

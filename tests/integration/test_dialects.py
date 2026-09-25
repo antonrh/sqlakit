@@ -252,7 +252,7 @@ def _macro_templates(db: Database, tmp_path: Path) -> None:
     (tmp_path / "events" / "search.tpl.sql").write_text(
         "SELECT name FROM events\n"
         "WHERE id IN :ids AND tpl.if_set(:search, tpl.ci_contains(name, :search), 1 = 1)\n"
-        "ORDER BY tpl.sort_by(:order_by, id, name)"
+        "ORDER BY tpl.order_by(:order_by, id, name)"
     )
     db.templates = tmp_path
 
