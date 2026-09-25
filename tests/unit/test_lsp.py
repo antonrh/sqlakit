@@ -15,11 +15,13 @@ from sqlakit._lsp import (
     Diagnostic,
     Target,
     _Assistant,
+    _source_of,
+    _utf16_column,
     offset_of,
     position_of,
 )
 from sqlakit._project import load_project
-from sqlakit._sql import signature_of
+from sqlakit._sql import signature_of, sql_macros
 
 PYPROJECT = """
 [project]
@@ -185,7 +187,7 @@ def test_a_template_found_in_the_code_is_checked(app: Path) -> None:
     [found] = helper.diagnose(path, "SELECT q.sided('up')")
     assert found.message == "q.sided: argument 1 is 'left' or 'right', got 'up'"
     assert helper.definition("WHERE q.owned(:t)", 8) == Target(
-        app / "shop" / "macros.py", 6
+        app / "shop" / "macros.py", 7, 4
     )
 
 
@@ -365,7 +367,7 @@ def test_definition_goes_to_the_macro_and_to_the_included_file(
     assistant: _Assistant, project: Path
 ) -> None:
     assert assistant.definition("WHERE tpl.mine(:t)", 11) == Target(
-        project / "lsp_macros.py", 4
+        project / "lsp_macros.py", 5, 4
     )
     source = "FROM tpl.include('inner.tpl.sql') AS i"
     assert assistant.definition(source, 20) == Target(
@@ -439,6 +441,26 @@ async def test_the_server_answers_an_editor(project: Path) -> None:
     assert isinstance(completion, types.CompletionList)
     assert "mine" in [item.label for item in completion.items]
 
+    text = "SELECT 1 WHERE tpl.mine(:t)"
+    mine = (project / "sql" / "mine.sql").as_uri()
+    client.text_document_did_open(
+        types.DidOpenTextDocumentParams(types.TextDocumentItem(mine, "sql", 1, text))
+    )
+    at = types.Position(0, text.index("mine") + 1)
+    here = types.TextDocumentIdentifier(mine)
+    places = [
+        await client.text_document_definition_async(types.DefinitionParams(here, at)),
+        await client.text_document_implementation_async(
+            types.ImplementationParams(here, at)
+        ),
+        await client.text_document_declaration_async(types.DeclarationParams(here, at)),
+    ]
+    assert [
+        (place.uri, place.range.start.line, place.range.start.character)
+        for place in places
+        if isinstance(place, types.Location)
+    ] == [((project / "lsp_macros.py").resolve().as_uri(), 5, 4)] * 3
+
     outer = (project / "sql" / "outer.tpl.sql").as_uri()
     client.text_document_did_open(
         types.DidOpenTextDocumentParams(
@@ -478,11 +500,11 @@ def test_sql_macros_complete_and_hover_like_the_others(assistant: _Assistant) ->
     )
 
 
-def test_an_sql_macro_is_defined_at_its_header(
+def test_an_sql_macro_is_defined_at_its_name(
     assistant: _Assistant, project: Path
 ) -> None:
     assert assistant.definition("WHERE tpl.visible(u)", 11) == Target(
-        project / "_macros.sql", 3
+        project / "_macros.sql", 3, 38
     )
 
 
@@ -668,3 +690,21 @@ def test_check_passes_a_file_of_macros_among_the_templates(
     )
     assert main(["check", "--project", str(app)]) == 0
     assert capsys.readouterr().out == "1 templates, 0 problems\n"
+
+
+def test_a_macro_over_several_lines_is_defined_at_its_alias(tmp_path: Path) -> None:
+    path = tmp_path / "_macros.sql"
+    path.write_text(
+        "-- Several lines.\nSELECT tpl.if_set(\n    x, y\n) AS long_one\nFROM x, y;\n"
+    )
+    [macro] = sql_macros(path)
+    assert _source_of(macro) == Target(path, 3, 5)
+
+
+def test_a_column_goes_to_the_editor_in_utf16(tmp_path: Path) -> None:
+    path = tmp_path / "_macros.sql"
+    path.write_text("SELECT 'имя😀' = x AS named FROM x;\n")
+    [macro] = sql_macros(path)
+    target = _source_of(macro)
+    assert target == Target(path, 0, 21)
+    assert _utf16_column(target) == 22

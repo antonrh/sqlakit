@@ -353,6 +353,7 @@ class SqlMacro(Macro):
         path: Path,
         line: int,
         body_line: int,
+        name_at: tuple[int, int] | None = None,
     ) -> None:
         self.name = name.lower()
         self.doc = doc
@@ -368,6 +369,8 @@ class SqlMacro(Macro):
         self.line = line
         """The line of the header in the file."""
         self.body_line = body_line
+        self.name_at = name_at or (line, 0)
+        """The line and the column of its name in the file, as an editor goes to it."""
         names = "|".join(re.escape(param) for param in params) or r"(?!)"
         self._argument = re.compile(
             rf"""'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|/\*.*?\*/"""
@@ -454,6 +457,7 @@ def sql_macros(path: Path | str, source: str | None = None) -> list[SqlMacro]:
         if len(set(params)) != len(params):
             problem = f"its arguments in {path.name}:{line} name one twice: {params}"
             raise MacroDefinitionError(name, problem)
+        named = offset + statement.start("name")
         found.append(
             SqlMacro(
                 name,
@@ -463,6 +467,10 @@ def sql_macros(path: Path | str, source: str | None = None) -> list[SqlMacro]:
                 path=path,
                 line=line,
                 body_line=line,
+                name_at=(
+                    source.count("\n", 0, named) + 1,
+                    named - (source.rfind("\n", 0, named) + 1),
+                ),
             )
         )
     return found

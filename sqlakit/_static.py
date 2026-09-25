@@ -69,6 +69,7 @@ class StaticMacro(Macro):
         doc: str,
         path: Path,
         line: int,
+        column: int = 0,
     ) -> None:
         self.name = name.lower()
         self.slots = slots
@@ -79,6 +80,8 @@ class StaticMacro(Macro):
         self.doc = doc
         self.path = path
         self.line = line
+        self.name_at = (line, column)
+        """The line and the column of the function's name, as an editor goes to it."""
         self.func = self._unread
 
     def _unread(self, *_: Any) -> str:  # noqa: ANN401
@@ -100,12 +103,15 @@ def discover(root: Path) -> Discovered:
     found = Discovered()
     for path in _python_files(root):
         try:
-            module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            source = path.read_text(encoding="utf-8")
+            module = ast.parse(source, filename=str(path))
         except (SyntaxError, UnicodeDecodeError):
             continue
         names = _assigned(module)
         for node in ast.walk(module):
-            if isinstance(node, ast.FunctionDef) and (macro := _macro_of(node, path)):
+            if isinstance(node, ast.FunctionDef) and (
+                macro := _macro_of(node, path, source)
+            ):
                 found.macros.append(macro)
             elif isinstance(node, ast.Call):
                 _read_call(node, names, path, root, found)
@@ -245,7 +251,7 @@ def _last_name(node: ast.expr) -> str:
     return ""
 
 
-def _macro_of(node: ast.FunctionDef, path: Path) -> StaticMacro | None:
+def _macro_of(node: ast.FunctionDef, path: Path, source: str) -> StaticMacro | None:
     """Return the macro a function decorated `@sql_macro` defines, if it is one."""
     for decorator in node.decorator_list:
         called = decorator.func if isinstance(decorator, ast.Call) else decorator
@@ -257,12 +263,15 @@ def _macro_of(node: ast.FunctionDef, path: Path) -> StaticMacro | None:
                 decorator.keywords if isinstance(decorator, ast.Call) else []
             )
         }
-        return _read_macro(node, path, options)
+        return _read_macro(node, path, options, source)
     return None
 
 
 def _read_macro(
-    node: ast.FunctionDef, path: Path, options: dict[str | None, ast.expr]
+    node: ast.FunctionDef,
+    path: Path,
+    options: dict[str | None, ast.expr],
+    source: str,
 ) -> StaticMacro:
     arguments = [*node.args.posonlyargs, *node.args.args]
     defaults = [None] * (len(arguments) - len(node.args.defaults)) + list(
@@ -298,8 +307,16 @@ def _read_macro(
         lazy=_flag(options.get("lazy")),
         doc=ast.get_docstring(node) or "",
         path=path,
-        line=node.decorator_list[0].lineno if node.decorator_list else node.lineno,
+        line=node.lineno,
+        column=_name_column(source, node),
     )
+
+
+def _name_column(source: str, node: ast.FunctionDef) -> int:
+    """Return the column of a function's name, in characters: `ast` counts bytes."""
+    line = source.splitlines()[node.lineno - 1]
+    written = line.encode()[: node.col_offset].decode(errors="ignore")
+    return len(written) + len("def ")
 
 
 def _kind(annotation: ast.expr | None) -> tuple[Any, tuple[str, ...]]:

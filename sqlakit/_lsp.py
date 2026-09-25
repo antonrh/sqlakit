@@ -83,10 +83,15 @@ class Completion:
 
 @dataclass(frozen=True, slots=True)
 class Target:
-    """A definition's place: a file, and the line in it, from zero."""
+    """A definition's place: a file, and the line and column in it, from zero.
+
+    The column counts characters, and the server gives it to the editor in the
+    UTF-16 units the protocol counts in.
+    """
 
     path: Path
     line: int
+    column: int = 0
 
 
 class _Assistant:
@@ -378,16 +383,25 @@ def _snippet(macro: Macro) -> str:
 
 
 def _source_of(macro: Macro) -> Target | None:
-    """Return where a macro is written: its header, or its function."""
+    """Return where a macro's name is written: in its `SELECT`, or its `def`."""
     written = getattr(macro, "path", None)
-    if isinstance(written, Path):
-        return Target(written, getattr(macro, "line", 1) - 1)
+    named = getattr(macro, "name_at", None)
+    if isinstance(written, Path) and named is not None:
+        return Target(written, named[0] - 1, named[1])
     try:
         path = inspect.getsourcefile(macro.func)
-        _, line = inspect.getsourcelines(macro.func)
+        lines, first = inspect.getsourcelines(macro.func)
     except (OSError, TypeError):
         return None
-    return None if path is None else Target(Path(path), max(line - 1, 0))
+    if path is None:
+        return None
+    for index, line in enumerate(lines):
+        if found := _DEF.match(line):
+            return Target(Path(path), first - 1 + index, found.start(1))
+    return Target(Path(path), max(first - 1, 0))
+
+
+_DEF = re.compile(r"\s*(?:async\s+)?def\s+(\w+)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -558,8 +572,8 @@ def _server() -> Any:  # noqa: ANN401, C901, PLR0915 - a handler for each reques
             return None
         return types.Hover(types.MarkupContent(types.MarkupKind.Markdown, text))
 
-    @server.feature(types.TEXT_DOCUMENT_DEFINITION)
-    def definition(ls: LanguageServer, params: Any) -> Any:  # noqa: ANN401
+    def located(ls: LanguageServer, params: Any) -> Any:  # noqa: ANN401
+        """Return where the macro or the template under the cursor is written."""
         found = at(ls, params)
         if found is None:
             return None
@@ -570,8 +584,17 @@ def _server() -> Any:  # noqa: ANN401, C901, PLR0915 - a handler for each reques
         )
         if target is None:
             return None
-        start = types.Position(target.line, 0)
+        start = types.Position(target.line, _utf16_column(target))
         return types.Location(target.path.resolve().as_uri(), types.Range(start, start))
+
+    # An editor goes to where a macro is written on any of these: a macro has no
+    # declaration or implementation apart from its definition.
+    for method in (
+        types.TEXT_DOCUMENT_DEFINITION,
+        types.TEXT_DOCUMENT_IMPLEMENTATION,
+        types.TEXT_DOCUMENT_DECLARATION,
+    ):
+        server.feature(method)(located)
 
     @server.feature(types.TEXT_DOCUMENT_DOCUMENT_LINK)
     def document_link(ls: LanguageServer, params: Any) -> Any:  # noqa: ANN401
@@ -592,6 +615,17 @@ def _server() -> Any:  # noqa: ANN401, C901, PLR0915 - a handler for each reques
         ]
 
     return server
+
+
+def _utf16_column(target: Target) -> int:
+    """Return a target's column in the UTF-16 units the protocol counts in."""
+    if not target.column:
+        return 0
+    try:
+        line = target.path.read_text(encoding="utf-8").splitlines()[target.line]
+    except (OSError, IndexError):
+        return target.column
+    return len(line[: target.column].encode("utf-16-le")) // 2
 
 
 def _diagnostic(source: str, found: Diagnostic) -> types.Diagnostic:
