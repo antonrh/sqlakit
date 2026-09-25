@@ -30,6 +30,7 @@ from ._sql import (
     MacroTemplate,
     SqlMacro,
     Templates,
+    inline_position,
     sql_macros,
 )
 from ._static import discover
@@ -54,6 +55,10 @@ _PARAMETER_IN_TEXT = re.compile(
     re.DOTALL,
 )
 """A `:parameter`, past the strings and comments that may hold a colon."""
+
+_COPY_INTO = re.compile(r"\bCOPY\s+INTO\s*$", re.IGNORECASE)
+_FROM_QUERY = re.compile(r"\s+FROM\s*\(", re.IGNORECASE)
+"""`COPY INTO :x FROM (...)` writes a query to a stage: `:x` is the stage."""
 
 _RESERVED = RESERVED_WORDS | POSTGRESQL_RESERVED_WORDS
 """Names SQL keeps for itself, which a linter cannot read a parameter as."""
@@ -151,7 +156,8 @@ class Project:
 
         With no value, the `placeholder` templater writes a parameter's name in
         its place: `:status` reads as a column. Where a stage goes, after `LIST`,
-        `PUT <file>` or `COPY INTO ... FROM`, a linter reads only `@stage/path`,
+        `PUT <file>`, `COPY INTO ... FROM`, or as what `COPY INTO :x FROM (...)`
+        writes to, a linter reads only `@stage/path`,
         and inside `SAMPLE (...)` only a number. A name SQL reserves reads as
         neither, `LIMIT :limit` reading `LIMIT limit`, so it gets `1`, or its
         name with `_` after it when a path follows, `:order.id`.
@@ -201,12 +207,16 @@ def placeholders_of(text: str, values: dict[str, str]) -> dict[str, str]:
         if param is None:
             continue
         before = text[: found.start()]
-        if STAGE_AFTER.search(before):
+        if STAGE_AFTER.search(before) or (
+            _COPY_INTO.search(before) and _FROM_QUERY.match(text, found.end())
+        ):
             values[param] = "@stage/path"
         elif SAMPLE_AFTER.search(before):
             values[param] = "10"
         elif param.lower() in _RESERVED:
-            values.setdefault(param, f"{param}_" if dotted else "1")
+            # A name where a name goes, `COPY INTO :table`; a value elsewhere.
+            named = dotted or inline_position(before)
+            values.setdefault(param, f"{param}_" if named else "1")
     return values
 
 

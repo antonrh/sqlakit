@@ -30,6 +30,7 @@ from sqlakit import (
     UnknownOrderFieldError,
 )
 from sqlakit import _sql as sql_module
+from sqlakit._sql import Macro
 from sqlakit.sql import Context, Inline, Param, Sql, Templates, sql_macro, tpl
 
 TEMPLATES = {
@@ -1813,3 +1814,146 @@ def test_an_inline_value_runs_and_binds_nothing(tmp_path: Path) -> None:
         )
         db.sql("make.sql", name=Inline.name("made")).execute()
         assert db.sql.from_string("SELECT count(*) FROM made").scalars().one() == 0
+
+
+# macros whose SQL is in a file
+
+
+@dataclass
+class Tenant:
+    id: int
+    teams: list[str]
+
+
+def tenant_macro(path: Path) -> Macro:
+    @sql_macro(str(path))
+    def for_tenant(t: Sql, tenant: Param) -> dict[str, Any]:
+        """Rows of the tenant, and of its teams."""
+        return {"tenant_id": tenant.value.id, "teams": tenant.value.teams}
+
+    return for_tenant
+
+
+TENANT_SQL = (
+    "-- Rows of the tenant, and of its teams.\n"
+    "SELECT t.tenant_id = :tenant_id AND tpl.if_set(:teams, t.team IN (:teams))"
+    " AS for_tenant\n"
+    "FROM t;\n"
+)
+
+
+def test_a_file_macro_binds_the_values_its_function_returns(tmp_path: Path) -> None:
+    (tmp_path / "tenant.sql").write_text(TENANT_SQL)
+    macros = sql_module.registered([tenant_macro(tmp_path / "tenant.sql")])
+    template = sql_module.MacroTemplate(
+        "x.sql",
+        "SELECT * FROM a, b WHERE tpl.for_tenant(a, :one) AND tpl.for_tenant(b, :two)",
+        macros,
+    )
+    sql, values = sql_module._rendered(
+        template,
+        {"one": Tenant(1, ["red"]), "two": Tenant(2, [])},
+        postgresql.dialect().identifier_preparer,
+    )
+    first, second = re.findall(r"for_tenant_\d+", sql)[::2]
+    assert first != second
+    expected = (
+        f"SELECT * FROM a, b WHERE (a.tenant_id = :{first}__tenant_id AND "  # noqa: S608
+        f"a.team IN :{first}__teams) AND (b.tenant_id = :{second}__tenant_id AND TRUE)"
+    )
+    assert sql == expected
+    assert {name: value for name, value in values.items() if "__" in name} == {
+        f"{first}__tenant_id": 1,
+        f"{first}__teams": ["red"],
+        f"{second}__tenant_id": 2,
+        f"{second}__teams": [],
+    }
+
+
+def test_a_file_macro_runs(tmp_path: Path) -> None:
+    (tmp_path / "tenant.sql").write_text(TENANT_SQL)
+    write(
+        tmp_path / "sql",
+        {
+            "rows.sql": "SELECT n FROM (SELECT 1 AS n, 1 AS tenant_id, 'red' AS team) AS t0 WHERE tpl.for_tenant(t0, :tenant)"
+        },
+    )
+    db = Database(
+        "sqlite://",
+        templates=Templates(
+            tmp_path / "sql", macros=[tenant_macro(tmp_path / "tenant.sql")]
+        ),
+    )
+    with db.connect():
+        assert db.sql("rows.sql", tenant=Tenant(1, ["red"])).scalars().all() == [1]
+        assert db.sql("rows.sql", tenant=Tenant(1, ["blue"])).scalars().all() == []
+        assert db.sql("rows.sql", tenant=Tenant(2, [])).scalars().all() == []
+
+
+@pytest.mark.parametrize(
+    ("returned", "problem"),
+    [
+        ({"tenant_id": 1}, "returned no teams, which tenant.sql reads"),
+        (
+            {"tenant_id": 1, "teams": [], "extra": 2},
+            "returned extra, which tenant.sql does not read",
+        ),
+        ([1], "returned list, not the values tenant.sql reads"),
+    ],
+)
+def test_a_file_macro_returns_the_values_its_sql_reads(
+    tmp_path: Path, returned: Any, problem: str
+) -> None:
+    (tmp_path / "tenant.sql").write_text(TENANT_SQL)
+
+    @sql_macro(str(tmp_path / "tenant.sql"))
+    def for_tenant(t: Sql) -> Any:
+        return returned
+
+    template = sql_module.MacroTemplate(
+        "x.sql",
+        "SELECT 1\nWHERE tpl.for_tenant(a)",
+        sql_module.registered([for_tenant]),
+    )
+    with pytest.raises(MacroArgumentError) as raised:
+        template.render(
+            Context("postgresql", postgresql.dialect().identifier_preparer, {})
+        )
+    assert str(raised.value) == f"tpl.for_tenant: {problem} in x.sql:2."
+
+
+@pytest.mark.parametrize(
+    ("sql", "problem"),
+    [
+        (
+            "SELECT TRUE AS other FROM t;\n",
+            "tenant.sql has no `SELECT ... AS for_tenant`",
+        ),
+        (
+            "SELECT u.x AS for_tenant FROM u;\n",
+            "tenant.sql takes u after `FROM`, and the function takes no argument",
+        ),
+    ],
+)
+def test_a_file_macro_needs_its_statement(
+    tmp_path: Path, sql: str, problem: str
+) -> None:
+    (tmp_path / "tenant.sql").write_text(sql)
+    with pytest.raises(MacroDefinitionError, match=re.escape(problem)):
+        tenant_macro(tmp_path / "tenant.sql")
+
+
+def test_a_file_macro_in_a_file_of_macros_is_registered_once(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "tenant.macros.sql": TENANT_SQL + "\nSELECT TRUE AS other FROM t;\n",
+            "a.sql": "SELECT 1",
+        },
+    )
+    templates = Templates(
+        tmp_path, macros=[tenant_macro(tmp_path / "tenant.macros.sql")]
+    )
+    assert isinstance(templates.macros["for_tenant"], sql_module.FileMacro)
+    assert isinstance(templates.macros["other"], sql_module.SqlMacro)
+    assert templates.names() == ["a.sql"]

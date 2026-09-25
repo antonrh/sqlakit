@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import inspect
+import itertools
 import re
 from collections.abc import Mapping, Sized
 from contextvars import ContextVar
@@ -16,6 +17,7 @@ from typing import (
     Any,
     Generic,
     Literal,
+    TypeAlias,
     TypeVar,
     get_args,
     get_origin,
@@ -63,6 +65,7 @@ __all__ = [
     "BUILTIN_MACROS",
     "BaseSQLQuery",
     "Context",
+    "FileMacro",
     "Inline",
     "Macro",
     "MacroEngine",
@@ -97,6 +100,9 @@ PathLike = str | Path
 # Each part that changes per call is a `tpl.<macro>(...)` call, which every SQL tool reads
 # as a function of a schema named `tpl`. A file is cut into text and calls once,
 # when it is first read; rendering joins the pieces and calls the macros.
+
+MACRO_FILE = "macros.sql"
+"""How a file of SQL macros ends its name, which is how it is found."""
 
 NAMESPACE = "tpl"
 """The schema name macros are called under unless `Templates` says otherwise."""
@@ -475,18 +481,19 @@ class SqlMacro(Macro):
         """The name errors in the body say, the file's."""
         return self.path.name
 
-    def expanded(self, args: Sequence[str]) -> str:
+    def expanded(self, args: Sequence[str], body: str | None = None) -> str:
         """Return the body with the arguments where it names them, in brackets.
 
         The body is an expression, so the brackets keep it one wherever it
-        goes: `a OR b` stays together after an `AND`.
+        goes: `a OR b` stays together after an `AND`. ``body`` stands in for
+        the one the file holds, with its parameters named apart.
         """
         by_name = dict(zip(self.params, args, strict=True))
-        body = self._argument.sub(
+        written = self._argument.sub(
             lambda found: by_name[found.group(1)] if found.group(1) else found.group(),
-            self.body,
+            self.body if body is None else body,
         )
-        return f"({body})"
+        return f"({written})"
 
     def _from_python(self, *_: Any) -> str:  # noqa: ANN401
         problem = "is written in SQL, and expands in a template, not in Python"
@@ -587,7 +594,7 @@ def _statements(source: str) -> list[tuple[int, int]]:
 
 
 def sql_macro(
-    func: Callable[..., str] | None = None,
+    func: Callable[..., str] | str | None = None,
     /,
     *,
     name: str | None = None,
@@ -612,13 +619,88 @@ def sql_macro(
     ``lazy`` renders a `Sql` argument only when the macro turns it into a
     string, for a macro that picks one branch of several: the others never run.
 
+    Given a file, the SQL is in it, and the function returns the values it reads:
+
+    ```python
+    @sql_macro("filters.sql")
+    def for_tenant(t: Sql, tenant: Param) -> dict[str, Any]:
+        return {"tenant_id": tenant.value.id, "team_ids": tenant.value.team_ids}
+    ```
+
+    ```sql
+    -- filters.sql, next to the module
+    SELECT t.tenant_id = :tenant_id AND t.team_id IN (:team_ids) AS for_tenant
+    FROM t;
+    ```
+
+    See `FileMacro`.
+
     Raises:
         MacroDefinitionError: if a parameter is annotated as none of them.
 
     """
+    if isinstance(func, str):
+        sql = func
+        return lambda func: FileMacro(func, sql, name, optional=optional)
     if func is None:
         return lambda func: Macro(func, name, optional=optional, lazy=lazy)
     return Macro(func, name, optional=optional, lazy=lazy)
+
+
+class FileMacro(Macro):
+    """A macro whose SQL is in a file, and whose function gives the values.
+
+    The file holds the SQL as a file of SQL macros does, `SELECT <expression>
+    AS <name> FROM <arguments>;`, and the function's name picks the statement.
+    Each argument after `FROM` is the function's argument of that name, written
+    where the expression names it. Each `:name` in the expression is the
+    macro's own: the function returns its value, which is bound, never written
+    in. The parameters take names of their own in the statement, so they meet
+    none of the calling template's.
+
+    A path is from the module's directory, or absolute.
+    """
+
+    def __init__(
+        self,
+        func: Callable[..., Any],
+        sql: str | Path,
+        name: str | None = None,
+        *,
+        optional: bool = False,
+    ) -> None:
+        super().__init__(func, name, optional=optional)
+        path = Path(sql)
+        if not path.is_absolute():
+            path = Path(inspect.getsourcefile(func) or ".").parent / path
+        self.sql_path = path
+        found = [one for one in sql_macros(path) if one.name == self.name]
+        if not found:
+            problem = f"{path.name} has no `SELECT ... AS {self.name}`"
+            raise MacroDefinitionError(self.name, problem)
+        self.statement = found[0]
+        taken = {slot.name for slot in self.slots}
+        if self.variadic is not None:
+            taken.add(self.variadic.name)
+        unknown = [one for one in self.statement.params if one not in taken]
+        if unknown:
+            problem = (
+                f"{path.name} takes {', '.join(unknown)} after `FROM`, and the "
+                f"function takes no argument of that name"
+            )
+            raise MacroDefinitionError(self.name, problem)
+        self.reads = tuple(
+            dict.fromkeys(
+                found.group(1)
+                for found in PARAMETER_IN_TEXT.finditer(self.statement.body)
+                if found.group(1)
+            )
+        )
+        """The parameters the SQL reads, whose values the function returns."""
+
+
+_FILE_CALLS = itertools.count(1)
+"""A number for each call of a `FileMacro`, which names its parameters apart."""
 
 
 def _slots_of(
@@ -939,12 +1021,12 @@ class MacroTemplate:
         finally:
             _context.reset(token)
 
-    def _compile(self, parts: Sequence[str | _Call]) -> tuple[str | _Expansion, ...]:
+    def _compile(self, parts: Sequence[str | _Call]) -> tuple[_Part, ...]:
         """Resolve every call to its macro once, so rendering only calls them.
 
         An included template is read here, and its pieces become these.
         """
-        compiled: list[str | _Expansion] = []
+        compiled: list[_Part] = []
         for index, part in enumerate(parts):
             if isinstance(part, str):
                 compiled.append(_DOTTED.sub(self._flattened, part))
@@ -956,11 +1038,53 @@ class MacroTemplate:
                     compiled.extend(("(", *self._include(part), "\n)"))
             elif isinstance(macro := self.macros[part.name], SqlMacro):
                 compiled.extend(self._inline(part, macro))
+            elif isinstance(macro, FileMacro):
+                compiled.append(self._from_file(part, macro))
             else:
                 compiled.append(self._expansion(part))
         return tuple(compiled)
 
-    def _inline(self, call: _Call, macro: SqlMacro) -> tuple[str | _Expansion, ...]:
+    def _from_file(self, call: _Call, macro: FileMacro) -> _FileExpansion:
+        """Read a `FileMacro`'s SQL into this call, its parameters named apart."""
+        if macro.name in self.expanding:
+            cycle = " -> ".join((*self.expanding, macro.name))
+            raise self._refuse(macro.name, f"expands itself: {cycle}", call)
+        prefix = f"{macro.name}_{next(_FILE_CALLS)}"
+        body = PARAMETER_IN_TEXT.sub(
+            lambda found: (
+                f":{prefix}__{found.group(1)}" if found.group(1) else found.group()
+            ),
+            macro.statement.body,
+        )
+        slots = [slot.name for slot in macro.slots]
+        written = {
+            name: self.source[slice(*arg.span)]
+            for name, arg in zip(slots, call.args, strict=False)
+        }
+        text = macro.statement.expanded(
+            [written.get(name, name) for name in macro.statement.params], body
+        )
+        inlined = MacroTemplate(
+            macro.statement.source_name,
+            text,
+            self.macros,
+            namespace=self.namespace,
+            load=self.load,
+            chain=(*self.chain, (self.name, call.line)),
+            expanding=(*self.expanding, macro.name),
+            first_line=macro.statement.body_line,
+        )
+        self.includes.update(inlined.includes)
+        self.paths.update(inlined.paths)
+        return _FileExpansion(
+            self._expansion(call),
+            prefix,
+            macro.reads,
+            macro.sql_path.name,
+            inlined._compiled,
+        )
+
+    def _inline(self, call: _Call, macro: SqlMacro) -> tuple[_Part, ...]:
         """Write an SQL macro's body in place of the call, read like this text."""
         if macro.name in self.expanding:
             cycle = " -> ".join((*self.expanding, macro.name))
@@ -980,7 +1104,7 @@ class MacroTemplate:
         self.paths.update(inlined.paths)
         return inlined._compiled
 
-    def _include(self, call: _Call) -> tuple[str | _Expansion, ...]:
+    def _include(self, call: _Call) -> tuple[_Part, ...]:
         path = _QUOTED_PATH.fullmatch(self._written(call.args[0].parts))
         assert path is not None  # noqa: S101 - checked on load
         name = path.group(1)
@@ -1099,15 +1223,55 @@ class MacroTemplate:
             )
             raise self._refuse(INCLUDE, problem, call)
 
-    def _render(self, parts: Sequence[str | _Expansion], ctx: Context) -> str:
+    def _render(self, parts: Sequence[_Part], ctx: Context) -> str:
         return "".join(
             [
-                part if isinstance(part, str) else self._expand(part, ctx)
+                part
+                if isinstance(part, str)
+                else self._from_values(part, ctx)
+                if isinstance(part, _FileExpansion)
+                else self._expand(part, ctx)
                 for part in parts
             ]
         )
 
+    def _from_values(self, part: _FileExpansion, ctx: Context) -> str:
+        """Call a `FileMacro` for its values, and write its SQL bound to them."""
+        values = self._call(part.call, ctx)
+        if not isinstance(values, Mapping):
+            problem = (
+                f"returned {type(values).__name__}, not the values {part.file} reads"
+            )
+            raise part.call.refuse(problem, self.namespace)
+        missing = [name for name in part.reads if name not in values]
+        extra = [name for name in values if name not in part.reads]
+        if missing or extra:
+            problem = "; ".join(
+                [
+                    *(
+                        [f"returned no {', '.join(missing)}, which {part.file} reads"]
+                        if missing
+                        else []
+                    ),
+                    *(
+                        [
+                            f"returned {', '.join(extra)}, which {part.file} does not read"
+                        ]
+                        if extra
+                        else []
+                    ),
+                ]
+            )
+            raise part.call.refuse(problem, self.namespace)
+        for name in part.reads:
+            ctx.values[f"{part.prefix}__{name}"] = values[name]
+        return self._render(part.parts, ctx)
+
     def _expand(self, call: _Expansion, ctx: Context) -> str:
+        return str(self._call(call, ctx))
+
+    def _call(self, call: _Expansion, ctx: Context) -> Any:  # noqa: ANN401
+        """Call a macro with the arguments of the call, and return what it returns."""
         macro = call.macro
         values = ctx.values
         missing = [name for name in call.params if name not in values]
@@ -1118,7 +1282,7 @@ class MacroTemplate:
         # calls inside its arguments: `if_set(:q, icontains(name, :q))`.
         values.update(dict.fromkeys(missing))
         try:
-            return str(macro.func(*self._arguments(call, ctx)))
+            return macro.func(*self._arguments(call, ctx))
         except MacroArgumentError as error:
             if error.template:
                 raise
@@ -1163,6 +1327,21 @@ class MacroTemplate:
         return args
 
 
+@dataclass(frozen=True, slots=True)
+class _FileExpansion:
+    """A `FileMacro`'s call: the call for its values, and its SQL read in."""
+
+    call: _Expansion
+    prefix: str
+    reads: tuple[str, ...]
+    file: str
+    parts: tuple[_Part, ...]
+
+
+_Part: TypeAlias = "str | _Expansion | _FileExpansion"
+"""A piece of a read template: text, a call to expand, or a `FileMacro`'s call."""
+
+
 class _Deferred:
     """A branch's SQL, rendered the first time the macro reads it, and not before.
 
@@ -1175,7 +1354,7 @@ class _Deferred:
     def __init__(
         self,
         template: MacroTemplate,
-        parts: Sequence[str | _Expansion],
+        parts: Sequence[_Part],
         ctx: Context,
     ) -> None:
         self._template = template
@@ -1201,7 +1380,7 @@ class _Expansion:
 
     macro: Macro
     line: int
-    args: tuple[tuple[str | None, tuple[str | _Expansion, ...] | None], ...]
+    args: tuple[tuple[str | None, tuple[_Part, ...] | None], ...]
     params: tuple[str, ...]
     template: str
     """The template the call is written in, which an include makes another."""
@@ -1508,7 +1687,29 @@ def registered(macros: Iterable[Macro | str | Path]) -> dict[str, Macro]:
 
     """
     by_name = dict(BUILTIN_MACROS)
-    for macro in (found for given in macros for found in _macros_given(given)):
+    files: set[Path] = set()
+    unique = []
+    for given in macros:
+        if isinstance(given, Path) or (
+            isinstance(given, str) and given.endswith(".sql")
+        ):
+            resolved = Path(given).resolve()
+            if resolved in files:
+                continue  # found in a template directory, and named as well
+            files.add(resolved)
+        unique.append(given)
+    everything = [found for given in unique for found in _macros_given(given)]
+    claimed = {
+        (macro.name, Path(path).resolve())
+        for macro in everything
+        if (path := getattr(macro, "sql_path", None)) is not None
+    }
+    for macro in everything:
+        if (
+            isinstance(macro, SqlMacro)
+            and (macro.name, macro.path.resolve()) in claimed
+        ):
+            continue  # a function gives its values, and is the macro
         if not isinstance(macro, Macro):
             raise MacroDefinitionError(
                 getattr(macro, "__name__", repr(macro)),
@@ -2229,11 +2430,24 @@ class Templates:
             msg = f"`namespace` is a plain name, such as `tpl`, not {namespace!r}"
             raise ValueError(msg)
         self.namespace = namespace
-        self.macros = registered(macros)
+        self.macros = registered([*macros, *self._macro_files()])
 
     def __repr__(self) -> str:
         paths = ", ".join(str(path) for path in self.paths)
         return f"{type(self).__name__}({paths!r})"
+
+    def _macro_files(self) -> list[Path]:
+        """Return the files of SQL macros in the template directories.
+
+        A file is one when its name ends in `macros.sql`: `_macros.sql`,
+        `tenant.macros.sql`. Nothing registers it.
+        """
+        return sorted(
+            path
+            for root in map(Path, self.paths)
+            if root.is_dir()
+            for path in root.rglob(f"*{MACRO_FILE}")
+        )
 
     @cached_property
     def engine(self) -> MacroEngine:
@@ -2274,9 +2488,12 @@ class Templates:
         A file of SQL macros is not one, wherever it lives.
         """
         macro_files = {
-            macro.path.resolve()
+            Path(path).resolve()
             for macro in self.macros.values()
-            if isinstance(macro, SqlMacro)
+            if (
+                path := getattr(macro, "sql_path", None)
+                or (macro.path if isinstance(macro, SqlMacro) else None)
+            )
         }
         found = {
             path.relative_to(root).as_posix()

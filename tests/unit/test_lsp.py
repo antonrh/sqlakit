@@ -566,7 +566,8 @@ def test_export_writes_what_sqruff_needs_into_pyproject(
         'exclude_rules = "RF01,AL05,ST03"\n'
         "\n"
         "[tool.sqruff.templater.placeholder]\n"
-        "# Written by `sqlakit export sqruff`: parameters named like keywords.\n"
+        "# `sqlakit export sqruff` writes what the templates need, and keeps\n"
+        "# what you add.\n"
         'param_style = "colon"\n'
         'limit = "1"\n'
     )
@@ -586,8 +587,9 @@ def test_export_keeps_what_is_yours(project: Path) -> None:
     assert main(["export", "sqruff"]) == 0
     written = (project / "pyproject.toml").read_text()
     assert 'dialect = "postgres"\nrules = "core"\n' in written
-    assert 'old = "1"' not in written
-    assert written.endswith('param_style = "colon"\n\n[tool.other]\nkept = true\n')
+    assert 'old = "1"' in written
+    assert written.endswith('old = "1"\n\n[tool.other]\nkept = true\n')
+    assert main(["export", "sqruff", "--check"]) == 0
 
 
 def test_sqruff_reads_a_template_with_what_export_wrote(project: Path) -> None:
@@ -716,11 +718,31 @@ def test_export_gives_a_stage_and_a_sample_the_value_a_linter_reads(
     (project / "sql" / "copy.sql").write_text(
         "COPY INTO orders FROM :location;\n"
         "LIST :listed;\n"
-        "COPY INTO :target FROM (SELECT * FROM t SAMPLE (:percent) LIMIT :limit);\n"
+        "COPY INTO :target\nFROM (SELECT * FROM t SAMPLE (:percent) LIMIT :limit)\n"
+        "HEADER = TRUE;\n"
+        "COPY INTO :table FROM @stage;\n"
     )
     assert load_project(project).placeholder_values() == {
         "limit": "1",
         "listed": "@stage/path",
         "location": "@stage/path",
         "percent": "10",
+        "table": "table_",
+        "target": "@stage/path",
     }
+
+
+def test_a_file_macro_is_read_from_the_code_with_its_file(app: Path) -> None:
+    (app / "shop" / "sql" / "tenant.sql").write_text(
+        "SELECT t.tenant_id = :tenant_id AS for_tenant FROM t;\n"
+    )
+    (app / "shop" / "tenant.py").write_text(
+        "from sqlakit.sql import Sql, sql_macro\n\n\n"
+        '@sql_macro("sql/tenant.sql")\n'
+        "def for_tenant(t: Sql) -> dict:\n"
+        '    return {"tenant_id": 1}\n'
+    )
+    templates = load_project(app).templates
+    macro = templates.macros["for_tenant"]
+    assert getattr(macro, "sql_path", None) == app / "shop" / "sql" / "tenant.sql"
+    assert templates.names() == ["users.sql"]

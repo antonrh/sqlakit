@@ -41,7 +41,10 @@
 - `@sql_macro` for macros of your own, registered with
   `Templates(macros=[...])`, as objects or by import path, and `tpl` to call a
   built-in one from them. A macro that is a piece of SQL is written in a `.sql`
-  file instead, as `SELECT <expression> AS <name> FROM <arguments>;`.
+  file instead, as `SELECT <expression> AS <name> FROM <arguments>;`, and a
+  file whose name ends in `macros.sql` is found in the template directories.
+  `@sql_macro("file.sql")` keeps a macro's SQL in a file, and its function
+  returns the values the SQL reads.
 - `sqlakit macros` lists the macros, `sqlakit check` checks every template of a
   project, and `sqlakit lsp` serves the same checks to an editor, with
   completion and hover. Both read where the templates and the macros are from

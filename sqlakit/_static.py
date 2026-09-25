@@ -70,6 +70,7 @@ class StaticMacro(Macro):
         path: Path,
         line: int,
         column: int = 0,
+        sql_path: Path | None = None,
     ) -> None:
         self.name = name.lower()
         self.slots = slots
@@ -80,6 +81,8 @@ class StaticMacro(Macro):
         self.doc = doc
         self.path = path
         self.line = line
+        self.sql_path = sql_path
+        """The file its SQL is in, for one declared `@sql_macro("file.sql")`."""
         self.name_at = (line, column)
         """The line and the column of the function's name, as an editor goes to it."""
         self.func = self._unread
@@ -257,12 +260,14 @@ def _macro_of(node: ast.FunctionDef, path: Path, source: str) -> StaticMacro | N
         called = decorator.func if isinstance(decorator, ast.Call) else decorator
         if _last_name(called) != "sql_macro":
             continue
-        options = {
+        options: dict[str | None, ast.expr] = {
             keyword.arg: keyword.value
             for keyword in (
                 decorator.keywords if isinstance(decorator, ast.Call) else []
             )
         }
+        if isinstance(decorator, ast.Call) and decorator.args:
+            options[None] = decorator.args[0]  # the file its SQL is in
         return _read_macro(node, path, options, source)
     return None
 
@@ -309,7 +314,16 @@ def _read_macro(
         path=path,
         line=node.lineno,
         column=_name_column(source, node),
+        sql_path=_sql_path(options.get(None), path),
     )
+
+
+def _sql_path(node: ast.expr | None, path: Path) -> Path | None:
+    """Return the file a `@sql_macro("file.sql")` names, from the module's directory."""
+    if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+        return None
+    written = Path(node.value)
+    return written if written.is_absolute() else path.parent / written
 
 
 def _name_column(source: str, node: ast.FunctionDef) -> int:

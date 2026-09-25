@@ -508,10 +508,13 @@ read, with each argument's text where the expression names it:
 template's own, and the macros in the expression expand as they would in the
 template.
 
-Register the file with the rest:
+Name the file so that it ends in `macros.sql`, `_macros.sql` or
+`tenant.macros.sql`, and put it in a template directory: the templates find it,
+and nothing registers it. It isn't a template itself, so `db.sql(...)` won't
+read it. A file elsewhere goes in `macros=` by its path, next to the rest:
 
 ```python
-Templates(BASE_DIR, macros=["app.sql.macros", BASE_DIR / "_macros.sql"])
+Templates(BASE_DIR, macros=["app.sql.macros", SHARED_DIR / "tenant.sql"])
 ```
 
 The file is SQL a linter reads like a template, with each argument declared as
@@ -522,6 +525,41 @@ is reported on its line in the file.
 A macro calls another as a template does, through `tpl`, with strings for SQL
 and values for parameters. `@sql_macro(optional=True)` reads a parameter the
 call didn't pass as `None`, the way `if_set` does.
+
+## Macros with their SQL in a file
+
+When a macro's SQL needs values worked out in Python, keep the SQL in a file
+and let the function return the values:
+
+```python
+from typing import Any
+
+from sqlakit.sql import Param, Sql, sql_macro
+
+
+@sql_macro("tenant.sql")
+def for_tenant(t: Sql, tenant: Param) -> dict[str, Any]:
+    """Rows of the tenant, and of its teams."""
+    return {"tenant_id": tenant.value.id, "teams": tenant.value.team_ids}
+```
+
+```sql
+-- tenant.sql, next to the module
+SELECT t.tenant_id = :tenant_id AND tpl.if_set(:teams, t.team IN (:teams))
+    AS for_tenant
+FROM t;
+```
+
+The file holds the statement a file of SQL macros does, and the function's
+name picks it. An argument after `FROM` is the function's argument of that
+name. Each `:name` in the file is the macro's own: the function returns its
+value, which is bound, and the parameter takes a name of its own in the
+statement, so two calls, or a parameter of the calling template, never meet it.
+A value the SQL reads and the function doesn't return, or one it returns and
+the SQL doesn't read, raises `MacroArgumentError` where the call is.
+
+The path is from the module's directory. The macro is registered as any Python
+macro is, and the file isn't a template.
 
 ## SQL inspection
 

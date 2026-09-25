@@ -120,8 +120,9 @@ def _check(directory: Path, *, json_output: bool) -> int:
 def _export(directory: Path, *, dialect: str | None, check: bool) -> int:
     """Write the `sqruff` settings into `pyproject.toml`.
 
-    The values of the parameters are written again each time. The rest of
-    `[tool.sqruff.core]` is yours: it is written only when the table is missing.
+    The values the templates need are written again each time, and a value you
+    added to the table stays. The rest of `[tool.sqruff.core]` is yours: it is
+    written only when the table is missing.
     """
     try:
         project = load_project(directory)
@@ -139,7 +140,10 @@ def _export(directory: Path, *, dialect: str | None, check: bool) -> int:
             name
             for name, fresh in (
                 ("[tool.sqruff.core]", "core" in sqruff),
-                ("[tool.sqruff.templater.placeholder]", written == values),
+                (
+                    "[tool.sqruff.templater.placeholder]",
+                    all(written.get(name) == value for name, value in values.items()),
+                ),
             )
             if not fresh
         ]
@@ -159,12 +163,14 @@ def _export(directory: Path, *, dialect: str | None, check: bool) -> int:
             f'exclude_rules = "{",".join(LINT_EXCLUDED)}"',
         ]
         text = text.rstrip("\n") + "\n\n" + "\n".join(core) + "\n"
+    merged = dict(sorted({**written, **values}.items()))
     table = "\n".join(
         [
             "[tool.sqruff.templater.placeholder]",
-            "# Written by `sqlakit export sqruff`: parameters named like keywords.",
+            "# `sqlakit export sqruff` writes what the templates need, and keeps",
+            "# what you add.",
             'param_style = "colon"',
-            *(f'{name} = "{value}"' for name, value in values.items()),
+            *(f"{name} = {_toml_value(value)}" for name, value in merged.items()),
         ]
     )
     header = re.compile(r"^\[tool\.sqruff\.templater\.placeholder\]\s*$", re.MULTILINE)
@@ -183,6 +189,15 @@ def _export(directory: Path, *, dialect: str | None, check: bool) -> int:
     pyproject.write_text(text, encoding="utf-8")
     _say(f"wrote {_relative(pyproject)}")
     return 0
+
+
+def _toml_value(value: object) -> str:
+    """Return a value as TOML writes it: a string quoted, a flag in lower case."""
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, int | float):
+        return str(value)
+    return json.dumps(str(value))
 
 
 def _as_json(problem: Problem) -> dict[str, object]:
