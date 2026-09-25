@@ -98,7 +98,7 @@ class _Assistant:
     def applies_to(self, path: Path) -> bool:
         """Whether a file is a macro template of this project."""
         name = self.project.name_of(path)
-        return name is not None and self.project.reads_macros(name)
+        return name is not None and name.endswith(".sql")
 
     def diagnose(self, path: Path, source: str) -> list[Diagnostic]:
         """Return what is wrong with the text: the first problem, where it is."""
@@ -185,7 +185,7 @@ class _Assistant:
         return [
             Completion(name, "template")
             for name in self.project.templates.names()
-            if name.startswith(typed) and self.project.reads_macros(name)
+            if name.startswith(typed)
         ]
 
     @staticmethod

@@ -15,7 +15,6 @@ from ._routing import Router
 from .exceptions import (
     DEFAULT_ALIAS,
     AliasInUseError,
-    AsyncFilterError,
     BulkQueryError,
     ConflictingDatabaseUrlError,
     ConflictingJoinError,
@@ -78,7 +77,6 @@ __all__ = [
     "DEFAULT_ENGINE_ARGS",
     "DEFAULT_SESSION_ARGS",
     "AliasInUseError",
-    "AsyncFilterError",
     "BulkQueryError",
     "ConflictingDatabaseUrlError",
     "ConflictingJoinError",

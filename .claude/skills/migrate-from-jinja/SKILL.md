@@ -11,8 +11,11 @@ reads as a function of a schema named `tpl`. The goal of a migration is a file
 that a linter parses without a context, and that renders the same SQL, or SQL
 that returns the same rows, as the Jinja file it replaces.
 
-Both engines run side by side: `x.sql` renders with Jinja and `x.tpl.sql` with
-macros, so templates move one at a time. Never transpile a template from one
+`SQLAKit` no longer reads Jinja. While templates move, pin the commit that
+reads both, `aa9c416` on the `tpl-macros` branch: there `x.sql` renders with
+Jinja and `x.tpl.sql` with macros, so templates move one at a time. Upgrade
+once no Jinja file is left. Every `.sql` file is a macro template after that,
+and the `.tpl.sql` names keep working. Never transpile a template from one
 dialect to another. Write it in the production dialect, and keep dialect
 differences inside macros.
 
@@ -50,6 +53,8 @@ by path: `Templates("app/sql", macros=["app.sql.macros"])`.
    application renders for.
 6. **Delete `x.sql`,** then any Jinja macro library, filter or global nothing
    uses any more.
+7. **Upgrade `SQLAKit`** once the last Jinja file is gone, and drop
+   `filters=`, `globals=` and the `sql` extra from the application.
 
 ## The mapping
 
@@ -144,7 +149,8 @@ limits an argument to that SQL, checked when the file is read.
 
 ## Compare the old and the new
 
-Render both with the same context and compare the SQL. `Templates.render`
+On the pinned commit, render both with the same context and compare the SQL.
+`Templates.render`
 takes the preparer of any dialect, so the production one can be checked
 without connecting to it:
 

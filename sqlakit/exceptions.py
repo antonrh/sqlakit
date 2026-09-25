@@ -6,7 +6,6 @@ DEFAULT_ALIAS = "default"
 
 __all__ = [
     "AliasInUseError",
-    "AsyncFilterError",
     "BulkQueryError",
     "ConflictingDatabaseUrlError",
     "ConflictingJoinError",
@@ -341,18 +340,6 @@ class TemplateNotFoundError(SQLAKitError, FileNotFoundError):
         )
 
 
-class AsyncFilterError(SQLAKitError, TypeError):
-    """Raised when a template is given a filter or global that has to be awaited."""
-
-    def __init__(self, name: str) -> None:
-        super().__init__(
-            f"`{name}` is a coroutine function, and templates render "
-            f"synchronously: rendering builds SQL and awaits nothing, in the "
-            f"async API as well. Await the value first, and pass what it "
-            f"returns in the context."
-        )
-
-
 class StrayParameterError(SQLAKitError, ValueError):
     """Raised when rendered SQL holds a parameter the template never bound."""
 
@@ -360,11 +347,10 @@ class StrayParameterError(SQLAKitError, ValueError):
         self.names = tuple(names)
         where = f"`{template}`" if template else "This SQL"
         listed = ", ".join(f"`:{name}`" for name in self.names)
-        written = ", ".join(f"`{{{{ {name} }}}}`" for name in self.names)
+        passed = ", ".join(f"`{name}=...`" for name in self.names)
         super().__init__(
-            f"{where} reads as though {listed} were a parameter, and nothing "
-            f"binds it. Values come from the template: write {written} and "
-            f"pass them in the context. A colon that belongs to the SQL, "
+            f"{where} reads {listed} as a parameter, and the call passed no "
+            f"value for it: pass {passed}. A colon that belongs to the SQL, "
             f"inside a JSON document or a string that starts with one, is "
             f"written `\\:`."
         )

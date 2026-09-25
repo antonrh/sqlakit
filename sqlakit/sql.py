@@ -9,7 +9,6 @@ from ._query import merged
 from ._sql import (
     BaseSQLQuery,
     Context,
-    Filter,
     Param,
     Sql,
     Templates,
@@ -31,7 +30,6 @@ if TYPE_CHECKING:
 __all__ = [
     "SQL",
     "Context",
-    "Filter",
     "Param",
     "SQLQuery",
     "SQLRows",
@@ -110,13 +108,12 @@ class SQL:
         """Read the rows of SQL written out here rather than kept in a file.
 
         ```python
-        db.sql.from_string("SELECT id FROM users WHERE team = {{ team }}", team="red")
+        db.sql.from_string("SELECT id FROM users WHERE team = :team", team="red")
         ```
 
-        Values are named in `{{ }}` and passed by keyword, or as the ``context``
-        mapping, as in a template. A `:name` or a `?` binds nothing here, and
-        rendering says so rather than reaching the driver. It needs no
-        ``templates=``.
+        It reads as a template does: `:name` parameters, passed by keyword or
+        as the ``context`` mapping, and `tpl.` macros. It needs no
+        ``templates=``, and cannot `tpl.include` a file without it.
         """
         return SQLQuery(self.db, source, merged(context, values), inline=True)
 

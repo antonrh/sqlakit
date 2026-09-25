@@ -212,7 +212,7 @@ def _templates(db: Database, tmp_path: Path) -> None:
     """Point the database at templates written for this test."""
     (tmp_path / "events").mkdir()
     (tmp_path / "events" / "named.sql").write_text(
-        "SELECT name FROM events WHERE id IN {{ ids }} ORDER BY {{ column | identifier }}"
+        "SELECT name FROM events WHERE id IN :ids ORDER BY tpl.identifier(:column)"
     )
     db.templates = tmp_path
 
@@ -240,7 +240,7 @@ def test_a_template_knows_which_database_it_renders_for(
 ) -> None:
     # `events` stands in for a bare SELECT, which Oracle spells `FROM dual`.
     with db.connect():
-        said = db.sql.from_string("SELECT {{ dialect }} AS d FROM events").scalars()
+        said = db.sql.from_string("SELECT :dialect AS d FROM events").scalars()
 
         assert said.first() == NAMES[dialect]
 

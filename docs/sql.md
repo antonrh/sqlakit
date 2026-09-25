@@ -5,15 +5,24 @@ a bulk update with `FROM`, a recursive CTE. Pushing them through the query
 builder only makes them longer.
 
 This layer lets you keep that SQL in files, binds the values for you, and
-returns rows through the same methods a query has. It needs an extra:
+returns rows through the same methods a query has.
 
-```console
-$ pip install "sqlakit[sql]"
+A template is SQL with `:name` parameters. Whatever changes from call to call,
+an optional condition or a sort order, is a call such as `tpl.if_set(...)`,
+which `SQLAKit` expands before the query runs:
+
+```sql
+SELECT id, name
+FROM users
+WHERE team IN :teams
+  AND tpl.if_set(:search, tpl.icontains(name, :search))
+ORDER BY tpl.order_by(:sort, id, name)
 ```
 
-Templates are `Jinja` files, rendered by
-[jinja2sql](https://github.com/antonrh/jinja2sql). Every `{{ value }}` becomes
-a bound parameter `:value__1`, so values never reach the SQL text itself.
+Every tool that reads SQL reads this file as it is: `tpl.if_set` is a function
+in a schema named `tpl`, and `:teams` is a parameter. A formatter formats it
+and a linter checks it without a context. Values are bound, so they never
+reach the SQL text itself.
 
 ## Template directories
 
@@ -64,16 +73,21 @@ way:
 `db.sql(name)` is a shorthand for `from_file`, and the one you'll use most of
 the time. The other two are covered below.
 
-If you need a customized `Jinja` environment, pass a `Templates` object:
+For anything beyond the directory, pass a `Templates` object:
 
 ```python
 from sqlakit.sql import Templates
 
 db = Database(
     DB_URL,
-    templates=Templates(BASE_DIR, auto_reload=DEBUG, filters={"money": as_money}),
+    templates=Templates(BASE_DIR, auto_reload=DEBUG, macros=["app.sql.macros"]),
 )
 ```
+
+`auto_reload` reads a file again when it changes, for a development server.
+`macros` adds [macros of your own](#macros-of-your-own). `namespace` renames
+`tpl`, for a database that has a real schema of that name:
+`Templates(BASE_DIR, namespace="q")` reads `q.if_set(...)`.
 
 ## Row reads
 
@@ -227,29 +241,21 @@ commit each batch separately, page the table with
 
 ## Inline SQL
 
-A three-line query doesn't need a file of its own. `from_string` renders the
-same way, and the source stays right in your code:
+A three-line query doesn't need a file of its own. `from_string` reads the
+same syntax, and the source stays right in your code:
 
 ```python
-query = db.sql.from_string("SELECT id FROM users WHERE team = {{ team }}", team="red")
+query = db.sql.from_string("SELECT id FROM users WHERE team = :team", team="red")
 ids = query.scalars().all()
 ```
 
-This is the only call that works without `templates=`. Grep for it when you
-want to find every place that builds SQL from strings.
+This is the only call that works without `templates=`, and it can't
+`tpl.include` a file without it. Grep for it when you want to find every place
+that builds SQL from strings.
 
-!!! note "Placeholders belong to the template, not to the driver"
-
-    You name values in `{{ }}` and pass them by keyword, both in `from_string`
-    and in a file. Neither `SQLAlchemy`'s `:name` nor a driver's `?` or `%s`
-    binds anything here: an unbound `:name` raises `StrayParameterError`
-    during rendering, and `from_string` has no positional arguments to fill a
-    `?` with.
-
-```python
-db.sql.from_string("SELECT * FROM users WHERE id = {{ id }}", id=1)  # binds 1
-db.sql.from_string("SELECT * FROM users WHERE id = :id", id=1)  # raises
-```
+A `:name` the call passes no value for raises `StrayParameterError` before the
+query runs, naming the parameter. A driver's `?` or `%s` binds nothing here:
+`from_string` has no positional arguments to fill one with.
 
 `from_statement` takes SQL that `SQLAlchemy` built, and reads it the same way:
 
@@ -270,40 +276,35 @@ anywhere.
 `SQLAKit` binds every value as a parameter, whatever its type:
 
 ```sql
-SELECT * FROM users WHERE team = {{ team }} AND joined_at > {{ since }}
+SELECT * FROM users WHERE team = :team AND joined_at > :since
 ```
 
-A list reaches the database as a list, so `IN` works. An empty list
-matches nothing and doesn't break the query:
+A list reaches the database as a list, so `IN` works without parentheses. An
+empty list matches nothing and doesn't break the query:
 
 ```sql
-SELECT * FROM users WHERE id IN {{ ids }}
+SELECT * FROM users WHERE id IN :ids
 ```
 
-`{{ ids | inclause }}` from `jinja2sql` expands the values one by one. It
-reads the same, but doesn't accept an empty list.
+A dotted name reads an attribute of the value, or a key of a mapping, so a
+caller passes the object it has rather than taking it apart:
 
-Identifiers can't be bound as parameters. Quote a table or column name with
-the `identifier` filter, and only let through names you've allowed yourself:
+```python
+rows = db.sql("users/search.sql", criteria=criteria).all()
+```
 
 ```sql
-SELECT * FROM users ORDER BY {{ column | identifier }}
+SELECT * FROM users WHERE team IN :criteria.teams AND status = :status.OPEN.value
 ```
 
-When the SQL needs to differ between databases, branch on `dialect`:
+A name that reads nothing raises `ParameterPathError`, naming the step that
+failed.
 
-```sql
-{% if dialect == "postgresql" %}
-  SELECT * FROM users ORDER BY name COLLATE "C"
-{% else %}
-  SELECT * FROM users ORDER BY name
-{% endif %}
-```
-
-Escape a colon that is part of the SQL itself. `SQLAlchemy` treats `:name` as
-a parameter, so you have to write a JSON literal as `'{"a"\:1}'`. An unescaped
-colon raises an error during rendering, with the file name in the message,
-instead of failing when the query runs.
+A cast can follow a parameter, `:id::uuid` on PostgreSQL. A colon that is part
+of the SQL itself, in a JSON literal, is written `\:`: `'{"a"\:1}'`. An
+unescaped one raises `StrayParameterError` before the query runs, with the file
+name in the message. A class in a regular expression, `[[:punct:]]`, needs no
+escaping.
 
 Some values need a type the driver can't guess on its own: NULL, a JSON
 document, an array. Pass `sa.bindparam`, and the value goes through with its
@@ -313,74 +314,109 @@ type:
 db.sql("events/at.sql", at=sa.bindparam("at", when, type_=sa.DateTime(timezone=True)))
 ```
 
-## Filters of your own
+## Macros
 
-For a value the template has to reshape before it goes in, register a filter.
-It is a plain function, and `filters=` gives it a name:
+A call in the `tpl` schema writes the SQL that depends on the call's values or
+on the database. These are built in, and `sqlakit macros` lists them with their
+docstrings:
+
+| macro | writes |
+| --- | --- |
+| `tpl.if_set(:x, expr[, otherwise])` | `expr` when `:x` holds a value, `otherwise` (`TRUE`) when it doesn't |
+| `tpl.unless_set(:x, expr[, otherwise])` | `expr` when `:x` holds no value |
+| `tpl.between(col, :from, :to[, '[)'])` | a range whose ends may each be missing |
+| `tpl.order_by(:sort, col, ...)` | the terms of an `ORDER BY` from sort strings, only by the columns listed |
+| `tpl.icontains(col, text)` | a search for the text without regard to case |
+| `tpl.icollate(col)` | the column compared and sorted without regard to case |
+| `tpl.identifier(:name, col, ...)` | a name from a parameter, quoted, only one of those listed |
+| `tpl.each(:list)` | one parameter per value, for a list outside `IN` |
+| `tpl.values(:rows)` | a small table written out in the query |
+| `tpl.json_object(...)`, `tpl.array_agg(...)`, `tpl.string_agg(...)`, `tpl.array_contains(...)` | the function each database spells its own way |
+| `tpl.on_dialect(postgresql = a, snowflake = b)` | the branch of the database in hand |
+| `tpl.include('path.sql')` | the query of another template, in parentheses |
+
+A value is missing when it is `None`, `False`, empty, or not passed at all.
+`0` is a value. That covers the optional parts of a query:
+
+```sql
+SELECT * FROM users
+WHERE tpl.if_set(:teams, team IN :teams)
+  AND tpl.between(joined_at, :since, :until, '[)')
+  AND tpl.unless_set(:include_archived, NOT archived)
+```
+
+A sort string is `name`, `name.desc` or `name.desc.nulls_last`, in any case
+convention, and a request can send a list of them. `order_by` sorts only by the
+columns listed after the parameter, so a name from a request never reaches the
+SQL on its own. `name = <expression>` sorts by an expression under a name, and
+`'nulls_last'` places the nulls of every term that doesn't say:
+
+```sql
+ORDER BY tpl.order_by(:sort, id, created_at, name = tpl.icollate(name), 'nulls_last')
+```
+
+Where the SQL differs between databases, a macro that names the difference
+writes the right form for each: `icontains` is `ILIKE` on PostgreSQL and
+`CONTAINS(COLLATE(...))` on Snowflake. `on_dialect` is the way out for what
+has no name, such as a table that lives elsewhere on one database.
+
+`tpl.include` puts a whole query from another file where a table goes. The
+two share their parameters:
+
+```sql
+SELECT count(*) FROM tpl.include('users/search.sql') AS found
+```
+
+## Macros of your own
+
+A macro is a function that returns SQL. Decorate it with `sql_macro` and
+annotate what each argument is:
 
 ```python
-from sqlakit import Database
-from sqlakit.sql import Templates
+from sqlakit.sql import Param, Sql, sql_macro, tpl
 
 
-def cents(value: float) -> int:
-    return round(value * 100)
+@sql_macro
+def owned_by(team_ids: Param, user_ids: Param) -> str:
+    """Rows of any of the teams or users, and none when neither is given."""
+    criteria = [
+        f"{column} IN {param}"
+        for column, param in (("team_id", team_ids), ("user_id", user_ids))
+        if param.value
+    ]
+    return f"({' OR '.join(criteria)})" if criteria else "FALSE"
 
 
-db = Database(DB_URL, templates=Templates(BASE_DIR, filters={"cents": cents}))
+@sql_macro
+def search(q: Param, *columns: Sql) -> str:
+    """Rows where any of the columns holds the text, regardless of case."""
+    if not q.value:
+        return "TRUE"
+    return " OR ".join(tpl.icontains(column, q) for column in columns)
 ```
 
 ```sql
-SELECT * FROM orders WHERE total > {{ amount | cents }}
+SELECT * FROM documents WHERE tpl.owned_by(:teams, :users) AND tpl.search(:q, title, body)
 ```
 
-What the filter returns is bound like any other value, so the statement runs
-as `total > :amount__1` with `1000` bound to it.
+A `Param` argument is written `:name` in the template, and carries `.value`.
+Its string is the placeholder, so the parameter goes back into the SQL and is
+bound. A `Sql` argument is the text written there, with the macros inside it
+already expanded. A first argument annotated `Context` brings `ctx.dialect`,
+and `ctx.bind(value, "name")` for a value the macro binds itself. A
+`Literal["'a'", "'b'"]` annotation limits an argument to that SQL.
 
-A filter that writes SQL rather than a value, an operator carrying values of
-its own, needs the values bound as it builds them. Register it as
-`Filter(func, bind=True)`, and it is called with a `Binder` first:
+Register the macros with the templates, as objects or by the module they live
+in:
 
 ```python
-from datetime import date
-
-from jinja2sql import Binder
-from markupsafe import Markup
-
-from sqlakit import Database
-from sqlakit.sql import Filter, Templates
-
-
-def in_span(binder: Binder, span: tuple[date, date]) -> Markup:
-    start, end = span
-    return binder.raw(
-        f"BETWEEN {binder.bind('span', start)} AND {binder.bind('span', end)}"
-    )
-
-
-db = Database(
-    DB_URL,
-    templates=Templates(BASE_DIR, filters={"in_span": Filter(in_span, bind=True)}),
-)
+Templates(BASE_DIR, macros=[owned_by, search])
+Templates(BASE_DIR, macros=["app.sql.macros"])
 ```
 
-```sql
-SELECT * FROM orders WHERE placed_at {{ span | in_span }}
-```
-
-The statement comes out as `placed_at BETWEEN :span__1 AND :span__2`, with a
-date bound to each. `binder.bind(name, value)` binds one value and returns the
-placeholder standing for it, and the name is a prefix rather than the
-parameter's name, so two values bound as `span` do not collide.
-`binder.quote(name)` is there for a table or column name.
-
-`binder.raw()` marks the result as SQL. Without it the whole fragment is bound
-as one value, and the column is compared to the string `BETWEEN :span__1 ...`.
-
-The flag and the binder belong to
-[jinja2sql](https://github.com/antonrh/jinja2sql), so a filter written for it
-works here as it is. `Filter(func)` without the flag is the plain registration
-written out.
+A macro calls another as a template does, through `tpl`, with strings for SQL
+and values for parameters. `@sql_macro(optional=True)` reads a parameter the
+call didn't pass as `None`, the way `if_set` does.
 
 ## SQL inspection
 
@@ -411,10 +447,28 @@ Call `check()` at startup, next to the rest of your wiring:
 db.sql.check()
 ```
 
-It compiles every `.sql` template under the roots you configured, and a broken
-one raises `TemplateSyntaxError` with the file and the line. Without the call,
-a template is read the first time someone uses it, which is a late moment to
-find a typo in it.
+It reads every `.sql` template under the roots you configured. An unknown
+macro raises `UnknownMacroError`, a call with the wrong arguments
+`MacroArgumentError`, and a string or a call never closed `MacroSyntaxError`,
+each with the file and the line. Without the call, a template is read the
+first time someone uses it, which is a late moment to find a typo in it.
+
+The command line checks them without an application to start. It reads where
+they are from `pyproject.toml`:
+
+```toml
+[tool.sqlakit.templates]
+paths = ["app/sql"]
+macros = ["app.sql.macros"]
+```
+
+```console
+$ sqlakit check
+app/sql/users/search.sql:4:7: Unknown macro tpl.nope in users/search.sql:4; ...
+```
+
+`sqlakit lsp` serves the same checks to an editor as you type, with completion
+of macros and hover documentation. It needs `pip install "sqlakit[lsp]"`.
 
 ## Async templates
 
@@ -433,16 +487,11 @@ Building a query with `db.sql(...)` or `from_string`, calling `check`, and
 reading `statement` all stay synchronous, so you can pass a rendered template
 to `from_statement` in either API.
 
-Templates render synchronously. `Templates` rejects an async filter as soon
-as the object is created, rather than putting a coroutine into your query in
-place of a value:
-
-```python
-Templates(BASE_DIR, filters={"rate": fetch_rate})  # raises AsyncFilterError
-```
-
-If a template needs data from the network or from the database, fetch it with
-`await` beforehand and pass the finished value in.
+Templates render synchronously, and a macro is a plain function. `sql_macro`
+refuses an `async def` with `MacroDefinitionError`, rather than putting a
+coroutine into your query in place of SQL. If a template needs data from the
+network or from the database, fetch it with `await` beforehand and pass the
+finished value in.
 
 ## Limits
 

@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- SQL templates are SQL: `:name` parameters and `tpl.` macro calls in place of
+  `Jinja`, so a formatter and a linter read a template without a context.
+  Every `.sql` file under `templates=` and every `db.sql.from_string(...)`
+  reads this syntax.
+
+  ```sql
+  -- before
+  SELECT * FROM users
+  WHERE team IN {{ teams }}
+  {% if search %} AND name ILIKE {{ '%' ~ search ~ '%' }} {% endif %}
+  ORDER BY {{ column | identifier }}
+
+  -- after
+  SELECT * FROM users
+  WHERE team IN :teams
+    AND tpl.if_set(:search, tpl.icontains(name, :search))
+  ORDER BY tpl.identifier(:column, id, name)
+  ```
+
+  `{{ x.y }}` is `:x.y`, `| inclause` is `IN :x` or `tpl.each(:x)`, a
+  `{% include %}` of a whole query is `tpl.include('q.sql')`, and a filter or a
+  global is an `@sql_macro` function. The `migrate-from-jinja` skill in the
+  repository has the whole mapping.
+- `StrayParameterError` asks for the value by keyword, `name=...`.
+- `Query.order_by` reads the nulls of a sort string in any case convention:
+  `score.asc.nullsFirst` is `score.asc.nulls_first`.
+
+### Added
+
+- Built-in macros: `if_set`, `unless_set`, `between`, `order_by`,
+  `icontains`, `icollate`, `identifier`, `each`, `values`, `json_object`,
+  `array_agg`, `string_agg`, `array_contains`, `on_dialect` and `include`.
+- `@sql_macro` for macros of your own, registered with
+  `Templates(macros=[...])`, as objects or by import path, and `tpl` to call a
+  built-in one from them.
+- `sqlakit macros` lists the macros, `sqlakit check` checks every template a
+  project's `pyproject.toml` names, and `sqlakit lsp` serves the same checks to
+  an editor, with completion and hover. The server needs the `lsp` extra.
+
+### Removed
+
+- `Jinja` templates, the `sql` extra and the `jinja2sql` dependency.
+  `Templates` takes no `filters=` or `globals=`, and `sqlakit.sql.Filter` and
+  `AsyncFilterError` are gone.
+
 ## 0.20.0
 
 ### Changed

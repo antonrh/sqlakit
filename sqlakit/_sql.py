@@ -17,7 +17,6 @@ from typing import (
     Generic,
     Literal,
     TypeVar,
-    cast,
     get_args,
     get_origin,
     get_type_hints,
@@ -29,7 +28,6 @@ import sqlalchemy as sa
 from ._discovery import import_string
 from ._query import _field_named, _parse_sort_field
 from .exceptions import (
-    AsyncFilterError,
     Chain,
     InvalidSortStringError,
     MacroArgumentError,
@@ -48,19 +46,9 @@ from .exceptions import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
 
-    import jinja2
-    from jinja2sql import Jinja2SQL
-    from markupsafe import Markup
     from sqlalchemy.sql import Executable
 
     from ._base import BaseDatabase
-else:
-    try:
-        import jinja2
-        from jinja2sql import Jinja2SQL
-        from markupsafe import Markup
-    except ImportError:  # pragma: no cover - the extra is installed in CI
-        jinja2 = Jinja2SQL = Markup = None
 
 if TYPE_CHECKING:
     from pydantic import BaseModel, TypeAdapter
@@ -74,8 +62,6 @@ __all__ = [
     "BUILTIN_MACROS",
     "BaseSQLQuery",
     "Context",
-    "Filter",
-    "JinjaEngine",
     "Macro",
     "MacroEngine",
     "Param",
@@ -87,9 +73,6 @@ __all__ = [
     "templates_of",
     "tpl",
 ]
-
-_preparer: ContextVar[Any] = ContextVar("sqlakit.identifier_preparer")
-"""The preparer of the database a template is rendering for."""
 
 _context: ContextVar[Context] = ContextVar("sqlakit.macro_context")
 """The call a macro template is rendering, for a macro that calls another."""
@@ -104,15 +87,12 @@ PathLike = str | Path
 """The directories templates are looked for in: one, or several."""
 
 
-# Templates that stay SQL: `tpl.` macros in place of Jinja.
+# Templates that stay SQL.
 #
 # A `.tpl.sql` file is SQL in the production dialect, with `:name` parameters.
 # Each part that changes per call is a `tpl.<macro>(...)` call, which every SQL tool reads
 # as a function of a schema named `tpl`. A file is cut into text and calls once,
 # when it is first read; rendering joins the pieces and calls the macros.
-
-SUFFIX = ".tpl.sql"
-"""The extension that picks macros over Jinja."""
 
 NAMESPACE = "tpl"
 """The schema name macros are called under unless `Templates` says otherwise."""
@@ -956,14 +936,11 @@ class MacroEngine:
         *,
         auto_reload: bool = False,
         namespace: str = NAMESPACE,
-        every_file: bool = False,
     ) -> None:
         self.paths = tuple(Path(path) for path in paths)
         self.macros = macros
         self.auto_reload = auto_reload
         self.namespace = namespace
-        self.every_file = every_file
-        """Whether a `.sql` file is a macro template too, and not only `.tpl.sql`."""
         self._loaded: dict[str, MacroTemplate] = {}
         # A string is read once too: the same few are written out again and again.
         self._from_string = lru_cache(maxsize=256)(
@@ -1032,14 +1009,9 @@ class MacroEngine:
         """Return an included template's source, and when it changed.
 
         Raises:
-            MacroArgumentError: if it is not under the paths, or is a Jinja one.
+            MacroArgumentError: if it is not under the paths.
 
         """
-        if not (self.every_file or name.endswith(SUFFIX)):
-            problem = (
-                f"`{name}` is a Jinja template, and only a `{SUFFIX}` one is included"
-            )
-            raise MacroArgumentError(INCLUDE, problem)
         try:
             path = self._find(name)
         except TemplateNotFoundError as error:
@@ -1520,9 +1492,9 @@ def _for_dialect(ctx: Context, macro: str, **forms: Any) -> Any:  # noqa: ANN401
 def identifier(ctx: Context, name: Param, *allowed: Sql) -> str:
     """Write a name from a parameter, quoted the way this database quotes one.
 
-    The Jinja `identifier` filter does the same, and writes the same SQL: a
-    name that needs no quoting is left alone. A tuple or a list is a qualified
-    name, `("reports", "events")` for `reports.events`.
+    A name that needs no quoting is left alone: `name` on PostgreSQL, where
+    `Mixed Name` becomes `"Mixed Name"`. A tuple or a list is a qualified name,
+    `("reports", "events")` for `reports.events`.
 
     With names listed after the parameter, only those are taken, matched the way
     `order_by` matches a sort string, and written as the template lists them:
@@ -1551,12 +1523,13 @@ def identifier(ctx: Context, name: Param, *allowed: Sql) -> str:
 
 @sql_macro
 def each(ctx: Context, values: Param) -> str:
-    """Each value of a list as a parameter of its own, for `IN (...)`.
+    """Write each value of a list as a parameter of its own, separated by commas.
 
-    The Jinja `inclause` filter does the same. The parentheses are the
-    template's, so the SQL stays SQL: `WHERE team IN (tpl.each(:teams))`.
-    `IN :teams` binds the list as one expanding parameter instead, and a
-    template usually wants that.
+    For a list where `IN :ids` cannot go: `ARRAY[tpl.each(:ids)]`, or the
+    arguments of a function. SQLAlchemy writes an expanding parameter in
+    parentheses, so `ARRAY[:ids]` holds one row of the values, not the values.
+    `IN :ids` stays the way to match a list: its SQL is the same whatever the
+    length.
 
     Raises:
         MacroArgumentError: if the list is empty: `IN ()` is not SQL.
@@ -1602,128 +1575,6 @@ def search(q: Param, *columns: Sql) -> str:
 """
 
 
-class Filter:
-    """A template filter, registered the way jinja2sql registers one.
-
-    ```python
-    Templates("app/sql", filters={"in_span": Filter(in_span, bind=True)})
-    ```
-
-    ``bind=True`` calls the filter with a jinja2sql `Binder` as its first
-    argument, so a filter writing SQL of its own binds the values through it:
-
-    ```python
-    def in_span(binder, span):
-        start, end = span
-        return binder.raw(
-            f"BETWEEN {binder.bind('span', start)} AND {binder.bind('span', end)}"
-        )
-    ```
-
-    A plain function needs none of this and goes in as it is: whatever it
-    returns is bound as one more value of the statement.
-    """
-
-    __slots__ = ("bind", "func")
-
-    def __init__(self, func: Callable[..., Any], *, bind: bool = False) -> None:
-        self.func = func
-        self.bind = bind
-
-    def __repr__(self) -> str:
-        return f"{type(self).__name__}({self.func!r}, bind={self.bind})"
-
-
-class JinjaEngine:
-    """Renders Jinja templates through jinja2sql.
-
-    Everything Jinja lives here, so that moving off it is deleting this class.
-    """
-
-    def __init__(
-        self,
-        paths: Sequence[PathLike],
-        *,
-        auto_reload: bool,
-        filters: Mapping[str, Callable[..., Any] | Filter],
-        globals: Mapping[str, Any],  # noqa: A002
-    ) -> None:
-        self.paths = paths
-        self.auto_reload = auto_reload
-        self.filters = filters
-        self.globals = globals
-
-    @cached_property
-    def renderer(self) -> Jinja2SQL:
-        """The Jinja environment behind this, built on first use.
-
-        Raises:
-            MissingDependencyError: if the extra is not installed.
-
-        """
-        jinja2sql = _required(Jinja2SQL, "jinja2sql", "SQL templates", "sqlakit[sql]")
-        environment = jinja2.Environment(
-            loader=_jinja_loader([str(path) for path in self.paths]),
-            auto_reload=self.auto_reload,
-            autoescape=True,
-        )
-        environment.globals.update(self.globals)
-        # Named parameters: `text()` reads `:name` and nothing else.
-        renderer = jinja2sql(environment, param_style=_placeholder)
-        # Ours quotes through the dialect's preparer, jinja2sql's through one char.
-        renderer.register_filter("identifier", _identifier)
-        for name, filter_ in self.filters.items():
-            if isinstance(filter_, Filter):
-                renderer.register_filter(name, filter_.func, bind=filter_.bind)
-            else:
-                renderer.register_filter(name, filter_)
-        return renderer
-
-    def render_file(
-        self,
-        name: str,
-        context: Mapping[str, Any],
-        preparer: Any,  # noqa: ANN401
-    ) -> tuple[str, Mapping[str, Any]]:
-        """Return the SQL of a template file, and the values to bind to it."""
-        token = _preparer.set(preparer)
-        try:
-            sql, params = self.renderer.from_file(name, context=context)
-        except jinja2.TemplateNotFound as error:
-            if error.name != name:
-                raise  # what the template includes, said as Jinja says it
-            raise TemplateNotFoundError(name, self.paths) from None
-        finally:
-            _preparer.reset(token)
-        # Named parameters come back as a mapping, positional ones as a sequence.
-        return sql, cast("Mapping[str, Any]", params)
-
-    def render_string(
-        self,
-        source: str,
-        context: Mapping[str, Any],
-        preparer: Any,  # noqa: ANN401
-    ) -> tuple[str, Mapping[str, Any]]:
-        """Return the SQL of a template written out, and the values to bind to it."""
-        token = _preparer.set(preparer)
-        try:
-            sql, params = self.renderer.from_string(source, context=context)
-        finally:
-            _preparer.reset(token)
-        return sql, cast("Mapping[str, Any]", params)
-
-    def check(self, names: Iterable[str]) -> None:
-        """Compile these templates.
-
-        Raises:
-            jinja2.TemplateSyntaxError: naming the file and the line.
-
-        """
-        environment = self.renderer.env
-        for name in names:
-            environment.get_template(name)
-
-
 class Templates:
     """The directory a database's SQL templates live in, and how they render.
 
@@ -1734,17 +1585,11 @@ class Templates:
     ```
 
     ``auto_reload`` reads a template again when its file changes, which a
-    development server wants and a production one does not. ``filters`` and
-    ``globals`` are handed to the Jinja environment, and are refused if they have
-    to be awaited: rendering makes a string, in both APIs.
+    development server wants and a production one does not.
 
-    A filter is a plain function, whose return value is bound as one more value
-    of the statement. `Filter(func, bind=True)` registers one that writes SQL of
-    its own instead, and is handed a binder for the values inside it.
-
-    A file named `*.tpl.sql` is not Jinja: it is SQL with `:name` parameters and
-    `tpl.<macro>(...)` calls. ``macros`` are the ones an application adds to the
-    built-in ones, which `sqlakit macros` lists:
+    A template is SQL with `:name` parameters and `tpl.<macro>(...)` calls.
+    ``macros`` are the ones an application adds to the built-in ones, which
+    `sqlakit macros` lists:
 
     ```python
     Templates("app/sql", macros=[for_accounts])
@@ -1754,78 +1599,39 @@ class Templates:
     ``namespace`` is the schema name calls are written under, `tpl` unless a
     real schema has that name: `Templates("app/sql", namespace="q")` reads
     `q.if_set(...)`.
-
-    ``engine`` says what renders everything else, a `.sql` file and
-    `db.sql.from_string(...)`: `jinja`, or `tpl` once no template needs Jinja,
-    which then is never imported.
     """
 
-    def __init__(  # noqa: PLR0913 - the options of one object
+    def __init__(
         self,
         path: PathLike | Sequence[PathLike] = (),
         *,
         auto_reload: bool = False,
-        filters: Mapping[str, Callable[..., Any] | Filter] | None = None,
-        globals: Mapping[str, Any] | None = None,  # noqa: A002
         macros: Iterable[Macro | str] = (),
-        engine: Literal["jinja", "tpl"] = "jinja",
         namespace: str = NAMESPACE,
     ) -> None:
         self.paths = (
             (path,) if isinstance(path, str | Path) else tuple(path)  # type: ignore[misc]
         )
         self.auto_reload = auto_reload
-        self.filters = dict(filters or {})
-        self.globals = dict(globals or {})
         self.macros = registered(macros)
-        if engine not in ("jinja", "tpl"):
-            msg = f"`engine` is `jinja` or `tpl`, not {engine!r}"
-            raise ValueError(msg)
-        self.engine = engine
         if not _IDENTIFIER.fullmatch(namespace):
             msg = f"`namespace` is a plain name, such as `tpl`, not {namespace!r}"
             raise ValueError(msg)
         self.namespace = namespace
-        for name, value in (*self.filters.items(), *self.globals.items()):
-            called = value.func if isinstance(value, Filter) else value
-            if iscoroutinefunction(called):
-                raise AsyncFilterError(name)
 
     def __repr__(self) -> str:
         paths = ", ".join(str(path) for path in self.paths)
         return f"{type(self).__name__}({paths!r})"
 
     @cached_property
-    def macro_engine(self) -> MacroEngine:
-        """The engine that renders templates with `tpl.` macros."""
+    def engine(self) -> MacroEngine:
+        """The engine that reads and renders the templates."""
         return MacroEngine(
             self.paths,
             self.macros,
             auto_reload=self.auto_reload,
             namespace=self.namespace,
-            every_file=self.engine == "tpl",
         )
-
-    @cached_property
-    def jinja_engine(self) -> JinjaEngine:
-        """The engine that renders Jinja templates."""
-        return JinjaEngine(
-            self.paths,
-            auto_reload=self.auto_reload,
-            filters=self.filters,
-            globals=self.globals,
-        )
-
-    @property
-    def renderer(self) -> Jinja2SQL:
-        """The Jinja environment behind the Jinja templates."""
-        return self.jinja_engine.renderer
-
-    def engine_for(self, name: str | None) -> MacroEngine | JinjaEngine:
-        """Return what renders a template file, or a string when ``name`` is None."""
-        if self.engine == "tpl" or (name is not None and name.endswith(SUFFIX)):
-            return self.macro_engine
-        return self.jinja_engine
 
     def render(
         self,
@@ -1845,10 +1651,10 @@ class Templates:
 
         """
         if inline:
-            return self.engine_for(None).render_string(source, context, preparer)
+            return self.engine.render_string(source, context, preparer)
         if not self.paths:
             raise SQLNotConfiguredError
-        return self.engine_for(source).render_file(source, context, preparer)
+        return self.engine.render_file(source, context, preparer)
 
     def names(self) -> list[str]:
         """Return the name of every `.sql` file under the paths."""
@@ -1860,24 +1666,19 @@ class Templates:
         return sorted(found)
 
     def check(self) -> None:
-        """Compile every `.sql` template, so a broken one fails where deploys do.
+        """Read every `.sql` template, so a broken one fails where deploys do.
 
         Raises:
             SQLNotConfiguredError: if there is nowhere to look, which makes checking
                 a lie rather than a pass.
-            jinja2.TemplateSyntaxError: naming the file and the line.
-            MacroSyntaxError: if a macro template cannot be read.
+            MacroSyntaxError: if a template cannot be read.
             UnknownMacroError: if it calls a macro nobody registered.
             MacroArgumentError: if a call has arguments its macro cannot take.
 
         """
         if not self.paths:
             raise SQLNotConfiguredError
-        by_engine: dict[MacroEngine | JinjaEngine, list[str]] = {}
-        for name in self.names():
-            by_engine.setdefault(self.engine_for(name), []).append(name)
-        for engine, names in by_engine.items():
-            engine.check(names)
+        self.engine.check(self.names())
 
 
 class BaseSQLQuery(Generic[RowT, DatabaseT]):
@@ -1974,52 +1775,6 @@ class BaseSQLQuery(Generic[RowT, DatabaseT]):
         return self.statement.execution_options(yield_per=size)
 
 
-def _jinja_loader(paths: list[str]) -> jinja2.BaseLoader:
-    """Return a loader of the Jinja templates under the paths, and of no others.
-
-    `{% include %}` of a `.tpl.sql` file would put its `tpl.` calls in the SQL
-    unexpanded, so it is refused.
-    """
-
-    class Loader(jinja2.FileSystemLoader):
-        def get_source(
-            self, environment: jinja2.Environment, template: str
-        ) -> tuple[str, str, Callable[[], bool]]:
-            if template.endswith(SUFFIX):
-                message = (
-                    f"`{template}` is a macro template, which Jinja cannot include: "
-                    f"turn this one into a `{SUFFIX}` template, and include it with "
-                    f"`tpl.include('{template}')`"
-                )
-                raise jinja2.TemplateNotFound(template, message)
-            return super().get_source(environment, template)
-
-    return Loader(paths)
-
-
-def _identifier(value: Any) -> Markup:  # noqa: ANN401
-    """Return a name quoted the way the database in hand quotes one.
-
-    The preparer decides both the quoting character and whether a name needs
-    quoting at all: `name` is left alone on Oracle, where a quoted lowercase
-    name is a different, non-existent column.
-    """
-    parts = (value,) if isinstance(value, str) else value
-    preparer = _preparer.get()
-    # The preparer escapes what it quotes; nothing here reaches the SQL raw.
-    return Markup(".".join(preparer.quote(str(part)) for part in parts))
-
-
-def _placeholder(name: str, index: int) -> str:  # noqa: ARG001 - the style's shape
-    """Return the placeholder a value renders as.
-
-    A space follows it so that a cast can: `{{ id }}::uuid` renders `:id__1
-    ::uuid`, and `text()` reads the parameter and leaves the cast alone. Without
-    the space it reads `:id__` and the statement never runs.
-    """
-    return f":{name} "
-
-
 def require_pydantic() -> None:
     """Raise unless pydantic is installed, which `typed()` validates rows with.
 
@@ -2090,6 +1845,9 @@ _POSIX_CLASS = re.compile(
 )
 """A class in a regular expression, `[:punct:]`, which `text()` reads as `:punct`."""
 
+_CAST_AFTER = re.compile(r"(?<![:\w\\])(:[A-Za-z_]\w*)(?=::)")
+"""A parameter a cast follows, `:id::uuid`, which `text()` does not read as one."""
+
 
 @lru_cache(maxsize=1024)
 def _text(sql: str) -> tuple[sa.TextClause, frozenset[str]]:
@@ -2099,7 +1857,8 @@ def _text(sql: str) -> tuple[sa.TextClause, frozenset[str]]:
     costs, and a template renders the same SQL whenever its values have the same
     shape. Sharing the clause is safe: `bindparams` returns a copy.
     """
-    clause = sa.text(_POSIX_CLASS.sub(r"[\\:\1\\:]", sql))
+    sql = _CAST_AFTER.sub(r"\1 ", _POSIX_CLASS.sub(r"[\\:\1\\:]", sql))
+    clause = sa.text(sql)
     named = frozenset(
         element.key
         for element in clause.get_children()

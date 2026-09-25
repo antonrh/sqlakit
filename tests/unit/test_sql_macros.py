@@ -1,4 +1,4 @@
-"""`.tpl.sql` templates: SQL with `tpl.` macros, next to the Jinja ones."""
+"""SQL templates: `:name` parameters and `tpl.` macros."""
 
 import enum
 import os
@@ -45,9 +45,6 @@ TEMPLATES = {
     "users/in_teams.tpl.sql": """
         SELECT name FROM users WHERE team IN (tpl.each(:teams)) ORDER BY id
     """,
-    "users/in_teams.sql": """
-        SELECT name FROM users WHERE team IN {{ teams | inclause }} ORDER BY id
-    """,
     "users/search.tpl.sql": """
         SELECT name FROM users WHERE tpl.search(:q, name, team) ORDER BY id
     """,
@@ -56,9 +53,6 @@ TEMPLATES = {
     """,
     "users/bluish.tpl.sql": """
         SELECT name FROM users WHERE tpl.bluish() ORDER BY id
-    """,
-    "users/jinja.sql": """
-        SELECT name FROM users WHERE team = {{ team }} ORDER BY id
     """,
 }
 
@@ -273,10 +267,6 @@ def test_the_layout_of_a_template_survives_rendering(db: Database) -> None:
     )
 
 
-def test_jinja_templates_render_as_before(db: Database) -> None:
-    assert names(db, "users/jinja.sql", team="red") == ["Ann", "Cid", "dan_x"]
-
-
 def test_calls_in_strings_and_comments_are_text() -> None:
     source = (
         "SELECT 'tpl.nope(', \"tpl.nope(\" -- tpl.nope(\n"
@@ -329,7 +319,7 @@ def test_if_set_reads_a_parameter_the_call_did_not_pass_as_unset() -> None:
 
 
 def test_a_parameter_nobody_passed_is_still_refused_outside_if_set() -> None:
-    db = Database("sqlite://", templates=Templates(engine="tpl"))
+    db = Database("sqlite://")
     with pytest.raises(StrayParameterError, match="`:q`"), db.connect():
         db.sql.from_string("SELECT tpl.if_set(:q, 1) WHERE 1 = :q").all()
 
@@ -399,7 +389,7 @@ def test_check_reads_every_macro_template(tmp_path: Path) -> None:
         db.sql.check()
 
 
-def test_check_passes_jinja_and_macro_templates(db: Database) -> None:
+def test_check_passes_every_template(db: Database) -> None:
     db.sql.check()
 
 
@@ -440,9 +430,9 @@ def test_signature_says_how_a_template_calls_a_macro() -> None:
     ]
 
 
-def test_the_tpl_engine_renders_every_sql_file_and_string(tmp_path: Path) -> None:
+def test_every_sql_file_and_string_reads_macros(tmp_path: Path) -> None:
     write(tmp_path, {"plain.sql": "SELECT tpl.if_set(:x, 1, 2)"})
-    db = Database("sqlite://", templates=Templates(tmp_path, engine="tpl"))
+    db = Database("sqlite://", templates=tmp_path)
     with db.connect():
         assert db.sql("plain.sql", x=None).scalars().one() == 2
         assert (
@@ -451,7 +441,7 @@ def test_the_tpl_engine_renders_every_sql_file_and_string(tmp_path: Path) -> Non
     db.sql.check()
 
 
-def test_the_tpl_engine_works_without_the_jinja_extra(tmp_path: Path) -> None:
+def test_templates_import_no_jinja(tmp_path: Path) -> None:
     write(tmp_path, {"plain.sql": "SELECT tpl.if_set(:x, 1, 2)"})
     script = f"""
 import sys
@@ -459,7 +449,7 @@ for name in ("jinja2", "jinja2sql", "markupsafe"):
     sys.modules[name] = None
 from sqlakit import Database
 from sqlakit.sql import Templates
-db = Database("sqlite://", templates=Templates({str(tmp_path)!r}, engine="tpl"))
+db = Database("sqlite://", templates={str(tmp_path)!r})
 db.sql.check()
 with db.connect():
     print(db.sql("plain.sql").scalars().one())
@@ -468,18 +458,6 @@ with db.connect():
         [sys.executable, "-c", script], capture_output=True, text=True, check=False
     )
     assert (ran.returncode, ran.stdout, ran.stderr) == (0, "2\n", "")
-
-
-def test_a_macro_template_needs_no_jinja(
-    db: Database, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(sql_module, "Jinja2SQL", None)
-    assert names(db, "users/for_teams.tpl.sql", teams=["blue"]) == ["bob"]
-
-
-def test_an_unknown_engine_is_refused() -> None:
-    with pytest.raises(ValueError, match="`engine` is `jinja` or `tpl`"):
-        Templates(engine="mako")  # ty: ignore[invalid-argument-type]
 
 
 def test_the_cli_lists_the_macros_of_a_module(
@@ -527,20 +505,9 @@ async def test_the_async_api_renders_the_same_macros(tmp_path: Path) -> None:
         (("reports", "Events"), 'reports."Events"'),
     ],
 )
-def test_identifier_quotes_as_the_jinja_filter_does(
-    tmp_path: Path, value: Any, quoted: str
-) -> None:
-    write(
-        tmp_path,
-        {
-            "jinja.sql": "SELECT {{ column | identifier }}",
-            "macro.tpl.sql": "SELECT tpl.identifier(:column)",
-        },
-    )
-    db = Database("postgresql+psycopg://", templates=tmp_path)
-    jinja = str(db.sql("jinja.sql", column=value).statement).splitlines()[-1]
-    macro = str(db.sql("macro.tpl.sql", column=value).statement).splitlines()[-1]
-    assert jinja == macro == f"SELECT {quoted}"
+def test_identifier_quotes_a_name_only_where_it_has_to(value: Any, quoted: str) -> None:
+    source = "SELECT tpl.identifier(:column)"
+    assert render(source, postgresql.dialect(), column=value) == f"SELECT {quoted}"
 
 
 def test_identifier_takes_only_the_names_it_lists() -> None:
@@ -558,13 +525,12 @@ def test_identifier_refuses_an_empty_name(value: Any) -> None:
         render("SELECT tpl.identifier(:c)", postgresql.dialect(), c=value)
 
 
-def test_each_binds_each_value_as_the_jinja_filter_does(db: Database) -> None:
+def test_each_binds_each_value_as_a_parameter(db: Database) -> None:
     source = "WHERE team IN (tpl.each(:teams))"
     assert render(source, postgresql.dialect(), teams=["red", "blue"]) == (
         "WHERE team IN (:teams__1, :teams__2)"
     )
     assert names(db, "users/in_teams.tpl.sql", teams=["blue"]) == ["bob"]
-    assert names(db, "users/in_teams.sql", teams=["blue"]) == ["bob"]
 
 
 def test_each_refuses_an_empty_list() -> None:
@@ -694,8 +660,6 @@ ORDER BY u.id""",
     "loop/b.tpl.sql": "SELECT * FROM tpl.include('loop/a.tpl.sql') AS a",
     "broken/outer.tpl.sql": "SELECT 1\nFROM tpl.include('broken/inner.tpl.sql') AS i",
     "broken/inner.tpl.sql": "SELECT 1\nWHERE x IN (tpl.each(:missing))",
-    "jinja/plain.sql": "SELECT {{ 1 }}",
-    "jinja/includes_tpl.sql": "{% include 'fans/ids.tpl.sql' %}",
 }
 
 
@@ -783,17 +747,7 @@ def test_include_takes_one_path_written_out(argument: str, written: str) -> None
     )
 
 
-def test_include_refuses_a_jinja_template(included: Database, tmp_path: Path) -> None:
-    write(
-        tmp_path, {"outer.tpl.sql": "SELECT * FROM tpl.include('jinja/plain.sql') AS j"}
-    )
-    with pytest.raises(
-        MacroArgumentError, match=r"`jinja/plain\.sql` is a Jinja template"
-    ):
-        included.sql("outer.tpl.sql").statement
-
-
-def test_the_tpl_engine_includes_a_plain_sql_file(tmp_path: Path) -> None:
+def test_include_reads_any_sql_file(tmp_path: Path) -> None:
     write(
         tmp_path,
         {
@@ -801,16 +755,9 @@ def test_the_tpl_engine_includes_a_plain_sql_file(tmp_path: Path) -> None:
             "two.sql": "SELECT n FROM tpl.include('one.sql') AS o",
         },
     )
-    db = Database("sqlite://", templates=Templates(tmp_path, engine="tpl"))
+    db = Database("sqlite://", templates=tmp_path)
     with db.connect():
         assert db.sql("two.sql").scalars().one() == 1
-
-
-def test_jinja_refuses_to_include_a_macro_template(included: Database) -> None:
-    with pytest.raises(
-        Exception, match="is a macro template, which Jinja cannot include"
-    ):
-        included.sql("jinja/includes_tpl.sql", teams=[], q=None).statement
 
 
 def test_include_is_not_a_name_a_macro_can_take() -> None:
@@ -1038,9 +985,8 @@ def test_an_included_query_ends_where_its_sql_ends(
             assert db.sql("outer.tpl.sql").scalars().one() in (1, ";")
 
 
-@pytest.mark.parametrize("engine", ["jinja", "tpl"])
-def test_a_posix_class_is_not_a_parameter(engine: Any) -> None:
-    db = Database("sqlite://", templates=Templates(engine=engine))
+def test_a_posix_class_is_not_a_parameter() -> None:
+    db = Database("sqlite://")
     with db.connect():
         query = db.sql.from_string("SELECT '[[:punct:]][[:alpha:]]'")
         assert query.scalars().one() == "[[:punct:]][[:alpha:]]"

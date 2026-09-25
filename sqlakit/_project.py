@@ -8,7 +8,6 @@ read where the templates are, and which macros they call, from the project:
 paths = ["app/sql"]
 macros = ["app.sql.macros"]
 namespace = "tpl"
-engine = "jinja"
 ```
 """
 
@@ -24,7 +23,6 @@ from ._sql import MacroTemplate, Templates
 from .exceptions import (
     MacroArgumentError,
     MacroSyntaxError,
-    MissingDependencyError,
     ProjectConfigError,
     UnknownMacroError,
 )
@@ -34,7 +32,7 @@ if TYPE_CHECKING:
 
 __all__ = ["Problem", "Project", "load_project"]
 
-_KEYS = {"paths", "macros", "namespace", "engine"}
+_KEYS = {"paths", "macros", "namespace"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,10 +77,6 @@ class Project:
                 return path
         return None
 
-    def reads_macros(self, name: str) -> bool:
-        """Whether a template is a macro template rather than a Jinja one."""
-        return self.templates.engine_for(name) is self.templates.macro_engine
-
     def load(self, name: str, source: str) -> MacroTemplate:
         """Read a macro template from its text, which may not be saved yet.
 
@@ -92,7 +86,7 @@ class Project:
             MacroArgumentError: if a call has arguments its macro cannot take.
 
         """
-        engine = self.templates.macro_engine
+        engine = self.templates.engine
         return MacroTemplate(
             name,
             source,
@@ -106,9 +100,6 @@ class Project:
         for name in self.templates.names():
             path = self.path_of(name)
             assert path is not None  # noqa: S101 - `names` lists files
-            if not self.reads_macros(name):
-                yield from self._jinja_problems(name, path)
-                continue
             try:
                 self.load(name, path.read_text(encoding="utf-8"))
             except (MacroSyntaxError, UnknownMacroError, MacroArgumentError) as error:
@@ -116,28 +107,6 @@ class Project:
                     continue  # in a template this one includes, and said there
                 start, end = error.span or (0, 0)
                 yield Problem(path, start, end, str(error))
-
-    def _jinja_problems(self, name: str, path: Path) -> Iterator[Problem]:
-        try:
-            self.templates.jinja_engine.check([name])
-        except MissingDependencyError:
-            raise
-        # Jinja's `TemplateSyntaxError`, which is not importable without the extra.
-        except Exception as error:  # noqa: BLE001
-            source = path.read_text(encoding="utf-8")
-            start = _line_start(source, getattr(error, "lineno", None) or 1)
-            yield Problem(path, start, start, str(error))
-
-
-def _line_start(source: str, line: int) -> int:
-    """Return the offset a line starts at, counting lines from one."""
-    start = 0
-    for _ in range(line - 1):
-        newline = source.find("\n", start)
-        if newline < 0:
-            break
-        start = newline + 1
-    return start
 
 
 def load_project(start: Path | None = None) -> Project:
@@ -161,7 +130,6 @@ def load_project(start: Path | None = None) -> Project:
         paths,
         macros=config.get("macros", []),
         namespace=config.get("namespace", "tpl"),
-        engine=config.get("engine", "jinja"),
     )
     return Project(root, templates)
 

@@ -43,7 +43,7 @@ TEMPLATES = {
     "good.tpl.sql": "SELECT * FROM users\nWHERE tpl.mine(:teams)\n  AND tpl.if_set(:q, name = :q)",
     "inner.tpl.sql": "SELECT 1\nWHERE tpl.nope(:x)",
     "outer.tpl.sql": "SELECT *\nFROM tpl.include('inner.tpl.sql') AS i",
-    "jinja.sql": "SELECT {{ x }",
+    "open.sql": "SELECT 1,\n  'never closed",
 }
 
 
@@ -82,7 +82,7 @@ def test_a_project_reads_its_templates_from_pyproject(project: Path) -> None:
         ("[project]\nname = 'app'\n", "has no `[tool.sqlakit.templates]` table"),
         (
             "[tool.sqlakit.templates]\npath = ['sql']\n",
-            "has path, and takes engine, macros, namespace, paths",
+            "has path, and takes macros, namespace, paths",
         ),
     ],
 )
@@ -110,7 +110,7 @@ def test_check_names_every_problem_once_where_it_is(
             "on_dialect, order_by, string_agg, unless_set, values. Register one "
             "with `Templates(..., macros=[...])`."
         ),
-        "sql/jinja.sql:1:1: unexpected '}'",
+        "sql/open.sql:2:3: open.sql:2: a quoted string is never closed.",
         "4 templates, 2 problems",
     ]
 
@@ -120,7 +120,7 @@ def test_check_writes_json(project: Path, capsys: pytest.CaptureFixture[str]) ->
     found = json.loads(capsys.readouterr().out)
     assert [(one["path"], one["line"], one["column"]) for one in found] == [
         ("sql/inner.tpl.sql", 2, 7),
-        ("sql/jinja.sql", 1, 1),
+        ("sql/open.sql", 2, 3),
     ]
 
 
@@ -128,7 +128,7 @@ def test_check_names_a_missing_include_where_the_include_is(
     project: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (project / "sql" / "inner.tpl.sql").unlink()
-    (project / "sql" / "jinja.sql").unlink()
+    (project / "sql" / "open.sql").unlink()
     assert main(["check"]) == 1
     assert (
         capsys.readouterr()
@@ -142,7 +142,7 @@ def test_check_names_a_missing_include_where_the_include_is(
 def test_check_passes_a_clean_project(
     project: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    for name in ("inner.tpl.sql", "outer.tpl.sql", "jinja.sql"):
+    for name in ("inner.tpl.sql", "outer.tpl.sql", "open.sql"):
         (project / "sql" / name).unlink()
     assert main(["check"]) == 0
     assert capsys.readouterr().out == "1 templates, 0 problems\n"
@@ -200,10 +200,13 @@ def test_a_problem_in_an_included_template_is_marked_on_the_include(
     assert "(included from outer.tpl.sql:2)" in found.message
 
 
-def test_a_jinja_template_is_left_alone(assistant: _Assistant, project: Path) -> None:
+def test_the_server_reads_the_sql_files_under_the_paths(
+    assistant: _Assistant, project: Path
+) -> None:
     assert assistant.applies_to(project / "sql" / "good.tpl.sql")
-    assert not assistant.applies_to(project / "sql" / "jinja.sql")
-    assert not assistant.applies_to(project / "elsewhere.tpl.sql")
+    assert assistant.applies_to(project / "sql" / "open.sql")
+    assert not assistant.applies_to(project / "sql" / "notes.txt")
+    assert not assistant.applies_to(project / "elsewhere.sql")
 
 
 # completion, hover, definition
