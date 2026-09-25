@@ -9,7 +9,8 @@ from typing import Any
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy.dialects import mysql, postgresql
+from sqlalchemy.dialects import mysql, postgresql, sqlite
+from sqlalchemy.engine import default
 
 from sqlakit import (
     Database,
@@ -271,9 +272,9 @@ def test_an_unknown_macro_is_refused_when_the_file_is_read() -> None:
     with pytest.raises(UnknownMacroError) as raised:
         render("SELECT 1\nWHERE tpl.foo(:x)", postgresql.dialect(), x=1)
     assert str(raised.value) == (
-        "Unknown macro tpl.foo in inline.tpl.sql:2; available: blue_or, each, "
-        "for_teams, icontains, identifier, if_set, include, json_object, "
-        "order_by, search, unless_set. "
+        "Unknown macro tpl.foo in inline.tpl.sql:2; available: between, blue_or, "
+        "each, for_teams, icollate, icontains, identifier, if_set, include, "
+        "json_object, order_by, search, unless_set, values. "
         "Register one with "
         "`Templates(..., macros=[...])`."
     )
@@ -402,8 +403,11 @@ def test_signature_says_how_a_template_calls_a_macro() -> None:
         "tpl.unless_set(:value, expr[, otherwise])",
         "tpl.order_by(:sort, column, *columns)",
         "tpl.icontains(column, :text[, collation])",
+        "tpl.icollate(column[, collation])",
+        "tpl.between(column, :start, :end[, bounds])",
         "tpl.identifier(:name, *allowed)",
         "tpl.each(:values)",
+        "tpl.values(:rows)",
         "tpl.json_object(*pairs)",
     ]
 
@@ -802,3 +806,149 @@ def test_auto_reload_reads_a_changed_included_file(tmp_path: Path) -> None:
         stat = path.stat()
         os.utime(path, (stat.st_atime, stat.st_mtime + 1))
         assert db.sql("outer.tpl.sql").scalars().one() == 2
+
+
+def snowflake() -> sa.Dialect:
+    dialect = default.DefaultDialect()
+    dialect.name = "snowflake"
+    return dialect
+
+
+def mariadb() -> sa.Dialect:
+    dialect = mysql.dialect()
+    dialect.name = "mariadb"
+    return dialect
+
+
+# icollate
+
+
+@pytest.mark.parametrize(
+    ("dialect", "sql"),
+    [
+        (snowflake(), "ORDER BY name COLLATE 'und-ci-ai'"),
+        (postgresql.dialect(), "ORDER BY lower(name)"),
+        (sqlite.dialect(), "ORDER BY lower(name)"),
+        (mysql.dialect(), "ORDER BY name"),
+        (mariadb(), "ORDER BY name"),
+    ],
+)
+def test_icollate_compares_without_case_on_each_dialect(
+    dialect: sa.Dialect, sql: str
+) -> None:
+    assert render("ORDER BY tpl.icollate(name, 'und-ci-ai')", dialect) == sql
+
+
+def test_icollate_is_en_ci_on_snowflake_unless_told() -> None:
+    source = "WHERE tpl.icollate(email) = tpl.icollate(:email)"
+    assert render(source, snowflake(), email="A") == (
+        "WHERE email COLLATE 'en-ci' = :email COLLATE 'en-ci'"
+    )
+
+
+def test_icollate_sorts_under_order_by_without_case(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "sorted.tpl.sql": "SELECT name FROM (SELECT 'b' AS name UNION ALL "
+            "SELECT 'a' UNION ALL SELECT 'C') AS t "
+            "ORDER BY tpl.order_by(:sort, name = tpl.icollate(name))"
+        },
+    )
+    db = Database("sqlite://", templates=tmp_path)
+    with db.connect():
+        rows = db.sql("sorted.tpl.sql", sort="name").scalars().all()
+        plain = db.sql.from_string(
+            "SELECT name FROM (SELECT 'b' AS name UNION ALL SELECT 'a' "
+            "UNION ALL SELECT 'C') AS t ORDER BY name"
+        )
+        assert plain.scalars().all() == ["C", "a", "b"]
+    assert rows == ["a", "b", "C"]
+
+
+# between
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "closed", "half_open"),
+    [
+        (1, 9, "d BETWEEN :s AND :e", "(d >= :s AND d < :e)"),
+        (1, None, "d >= :s", "d >= :s"),
+        (None, 9, "d <= :e", "d < :e"),
+        (None, None, "TRUE", "TRUE"),
+        (0, "", "d >= :s", "d >= :s"),
+    ],
+)
+def test_between_writes_what_the_ends_given_allow(
+    start: Any, end: Any, closed: str, half_open: str
+) -> None:
+    dialect = postgresql.dialect()
+    assert render("tpl.between(d, :s, :e)", dialect, s=start, e=end) == closed
+    assert render("tpl.between(d, :s, :e, '[)')", dialect, s=start, e=end) == half_open
+
+
+def test_between_reads_an_end_not_passed_as_missing() -> None:
+    assert render("tpl.between(d, :s, :e)", postgresql.dialect(), s=1) == "d >= :s"
+
+
+def test_between_refuses_other_bounds_when_the_file_is_read() -> None:
+    with pytest.raises(MacroArgumentError) as raised:
+        render("WHERE tpl.between(d, :s, :e, '(]')", postgresql.dialect())
+    assert str(raised.value) == (
+        "tpl.between: argument 4 is '[]' or '[)', got '(]' in inline.tpl.sql:1."
+    )
+
+
+# values
+
+
+def test_values_writes_a_table_one_parameter_per_value() -> None:
+    source = "SELECT * FROM tpl.values(:rows) AS v"
+    rows = [(1, "a"), (2, "b")]
+    assert render(source, postgresql.dialect(), rows=rows) == (
+        "SELECT * FROM (VALUES (:rows__1, :rows__2), (:rows__3, :rows__4)) AS v"
+    )
+    assert render(source, mysql.dialect(), rows=rows) == (
+        "SELECT * FROM (SELECT :rows__1 AS column1, :rows__2 AS column2 "
+        "UNION ALL SELECT :rows__3, :rows__4) AS v"
+    )
+    assert render(source, mariadb(), rows=[1]) == (
+        "SELECT * FROM (SELECT :rows__1 AS column1) AS v"
+    )
+
+
+def test_values_runs_as_a_table(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "segments.tpl.sql": "SELECT column1, column2 FROM tpl.values(:segments) "
+            "AS v ORDER BY column1"
+        },
+    )
+    db = Database("sqlite://", templates=tmp_path)
+    with db.connect():
+        rows = db.sql("segments.tpl.sql", segments=[[2, "b"], (1, "a")]).all()
+    assert [tuple(row) for row in rows] == [(1, "a"), (2, "b")]
+
+
+@pytest.mark.parametrize(
+    ("rows", "problem"),
+    [
+        ([], "`:rows` has no rows, and `VALUES` without one is not SQL"),
+        ([(1, 2), (3,)], "row 2 of `:rows` has 1 values, and row 1 has 2"),
+    ],
+)
+def test_values_refuses_what_is_not_a_table(rows: Any, problem: str) -> None:
+    with pytest.raises(MacroArgumentError) as raised:
+        render("SELECT * FROM tpl.values(:rows) AS v", postgresql.dialect(), rows=rows)
+    assert str(raised.value) == f"tpl.values: {problem} in inline.tpl.sql:1."
+
+
+def test_a_literal_annotation_names_the_sql_an_argument_may_be() -> None:
+    from typing import Literal
+
+    @sql_macro
+    def pick(which: Literal["'a'", "'b'"]) -> str:
+        return which
+
+    assert pick.slots[0].choices == ("'a'", "'b'")

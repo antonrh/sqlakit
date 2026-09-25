@@ -16,6 +16,7 @@ from typing import (
     Literal,
     TypeVar,
     cast,
+    get_args,
     get_origin,
     get_type_hints,
     is_typeddict,
@@ -229,6 +230,8 @@ class _Slot:
     name: str
     kind: type[Param | Sql]
     default: Any = inspect.Parameter.empty
+    choices: tuple[str, ...] = ()
+    """What a `Literal` annotation lets the argument be, written as in the SQL."""
 
     @property
     def required(self) -> bool:
@@ -311,10 +314,13 @@ class Macro:
         return float("inf") if self.variadic else len(self.slots)
 
     def kind_at(self, index: int) -> type[Param | Sql]:
+        return self.slot_at(index).kind
+
+    def slot_at(self, index: int) -> _Slot:
         if index < len(self.slots):
-            return self.slots[index].kind
+            return self.slots[index]
         assert self.variadic is not None  # noqa: S101 - the count was checked
-        return self.variadic.kind
+        return self.variadic
 
 
 def sql_macro(
@@ -361,14 +367,20 @@ def _slots_of(
         if kind is Context and index == 0:
             context = True
             continue
+        choices: tuple[str, ...] = ()
+        if get_origin(kind) is Literal and all(
+            isinstance(choice, str) for choice in get_args(kind)
+        ):
+            kind, choices = Sql, get_args(kind)
         if kind not in (Param, Sql):
             raise MacroDefinitionError(
                 name,
                 f"`{parameter.name}` is annotated `{kind}`: annotate it `Param`, "
-                f"`Sql`, or `Context` as the first parameter",
+                f"`Sql`, a `Literal` of the SQL it may be, or `Context` as the "
+                f"first parameter",
             )
         if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
-            variadic = _Slot(parameter.name, kind)
+            variadic = _Slot(parameter.name, kind, choices=choices)
         elif parameter.kind in (
             inspect.Parameter.POSITIONAL_ONLY,
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
@@ -377,7 +389,7 @@ def _slots_of(
                 raise MacroDefinitionError(
                     name, f"`{parameter.name}` is a `Param` with a default"
                 )
-            slots.append(_Slot(parameter.name, kind, parameter.default))
+            slots.append(_Slot(parameter.name, kind, parameter.default, choices))
         else:
             raise MacroDefinitionError(
                 name, f"`{parameter.name}` is keyword-only, and calls in SQL are not"
@@ -717,11 +729,16 @@ class MacroTemplate:
                 problem = f"takes {_arity(macro)} arguments, got {count}"
                 raise self._refuse(macro.name, problem, part.line)
             for position, arg in enumerate(part.args):
-                if macro.kind_at(position) is Param and arg.param is None:
-                    written = self._written(arg.parts)
+                slot = macro.slot_at(position)
+                written = self._written(arg.parts)
+                if slot.kind is Param and arg.param is None:
                     problem = (
                         f"argument {position + 1} must be a :parameter, got {written!r}"
                     )
+                    raise self._refuse(macro.name, problem, part.line)
+                if slot.choices and written not in slot.choices:
+                    allowed = " or ".join(slot.choices)
+                    problem = f"argument {position + 1} is {allowed}, got {written}"
                     raise self._refuse(macro.name, problem, part.line)
                 self._check(arg.parts)
 
@@ -1108,6 +1125,118 @@ def icontains(
 
 
 @sql_macro
+def icollate(
+    ctx: Context,
+    column: Sql,
+    collation: Sql = Sql("'en-ci'"),  # noqa: B008
+) -> str:
+    """Write a column so that it compares and sorts without regard to case.
+
+    ```sql
+    ORDER BY tpl.order_by(:sort, id, name = tpl.icollate(name), 'nulls_last')
+    WHERE tpl.icollate(email) = tpl.icollate(:email)
+    ```
+
+    `COLLATE` on Snowflake, under ``collation``: `'en-ci'` unless it says
+    `'und-ci-ai'` to ignore accents as well. `lower()` elsewhere, which minds
+    accents, and the column as it is on MySQL, which compares without regard
+    to case already.
+
+    In a `GROUP BY` or a `DISTINCT` it changes more than the order: `COLLATE`
+    groups `A` with `a` on Snowflake, and `lower()` returns `a` for both.
+    """
+    if ctx.dialect == "snowflake":
+        return f"{column} COLLATE {collation}"
+    if ctx.dialect in ("mysql", "mariadb"):
+        return column
+    return f"lower({column})"
+
+
+@sql_macro(optional=True)
+def between(
+    column: Sql,
+    start: Param,
+    end: Param,
+    bounds: Literal["'[]'", "'[)'"] = "'[]'",
+) -> str:
+    """Keep a column within a range whose ends may each be missing.
+
+    ```sql
+    AND tpl.between(ir.date, :date_from, :date_to)
+    AND tpl.between(created_at, :since, :until, '[)')
+    ```
+
+    `BETWEEN` when both ends are there, `>=` or `<=` when one is, `TRUE` when
+    neither is: an end holds no value as in `if_set`. ``bounds`` is `'[]'`,
+    which includes the end as `BETWEEN` does, or `'[)'`, which leaves it out,
+    as a range of times wants. A start after the end is data, and matches
+    nothing.
+    """
+    has_start, has_end = _is_set(start.value), _is_set(end.value)
+    closed = bounds == "'[]'"
+    below = "<=" if closed else "<"
+    if has_start and has_end:
+        if closed:
+            return f"{column} BETWEEN {start} AND {end}"
+        return f"({column} >= {start} AND {column} < {end})"
+    if has_start:
+        return f"{column} >= {start}"
+    if has_end:
+        return f"{column} {below} {end}"
+    return "TRUE"
+
+
+@sql_macro(name="values")
+def values_table(ctx: Context, rows: Param) -> str:
+    """Write a small table out in the query, one parameter per value.
+
+    ```sql
+    SELECT column1 AS position, column2 AS name FROM tpl.values(:segments) AS v
+    ```
+
+    Rows are tuples or lists of one length; a plain value is a row of one
+    column. The columns are `column1`, `column2`, ... on every database: MySQL
+    and MariaDB name the columns of `VALUES` otherwise, so there it is written
+    as `SELECT ... UNION ALL SELECT ...`. Name them in the select list, since
+    MariaDB takes no `AS v (position, name)`. The database works out the types,
+    and PostgreSQL wants one type down a column: cast where the rows mix them.
+
+    For a few dozen rows. Hundreds are better sent as one JSON value and
+    unpacked in the database, with `FLATTEN` or `json_array_elements`.
+
+    Raises:
+        MacroArgumentError: if there are no rows, or they differ in length.
+
+    """
+    table = [
+        tuple(row) if isinstance(row, tuple | list) else (row,)
+        for row in rows.value or ()
+    ]
+    if not table:
+        problem = f"`:{rows.name}` has no rows, and `VALUES` without one is not SQL"
+        raise MacroArgumentError(values_table.name, problem)
+    width = len(table[0])
+    for number, row in enumerate(table, 1):
+        if len(row) != width:
+            problem = (
+                f"row {number} of `:{rows.name}` has {len(row)} values, "
+                f"and row 1 has {width}"
+            )
+            raise MacroArgumentError(values_table.name, problem)
+    name = _named(rows)
+    bound = [[ctx.bind(value, name) for value in row] for row in table]
+    if ctx.dialect in ("mysql", "mariadb"):
+        first, *rest = bound
+        named = ", ".join(
+            f"{value} AS column{index}" for index, value in enumerate(first, 1)
+        )
+        selects = [f"SELECT {named}", *(f"SELECT {', '.join(row)}" for row in rest)]
+        return f"({' UNION ALL '.join(selects)})"
+    written = ", ".join(f"({', '.join(row)})" for row in bound)
+    return f"(VALUES {written})"
+
+
+@sql_macro
 def identifier(ctx: Context, name: Param, *allowed: Sql) -> str:
     """Write a name from a parameter, quoted the way this database quotes one.
 
@@ -1162,7 +1291,17 @@ def each(ctx: Context, values: Param) -> str:
 
 BUILTIN_MACROS: Mapping[str, Macro] = {
     macro.name: macro
-    for macro in (if_set, unless_set, order_by, icontains, identifier, each)
+    for macro in (
+        if_set,
+        unless_set,
+        order_by,
+        icontains,
+        icollate,
+        between,
+        identifier,
+        each,
+        values_table,
+    )
 }
 
 tpl = SimpleNamespace(**BUILTIN_MACROS)
@@ -1320,8 +1459,7 @@ class Templates:
 
     A file named `*.tpl.sql` is not Jinja: it is SQL with `:name` parameters and
     `tpl.<macro>(...)` calls. ``macros`` are the ones an application adds to the
-    built-in `if_set`, `unless_set`, `order_by`, `icontains`, `identifier` and
-    `each`:
+    built-in ones, which `sqlakit macros` lists:
 
     ```python
     Templates("app/sql", macros=[for_accounts])
