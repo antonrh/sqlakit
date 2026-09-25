@@ -38,6 +38,7 @@ Every other test connects to nothing, and reaching for a session there raises
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import inspect
 import pathlib
 import time
@@ -48,7 +49,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from ._debugserver import as_payload, write_report
 from ._recording import Recording, check, require_expectation
 from ._registry import db as importable_db
 from .exceptions import UnknownDatabaseError
@@ -63,7 +63,7 @@ if TYPE_CHECKING:
 MARKER = "db"
 SYNC_FIXTURE = "_sqlakit_transaction"
 ASYNC_FIXTURE = "_sqlakit_async_transaction"
-REPORT = pytest.StashKey[list[dict[str, Any]]]()
+REPORT = pytest.StashKey[list[tuple[Recording, str, list[str]]]]()
 WHERE = pytest.StashKey["pathlib.Path | None"]()
 NAMED_BY_THE_CLOCK = ""
 """What `--sqlakit-report` with no path means."""
@@ -114,9 +114,18 @@ def pytest_terminal_summary(
 ) -> None:
     """Write the report at the end, and say where it went."""
     where = config.stash.get(WHERE, None)
-    records = config.stash.get(REPORT, [])
-    if where is None or not records:
+    reported = config.stash.get(REPORT, [])
+    if where is None or not reported:
         return
+    # Installed apart from `sqlakit`, and only when a report is asked for.
+    from sqlakit_debugserver import (  # noqa: PLC0415  # ty: ignore[unresolved-import]
+        as_payload,
+        write_report,
+    )
+
+    records = [
+        as_payload(recording, app=app, tags=tags) for recording, app, tags in reported
+    ]
     tests = len({record["app"] + record["label"] for record in records})
     queries = sum(record["count"] for record in records)
     written = write_report(where, records, about=f"{tests} tests · {queries} queries")
@@ -133,14 +142,19 @@ def _report_path(config: pytest.Config) -> pathlib.Path | None:
     if asked is None:
         return None
     if asked == NAMED_BY_THE_CLOCK:
-        return config.rootpath / time.strftime("sqlakit-%Y%m%d-%H%M%S.html")
-    where = pathlib.Path(asked)
-    if where.is_dir():
+        where = config.rootpath / time.strftime("sqlakit-%Y%m%d-%H%M%S.html")
+    elif (where := pathlib.Path(asked)).is_dir():
         # `--sqlakit-report tests/unit` reads as the path to write to.
         message = (
             f"--sqlakit-report was given `{asked}`, which is a directory. "
             f"Write `--sqlakit-report=PATH` for a file, or the flag on its own "
             f"for a name with the time in it."
+        )
+        raise pytest.UsageError(message)
+    if importlib.util.find_spec("sqlakit_debugserver") is None:
+        message = (
+            "--sqlakit-report writes the debug server's page, which comes with "
+            "it: pip install sqlakit-debugserver"
         )
         raise pytest.UsageError(message)
     return where
@@ -388,10 +402,10 @@ def _reported(request: pytest.FixtureRequest, db: Any) -> Iterator[None]:  # noq
             )
         yield
     request.config.stash[REPORT].append(
-        as_payload(
+        (
             recording,
-            app=str(node.path.relative_to(request.config.rootpath)),
-            tags=[mark.name for mark in node.iter_markers() if mark.name != MARKER],
+            str(node.path.relative_to(request.config.rootpath)),
+            [mark.name for mark in node.iter_markers() if mark.name != MARKER],
         )
     )
 

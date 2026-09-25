@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The debug server moved to a package of its own, `sqlakit-debugserver`, and
+  runs as `sqlakit-debugserver` in place of `sqlakit debugserver`. Install it
+  with `pip install sqlakit-debugserver`. `--sqlakit-report` needs it too,
+  since the report is the server's page.
+- `db.recording(send_to=...)` takes a function of the recording, called when
+  the block ends, in place of `debugserver=`. `DebugServer` moved to the new
+  package and is such a function:
+
+  ```python
+  # before
+  from sqlakit import DebugServer
+
+  with db.recording("GET /users", debugserver=DebugServer("localhost", 5555)):
+      ...
+
+  # after
+  from sqlakit_debugserver import DebugServer
+
+  with db.recording("GET /users", send_to=DebugServer("localhost", 5555)):
+      ...
+  ```
+
+  The shorthand `debugserver=("localhost", 5555)` is gone.
+
+### Removed
+
+- The `sqlakit` command. Its one subcommand, `debugserver`, is
+  `sqlakit-debugserver` now.
+- `sqlakit.DebugServer`, now `sqlakit_debugserver.DebugServer`.
+
 ## 0.19.0
 
 ### Added
