@@ -60,8 +60,6 @@ def blocks() -> list[Any]:
     found = []
     for page in PAGES:
         for index, block in enumerate(BLOCK.findall(page.read_text())):
-            if re.search(r"^-- tpl\.\w+", block, re.MULTILINE):
-                continue  # a file of SQL macros holds expressions, not statements
             if not STATEMENT.match(block):
                 continue  # what a recording prints, not a template
             found.append(pytest.param(block, id=f"{page.name}-{index}"))

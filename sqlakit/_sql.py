@@ -108,6 +108,12 @@ _DOTTED = re.compile(
 """A `:parameter.with.a.path`, past the strings and comments that may hold one."""
 _DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$")
 _TYPE_NAME = re.compile(r"[A-Za-z_][\w ]*(?:\(\d+(?:, *\d+)?\))?")
+_MACRO_STATEMENT = re.compile(
+    r"\s*SELECT\s+(?P<body>.+)\s+AS\s+(?P<name>[A-Za-z_]\w*)"
+    r"(?:\s+FROM\s+(?P<args>[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*))?\s*",
+    re.IGNORECASE | re.DOTALL,
+)
+"""The statement an SQL macro is: `SELECT <expression> AS <name> FROM <arguments>`."""
 _COLUMN_AS = re.compile(r"\s*([A-Za-z_]\w*)\s*=(?!=)\s*(.+?)\s*", re.DOTALL)
 _NULLS_AFTER = re.compile(r"\s*NULLS\b", re.IGNORECASE)
 
@@ -328,18 +334,13 @@ class Macro:
 
 
 class SqlMacro(Macro):
-    """A macro written in SQL, in a file of them, under a header comment.
+    """A macro written in SQL, in a file of them: see `sql_macros`.
 
-    ```sql
-    -- tpl.for_tenant(t): rows of the tenant, and of one team when asked.
-    t.tenant_id = :tenant_id AND tpl.if_set(:team_id, t.team_id = :team_id)
-    ```
-
-    A call puts the body in its place when the template is read, with each
-    argument's text where the body names it: `tpl.for_tenant(o)` writes
-    `o.tenant_id`. Parameters are the call's own, and the macros in the body
-    expand as in the template. The body goes in as written: parenthesize one
-    that has to stay together, such as an `OR`.
+    The body is the expression the `SELECT` writes, so the file is SQL a
+    linter reads, its arguments declared as the tables it selects from. A call puts the body in its place, in brackets, when the
+    template is read, with each argument's text where the body names it:
+    `tpl.for_tenant(o)` writes `(o.tenant_id = ...)`. Parameters are the
+    call's own, and the macros in the body expand as in the template.
     """
 
     def __init__(  # noqa: PLR0913 - what a header and a body say
@@ -380,79 +381,108 @@ class SqlMacro(Macro):
         return self.path.name
 
     def expanded(self, args: Sequence[str]) -> str:
-        """Return the body with the arguments where it names them."""
+        """Return the body with the arguments where it names them, in brackets.
+
+        The body is an expression, so the brackets keep it one wherever it
+        goes: `a OR b` stays together after an `AND`.
+        """
         by_name = dict(zip(self.params, args, strict=True))
-        return self._argument.sub(
+        body = self._argument.sub(
             lambda found: by_name[found.group(1)] if found.group(1) else found.group(),
             self.body,
         )
+        return f"({body})"
 
     def _from_python(self, *_: Any) -> str:  # noqa: ANN401
         problem = "is written in SQL, and expands in a template, not in Python"
         raise MacroArgumentError(self.name, problem)
 
 
-def sql_macros(
-    path: Path | str, namespace: str = NAMESPACE, source: str | None = None
-) -> list[SqlMacro]:
-    """Read the SQL macros of a file: each under a `-- tpl.name(args): doc` header.
+def sql_macros(path: Path | str, source: str | None = None) -> list[SqlMacro]:
+    """Read the SQL macros of a file, each one a statement of its own.
 
-    The comment lines right under a header go on with its description, and the
-    body runs to the next header. Lines before the first header are the file's.
+    ```sql
+    -- Rows of the tenant, and of one team when asked.
+    SELECT t.tenant_id = :tenant_id AND tpl.if_set(:team_id, t.team_id = :team_id)
+        AS for_tenant
+    FROM t;
+    ```
+
+    The alias is the macro's name, the `FROM` lists its arguments, and a call
+    writes the expression. The comment right above the statement is
+    its description, and a blank line keeps a comment of the file's out of it.
     ``source`` is the file's text when it differs from what is saved.
 
     Raises:
-        MacroDefinitionError: if a header names no body, or an argument twice.
+        MacroDefinitionError: if a statement is not `SELECT <expression> AS
+            <name> [FROM <arguments>];`, or names an argument twice.
 
     """
     path = Path(path)
     if source is None:
         source = path.read_text(encoding="utf-8")
-    lines = source.splitlines()
-    header = re.compile(
-        rf"--\s*{re.escape(namespace)}\.([A-Za-z_]\w*)\s*(?:\(([^)]*)\))?\s*:?\s*(.*)",
-        re.IGNORECASE,
-    )
-    starts = [
-        (number, match)
-        for number, text in enumerate(lines)
-        if (match := header.fullmatch(text.strip()))
-    ]
     found = []
-    for index, (number, match) in enumerate(starts):
-        end = starts[index + 1][0] if index + 1 < len(starts) else len(lines)
-        doc = [match.group(3).strip()]
-        first = number + 1
-        while first < end and lines[first].strip().startswith("--"):
-            doc.append(lines[first].strip().removeprefix("--").strip())
-            first += 1
-        while first < end and not lines[first].strip():
-            first += 1
-        body = "\n".join(lines[first:end]).rstrip()
-        name = match.group(1)
-        if not body:
-            raise MacroDefinitionError(
-                name, f"its header in {path.name} has no SQL under it"
+    for start, end in _statements(source):
+        doc: list[str] = []
+        offset = start
+        for line in source[start:end].splitlines(keepends=True):
+            stripped = line.strip()
+            if stripped.startswith("--"):
+                doc.append(stripped.removeprefix("--").strip())
+            elif stripped:
+                break
+            else:
+                doc = []
+            offset += len(line)
+        written = source[offset:end]
+        if not written.strip():
+            continue
+        line = source.count("\n", 0, offset) + 1
+        statement = _MACRO_STATEMENT.fullmatch(written)
+        if statement is None:
+            problem = (
+                f"{path.name}:{line} is not `SELECT <expression> AS <name> "
+                f"[FROM <arguments>];`"
             )
+            raise MacroDefinitionError(path.name, problem)
+        name = statement.group("name")
         params = [
-            one.strip() for one in (match.group(2) or "").split(",") if one.strip()
+            one.strip()
+            for one in (statement.group("args") or "").split(",")
+            if one.strip()
         ]
-        if len(set(params)) != len(params) or not all(
-            _IDENTIFIER.fullmatch(one) for one in params
-        ):
-            problem = f"its arguments in {path.name} are not distinct names: {params}"
+        if len(set(params)) != len(params):
+            problem = f"its arguments in {path.name}:{line} name one twice: {params}"
             raise MacroDefinitionError(name, problem)
         found.append(
             SqlMacro(
                 name,
                 params=params,
-                body=body,
+                body=statement.group("body").strip(),
                 doc=" ".join(one for one in doc if one),
                 path=path,
-                line=number + 1,
-                body_line=first + 1,
+                line=line,
+                body_line=line,
             )
         )
+    return found
+
+
+def _statements(source: str) -> list[tuple[int, int]]:
+    """Return where each statement of a file starts and ends, at its `;`."""
+    scanner = _Scanner(source, "", NAMESPACE)
+    found = []
+    start = index = 0
+    while index < len(source):
+        skipped = scanner.past_literal(index)
+        if skipped != index:
+            index = skipped
+            continue
+        if source[index] == ";":
+            found.append((start, index))
+            start = index + 1
+        index += 1
+    found.append((start, len(source)))
     return found
 
 
@@ -1304,9 +1334,7 @@ def _as_bound(sql: str, values: Mapping[str, Any], dialect: str) -> str:
     return _LIMIT.sub(limit, _IN_ONE.sub(in_list, sql))
 
 
-def registered(
-    macros: Iterable[Macro | str | Path], namespace: str = NAMESPACE
-) -> dict[str, Macro]:
+def registered(macros: Iterable[Macro | str | Path]) -> dict[str, Macro]:
     """Return the built-in macros and these, by name.
 
     A string is where to import them from: `app.sql.macros` for every macro of
@@ -1320,9 +1348,7 @@ def registered(
 
     """
     by_name = dict(BUILTIN_MACROS)
-    for macro in (
-        found for given in macros for found in _macros_given(given, namespace)
-    ):
+    for macro in (found for given in macros for found in _macros_given(given)):
         if not isinstance(macro, Macro):
             raise MacroDefinitionError(
                 getattr(macro, "__name__", repr(macro)),
@@ -1334,10 +1360,10 @@ def registered(
     return by_name
 
 
-def _macros_given(given: Macro | str | Path, namespace: str) -> list[Any]:
+def _macros_given(given: Macro | str | Path) -> list[Any]:
     """Return the macros one entry of `macros=` stands for."""
     if isinstance(given, Path) or (isinstance(given, str) and given.endswith(".sql")):
-        return sql_macros(given, namespace)
+        return sql_macros(given)
     if isinstance(given, str):
         return _imported_macros(given)
     return [given]
@@ -2010,7 +2036,7 @@ class Templates:
             msg = f"`namespace` is a plain name, such as `tpl`, not {namespace!r}"
             raise ValueError(msg)
         self.namespace = namespace
-        self.macros = registered(macros, namespace)
+        self.macros = registered(macros)
 
     def __repr__(self) -> str:
         paths = ", ".join(str(path) for path in self.paths)

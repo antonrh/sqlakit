@@ -118,7 +118,7 @@ def _check(directory: Path, *, json_output: bool) -> int:
 
 
 def _export(directory: Path, *, dialect: str | None, check: bool) -> int:
-    """Write the `sqruff` settings into `pyproject.toml`, and `.sqruffignore`.
+    """Write the `sqruff` settings into `pyproject.toml`.
 
     The values of the parameters are written again each time. The rest of
     `[tool.sqruff.core]` is yours: it is written only when the table is missing.
@@ -134,20 +134,12 @@ def _export(directory: Path, *, dialect: str | None, check: bool) -> int:
     sqruff = tomllib.loads(text).get("tool", {}).get("sqruff", {})
     written = dict(sqruff.get("templater", {}).get("placeholder", {}))
     written.pop("param_style", None)
-    ignore = project.root / ".sqruffignore"
-    ignored = ignore.read_text(encoding="utf-8").splitlines() if ignore.exists() else []
-    missing = [
-        path.relative_to(project.root).as_posix()
-        for path in project.macro_files()
-        if path.relative_to(project.root).as_posix() not in ignored
-    ]
     if check:
         stale = [
             name
             for name, fresh in (
                 ("[tool.sqruff.core]", "core" in sqruff),
                 ("[tool.sqruff.templater.placeholder]", written == values),
-                (".sqruffignore", not missing),
             )
             if not fresh
         ]
@@ -170,7 +162,7 @@ def _export(directory: Path, *, dialect: str | None, check: bool) -> int:
     table = "\n".join(
         [
             "[tool.sqruff.templater.placeholder]",
-            "# Written by `sqlakit export sqruff`: a value for each parameter.",
+            "# Written by `sqlakit export sqruff`: parameters named like keywords.",
             'param_style = "colon"',
             *(f'{name} = "{value}"' for name, value in values.items()),
         ]
@@ -189,12 +181,7 @@ def _export(directory: Path, *, dialect: str | None, check: bool) -> int:
     else:
         text = text.rstrip("\n") + "\n\n" + table + "\n"
     pyproject.write_text(text, encoding="utf-8")
-    if missing:
-        ignore.write_text("\n".join([*ignored, *missing]) + "\n", encoding="utf-8")
-    _say(
-        f"wrote {_relative(pyproject)}"
-        + (f" and {_relative(ignore)}" if missing else "")
-    )
+    _say(f"wrote {_relative(pyproject)}")
     return 0
 
 

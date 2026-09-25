@@ -41,13 +41,13 @@
 - `@sql_macro` for macros of your own, registered with
   `Templates(macros=[...])`, as objects or by import path, and `tpl` to call a
   built-in one from them. A macro that is a piece of SQL is written in a `.sql`
-  file under a `-- tpl.name(args): description` header instead.
+  file instead, as `SELECT <expression> AS <name> FROM <arguments>;`.
 - `sqlakit macros` lists the macros, `sqlakit check` checks every template a
   project's `pyproject.toml` names, and `sqlakit lsp` serves the same checks to
   an editor, with completion and hover. The server needs the `lsp` extra.
 - `sqlakit export sqruff` writes the `sqruff` settings that read the templates
-  as SQL into `pyproject.toml`: the `placeholder` templater and a value for
-  every parameter.
+  as SQL into `pyproject.toml`: the `placeholder` templater, and a value for
+  each parameter named like a keyword, such as `:limit`.
 - `IN (:ids)` binds a list as `IN :ids` does, and a `LIMIT :limit` or
   `OFFSET :offset` with no value takes every row and skips none, on every
   database.

@@ -20,6 +20,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.dialects.postgresql.base import (
+    RESERVED_WORDS as POSTGRESQL_RESERVED_WORDS,
+)
+from sqlalchemy.sql.compiler import RESERVED_WORDS
+
 from ._sql import MacroTemplate, SqlMacro, Templates, sql_macros
 from .exceptions import (
     MacroArgumentError,
@@ -42,6 +47,9 @@ _PARAMETER_IN_TEXT = re.compile(
     re.DOTALL,
 )
 """A `:parameter`, past the strings and comments that may hold a colon."""
+
+_RESERVED = RESERVED_WORDS | POSTGRESQL_RESERVED_WORDS
+"""Names SQL keeps for itself, which a linter cannot read a parameter as."""
 
 LINT_EXCLUDED = ("RF01", "AL05", "ST03")
 """Rules a `tpl.` call trips without anything being wrong with the template.
@@ -132,22 +140,20 @@ class Project:
                 yield Problem(path, start, start, message)
 
     def placeholder_values(self) -> dict[str, str]:
-        """Return a value to stand for each parameter, for a linter to read SQL.
+        """Return a value for each parameter a linter cannot read by its name.
 
-        `1` reads wherever a value goes, `LIMIT :limit` included. A parameter
-        read with a path, `:criteria.search`, stands for its own name instead,
-        which reads as a column.
+        With no value, the `placeholder` templater writes a parameter's name in
+        its place: `:status` reads as a column. A name SQL reserves does not,
+        `LIMIT :limit` reading `LIMIT limit`, so it gets `1`, or its name with
+        `_` after it when a path follows, `:order.id`.
         """
         values: dict[str, str] = {}
-        for name in self.templates.names():
-            path = self.path_of(name)
-            assert path is not None  # noqa: S101 - `names` lists files
+        paths = [self.path_of(name) for name in self.templates.names()]
+        for path in {*(one for one in paths if one is not None), *self.macro_files()}:
             for found in _PARAMETER_IN_TEXT.finditer(path.read_text(encoding="utf-8")):
                 param, dotted = found.groups()
-                if param is not None:
-                    values[param] = (
-                        param if dotted or values.get(param) == param else "1"
-                    )
+                if param is not None and param.lower() in _RESERVED:
+                    values[param] = f"{param}_" if dotted else "1"
         return dict(sorted(values.items()))
 
     def macro_files(self) -> list[Path]:
@@ -166,7 +172,7 @@ class Project:
         """
         namespace = self.templates.namespace
         try:
-            written = sql_macros(path, namespace, source)
+            written = sql_macros(path, source)
         except MacroDefinitionError as error:
             return [(1, str(error))]
         macros = {**self.templates.macros, **{one.name: one for one in written}}

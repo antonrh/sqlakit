@@ -39,11 +39,10 @@ def mine(teams: Param) -> str:
     return f"team IN {teams}"
 '''
 
-SQL_MACROS = """-- tpl.for_team(t): rows of the team the call asks for.
-t.team = :team
+SQL_MACROS = """-- Rows of the team the call asks for.
+SELECT t.team = :team AS for_team FROM t;
 
--- tpl.visible(t)
-(tpl.for_team(t) OR t.public)
+SELECT tpl.for_team(t) OR t.public AS visible FROM t;
 """
 
 TEMPLATES = {
@@ -360,12 +359,12 @@ def test_sql_macros_complete_and_hover_like_the_others(assistant: _Assistant) ->
             "for_team",
             "macro",
             "tpl.for_team(t)",
-            "rows of the team the call asks for.",
+            "Rows of the team the call asks for.",
             "for_team(${1:t})",
         )
     ]
     assert assistant.hover("WHERE tpl.for_team(u)", 12) == (
-        "```sql\ntpl.for_team(t)\n```\n\nrows of the team the call asks for."
+        "```sql\ntpl.for_team(t)\n```\n\nRows of the team the call asks for."
     )
 
 
@@ -385,8 +384,10 @@ def test_a_file_of_sql_macros_is_checked_as_it_stands(
     assert assistant.diagnose(path, SQL_MACROS) == []
     broken = SQL_MACROS.replace("t.public", "tpl.nope(t)")
     [found] = assistant.diagnose(path, broken)
-    assert broken[found.start : found.end] == "(tpl.for_team(t) OR tpl.nope(t))"
-    assert found.message.startswith("Unknown macro tpl.nope in _macros.sql:5")
+    assert broken[found.start : found.end] == (
+        "SELECT tpl.for_team(t) OR tpl.nope(t) AS visible FROM t;"
+    )
+    assert found.message.startswith("Unknown macro tpl.nope in _macros.sql:4")
 
 
 def test_a_template_calling_an_sql_macro_wrongly_is_marked(
@@ -408,7 +409,7 @@ def test_check_names_a_broken_sql_macro(
     assert (
         capsys.readouterr()
         .out.splitlines()[0]
-        .startswith("_macros.sql:5:1: Unknown macro tpl.nope in _macros.sql:5")
+        .startswith("_macros.sql:4:1: Unknown macro tpl.nope in _macros.sql:4")
     )
 
 
@@ -433,15 +434,11 @@ def test_export_writes_what_sqruff_needs_into_pyproject(
         'exclude_rules = "RF01,AL05,ST03"\n'
         "\n"
         "[tool.sqruff.templater.placeholder]\n"
-        "# Written by `sqlakit export sqruff`: a value for each parameter.\n"
+        "# Written by `sqlakit export sqruff`: parameters named like keywords.\n"
         'param_style = "colon"\n'
-        'c = "c"\n'
         'limit = "1"\n'
-        'q = "1"\n'
-        'teams = "1"\n'
-        'x = "1"\n'
     )
-    assert (project / ".sqruffignore").read_text() == "_macros.sql\n"
+    assert not (project / ".sqruffignore").exists()
     assert main(["export", "sqruff"]) == 0
     assert (project / "pyproject.toml").read_text() == written
     assert capsys.readouterr().out.splitlines()[-1] == "wrote pyproject.toml"
@@ -458,7 +455,7 @@ def test_export_keeps_what_is_yours(project: Path) -> None:
     written = (project / "pyproject.toml").read_text()
     assert 'dialect = "postgres"\nrules = "core"\n' in written
     assert 'old = "1"' not in written
-    assert written.endswith('x = "1"\n\n[tool.other]\nkept = true\n')
+    assert written.endswith('param_style = "colon"\n\n[tool.other]\nkept = true\n')
 
 
 def test_sqruff_reads_a_template_with_what_export_wrote(project: Path) -> None:
@@ -469,7 +466,7 @@ def test_sqruff_reads_a_template_with_what_export_wrote(project: Path) -> None:
     sqruff = shutil.which("sqruff")
     assert sqruff is not None
     ran = subprocess.run(  # noqa: S603 - the linter the project installs
-        [sqruff, "lint", "--parsing-errors", "sql/good.tpl.sql"],
+        [sqruff, "lint", "--parsing-errors", "sql/good.tpl.sql", "_macros.sql"],
         cwd=project,
         capture_output=True,
         text=True,

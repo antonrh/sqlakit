@@ -1435,15 +1435,16 @@ def test_array_comparisons_on_postgres_and_snowflake(
 
 SQL_MACROS = """-- Macros of the application.
 
--- tpl.for_tenant(t): rows of the tenant,
+-- Rows of the tenant,
 -- and of one team when asked.
-t.tenant_id = :tenant_id AND tpl.if_set(:team_id, t.team_id = :team_id)
+SELECT t.tenant_id = :tenant_id AND tpl.if_set(:team_id, t.team_id = :team_id)
+    AS for_tenant
+FROM t;
 
--- tpl.labelled(t, label)
-('t' || t.name || :t) = label
+SELECT 't' || t.name || :t = label AS labelled FROM t, label;
 
--- tpl.scoped(t): the tenant's rows, through another macro.
-(tpl.for_tenant(t) OR t.public)
+-- The tenant's rows, through another macro.
+SELECT tpl.for_tenant(t) OR t.public AS scoped FROM t;
 """
 
 
@@ -1460,11 +1461,11 @@ def test_sql_macros_are_read_from_their_headers(macro_file: Path) -> None:
         (
             "for_tenant",
             ("t",),
-            "rows of the tenant, and of one team when asked.",
-            3,
+            "Rows of the tenant, and of one team when asked.",
+            5,
         ),
-        ("labelled", ("t", "label"), "", 7),
-        ("scoped", ("t",), "the tenant's rows, through another macro.", 10),
+        ("labelled", ("t", "label"), "", 9),
+        ("scoped", ("t",), "The tenant's rows, through another macro.", 12),
     ]
     assert sql_module.signature_of(macros[1]) == "tpl.labelled(t, label)"
 
@@ -1481,8 +1482,8 @@ def test_an_sql_macro_writes_its_body_with_the_arguments(macro_file: Path) -> No
         {"tenant_id": 1, "team_id": None, "t": 2},
     )
     assert " ".join(template.render(ctx).split()) == (
-        "SELECT * FROM orders AS o WHERE o.tenant_id = :tenant_id AND TRUE "
-        "AND ('t' || o.name || :t) = 'x'"
+        "SELECT * FROM orders AS o WHERE (o.tenant_id = :tenant_id AND TRUE) "
+        "AND ('t' || o.name || :t = 'x')"
     )
 
 
@@ -1496,7 +1497,7 @@ def test_an_sql_macro_calls_another(macro_file: Path) -> None:
         {"tenant_id": 1, "team_id": 2},
     )
     assert " ".join(template.render(ctx).split()) == (
-        "WHERE (o.tenant_id = :tenant_id AND o.team_id = :team_id OR o.public)"
+        "WHERE ((o.tenant_id = :tenant_id AND o.team_id = :team_id) OR o.public)"
     )
 
 
@@ -1518,7 +1519,7 @@ def test_sql_macros_run(macro_file: Path, db: Database, tmp_path: Path) -> None:
 
 def test_an_sql_macro_that_expands_itself_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "loop.sql"
-    path.write_text("-- tpl.a(x)\ntpl.b(x)\n-- tpl.b(x)\ntpl.a(x)\n")
+    path.write_text("SELECT tpl.b(x) AS a FROM x;\nSELECT tpl.a(x) AS b FROM x;\n")
     with pytest.raises(MacroArgumentError, match="expands itself: a -> b -> a"):
         sql_module.MacroTemplate(
             "x.sql", "SELECT tpl.a(1)", sql_module.registered([path])
@@ -1527,13 +1528,15 @@ def test_an_sql_macro_that_expands_itself_is_refused(tmp_path: Path) -> None:
 
 def test_an_error_in_an_sql_macro_says_where_it_is(tmp_path: Path) -> None:
     path = tmp_path / "broken.sql"
-    path.write_text("-- tpl.ok(t)\nt.id = 1\n\n-- tpl.bad(t)\nt.id = tpl.nope(1)\n")
+    path.write_text(
+        "SELECT t.id = 1 AS ok FROM t;\n\nSELECT t.id = tpl.nope(1) AS bad FROM t;\n"
+    )
     with pytest.raises(UnknownMacroError) as raised:
         sql_module.MacroTemplate(
             "x.sql", "SELECT\ntpl.bad(u)", sql_module.registered([path])
         )
     assert str(raised.value).startswith(
-        "Unknown macro tpl.nope in broken.sql:5 (included from x.sql:2)"
+        "Unknown macro tpl.nope in broken.sql:3 (included from x.sql:2)"
     )
 
 
@@ -1549,11 +1552,12 @@ def test_an_sql_macro_takes_as_many_arguments_as_its_header_names(
 @pytest.mark.parametrize(
     ("source", "problem"),
     [
-        ("-- tpl.empty(t)\n\n-- tpl.next\nTRUE\n", "its header in bad.sql has no SQL"),
-        ("-- tpl.twice(a, a)\nTRUE\n", "are not distinct names"),
+        ("SELECT TRUE;\n", "bad.sql:1 is not `SELECT <expression> AS <name>"),
+        ("-- A note.\nt.id = 1;\n", "bad.sql:2 is not `SELECT <expression> AS <name>"),
+        ("SELECT TRUE AS twice FROM a, a;\n", "name one twice"),
     ],
 )
-def test_a_header_without_a_body_or_with_one_name_twice_is_refused(
+def test_a_statement_that_is_not_a_macro_is_refused(
     tmp_path: Path, source: str, problem: str
 ) -> None:
     path = tmp_path / "bad.sql"
@@ -1564,7 +1568,7 @@ def test_a_header_without_a_body_or_with_one_name_twice_is_refused(
 
 def test_an_sql_macro_cannot_share_a_name(macro_file: Path, tmp_path: Path) -> None:
     other = tmp_path / "other.sql"
-    other.write_text("-- tpl.for_tenant(t)\nTRUE\n")
+    other.write_text("SELECT TRUE AS for_tenant FROM t;\n")
     with pytest.raises(MacroDefinitionError, match="another macro has that name"):
         Templates(macros=[macro_file, other])
 
@@ -1581,7 +1585,7 @@ def test_the_cli_lists_sql_macros(
     from sqlakit._cli import main
 
     assert main(["macros", str(macro_file)]) == 0
-    assert "tpl.for_tenant(t)\n    rows of the tenant, and of one team when asked." in (
+    assert "tpl.for_tenant(t)\n    Rows of the tenant, and of one team when asked." in (
         capsys.readouterr().out
     )
 

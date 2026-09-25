@@ -439,28 +439,32 @@ Templates(BASE_DIR, macros=["app.sql.macros"])
 
 ## Macros written in SQL
 
-A macro that is a piece of SQL needs no Python. Write it in a `.sql` file under
-a comment that names it, and several can share a file:
+A macro that is a piece of SQL needs no Python. Write it in a `.sql` file as a
+`SELECT` of the expression: the alias is the macro's name, and `FROM` lists
+its arguments. A comment right above is its description, and several share a
+file:
 
 ```sql
 -- app/sql/_macros.sql
 
--- tpl.for_tenant(t): rows of the tenant, and of one team when asked.
-t.tenant_id = :tenant_id AND tpl.if_set(:team_id, t.team_id = :team_id)
+-- Rows of the tenant, and of one team when asked.
+SELECT t.tenant_id = :tenant_id AND tpl.if_set(:team_id, t.team_id = :team_id)
+    AS for_tenant
+FROM t;
 
--- tpl.active(t): rows that are neither archived nor deleted.
-(NOT t.archived AND t.deleted_at IS NULL)
+-- Rows that are neither archived nor deleted.
+SELECT NOT t.archived AND t.deleted_at IS NULL AS active FROM t;
 ```
 
 ```sql
 SELECT * FROM orders AS o WHERE tpl.for_tenant(o) AND tpl.active(o)
 ```
 
-A call writes the body in its place when the template is read, with each
-argument's text where the body names it: `tpl.for_tenant(o)` writes
-`o.tenant_id`. Parameters are the calling template's own, and the macros in the
-body expand as they would in the template. The body goes in as written, so
-parenthesize one that has to stay together, such as an `OR`.
+A call writes the expression in its place, in brackets, when the template is
+read, with each argument's text where the expression names it:
+`tpl.for_tenant(o)` writes `(o.tenant_id = ...)`. Parameters are the calling
+template's own, and the macros in the expression expand as they would in the
+template.
 
 Register the file with the rest:
 
@@ -468,9 +472,10 @@ Register the file with the rest:
 Templates(BASE_DIR, macros=["app.sql.macros", BASE_DIR / "_macros.sql"])
 ```
 
-A file of macros holds expressions rather than statements, so leave it out of
-what your linter checks. `check()`, `sqlakit check` and `sqlakit lsp` read it:
-an unknown macro in a body is reported on its line in the file.
+The file is SQL a linter reads like a template, with each argument declared as
+a table, so it checks the references in the expression too. `check()`,
+`sqlakit check` and `sqlakit lsp` read it as well: an unknown macro in a body
+is reported on its line in the file.
 
 A macro calls another as a template does, through `tpl`, with strings for SQL
 and values for parameters. `@sql_macro(optional=True)` reads a parameter the
@@ -500,21 +505,21 @@ GROUP BY team
 ## Linters
 
 A template is SQL, so `sqruff` or `sqlfluff` reads it with the `placeholder`
-templater, which puts a value in place of each `:name`. A value has to read
-wherever the parameter stands: `LIMIT :limit` reads `LIMIT limit` without
-one. `sqlakit export sqruff` writes a value for every parameter of your
-templates into `pyproject.toml`, next to the rest of the settings:
+templater, which writes each `:name` as `name`: `:status` reads as a column.
+A parameter named like a keyword doesn't, since `LIMIT :limit` reads
+`LIMIT limit`, and needs a value. `sqlakit export sqruff` writes the settings
+into `pyproject.toml`, with a value for each such parameter of your templates:
 
 ```console
 $ sqlakit export sqruff --dialect snowflake
-wrote pyproject.toml and .sqruffignore
+wrote pyproject.toml
 $ sqruff lint app/sql
 ```
 
-Run it again when templates gain parameters. `sqlakit export sqruff --check`
-fails in CI when it's out of date. It writes `[tool.sqruff.core]` only when the
-table is missing, so the rules you set there stay yours. `.sqruffignore` gets
-the files of SQL macros, which hold expressions rather than statements.
+Run it again when a template gains a parameter named like a keyword.
+`sqlakit export sqruff --check` fails in CI when it's out of date. It writes
+`[tool.sqruff.core]` only when the table is missing, so the rules you set there
+stay yours.
 
 The exported settings turn off three rules a `tpl.` call trips while the
 template is fine: `RF01` reads `tpl.if_set` as a column of a table named `tpl`,
