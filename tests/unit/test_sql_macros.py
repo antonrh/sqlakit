@@ -228,7 +228,7 @@ def test_a_macro_writes_sql_for_the_dialect() -> None:
 
 def test_icontains_is_ilike_on_postgres() -> None:
     sql = render("WHERE tpl.icontains(u.name, :q)", postgresql.dialect(), q="a")
-    assert sql == "WHERE u.name ILIKE :__p1 ESCAPE '!'"
+    assert sql == "WHERE u.name ILIKE :q__like__1 ESCAPE '!'"
 
 
 def test_the_layout_of_a_template_survives_rendering(db: Database) -> None:
@@ -272,8 +272,8 @@ def test_an_unknown_macro_is_refused_when_the_file_is_read() -> None:
         render("SELECT 1\nWHERE tpl.foo(:x)", postgresql.dialect(), x=1)
     assert str(raised.value) == (
         "Unknown macro tpl.foo in inline.tpl.sql:2; available: blue_or, each, "
-        "for_teams, icontains, identifier, if_set, json_object, order_by, "
-        "search, unless_set. "
+        "for_teams, icontains, identifier, if_set, include, json_object, "
+        "order_by, search, unless_set. "
         "Register one with "
         "`Templates(..., macros=[...])`."
     )
@@ -532,7 +532,7 @@ def test_identifier_refuses_an_empty_name(value: Any) -> None:
 def test_each_binds_each_value_as_the_jinja_filter_does(db: Database) -> None:
     source = "WHERE team IN (tpl.each(:teams))"
     assert render(source, postgresql.dialect(), teams=["red", "blue"]) == (
-        "WHERE team IN (:__p1, :__p2)"
+        "WHERE team IN (:teams__1, :teams__2)"
     )
     assert names(db, "users/in_teams.tpl.sql", teams=["blue"]) == ["bob"]
     assert names(db, "users/in_teams.sql", teams=["blue"]) == ["bob"]
@@ -582,7 +582,7 @@ def test_a_macro_calls_a_builtin_one_as_a_template_would(db: Database) -> None:
     assert names(db, "users/search.tpl.sql", q="BLU") == ["bob"]
     assert names(db, "users/search.tpl.sql", q="") == ["Ann", "bob", "Cid", "dan_x"]
     assert render("WHERE tpl.search(:q, a, b)", postgresql.dialect(), q="x") == (
-        "WHERE a ILIKE :__p1 ESCAPE '!' OR b ILIKE :__p2 ESCAPE '!'"
+        "WHERE a ILIKE :q__like__1 ESCAPE '!' OR b ILIKE :q__like__2 ESCAPE '!'"
     )
 
 
@@ -594,7 +594,7 @@ def test_a_value_where_a_parameter_goes_is_bound(db: Database) -> None:
         "dan_x",
     ]
     assert render("WHERE tpl.blue_or(:teams)", postgresql.dialect(), teams=["red"]) == (
-        "WHERE team IN (:__p1) OR team IN (:__p2)"
+        "WHERE team IN (:__p1) OR team IN (:teams__2)"
     )
 
 
@@ -630,3 +630,175 @@ def test_unless_set_takes_what_to_write_when_the_value_is_there() -> None:
     source = "WHERE tpl.unless_set(:ids, FALSE, id IN :ids)"
     assert render(source, postgresql.dialect(), ids=[1]) == "WHERE id IN :ids"
     assert render(source, postgresql.dialect(), ids=[]) == "WHERE FALSE"
+
+
+def test_a_macro_names_the_values_it_binds() -> None:
+    ctx = Context("postgresql", postgresql.dialect().identifier_preparer, {"x__1": 0})
+    assert [ctx.bind(1, "x"), ctx.bind(2), ctx.bind(3, "x")] == [
+        ":x__2",
+        ":__p3",
+        ":x__4",
+    ]
+    assert ctx.values == {"x__1": 0, "x__2": 1, "__p3": 2, "x__4": 3}
+
+
+INCLUDES = {
+    "fans/ids.tpl.sql": """SELECT id FROM users
+WHERE team IN :teams AND tpl.if_set(:q, tpl.icontains(name, :q));
+""",
+    "fans/count.tpl.sql": (
+        "SELECT count(*) FROM tpl.include('fans/ids.tpl.sql') AS f\n"
+        "WHERE tpl.icontains('x', :q) OR TRUE"
+    ),
+    "fans/names.tpl.sql": """SELECT u.name
+FROM users AS u
+JOIN tpl.include('fans/ids.tpl.sql') AS f ON f.id = u.id
+ORDER BY u.id""",
+    "loop/a.tpl.sql": "SELECT * FROM tpl.include('loop/b.tpl.sql') AS b",
+    "loop/b.tpl.sql": "SELECT * FROM tpl.include('loop/a.tpl.sql') AS a",
+    "broken/outer.tpl.sql": "SELECT 1\nFROM tpl.include('broken/inner.tpl.sql') AS i",
+    "broken/inner.tpl.sql": "SELECT 1\nWHERE tpl.icontains(name, :missing)",
+    "jinja/plain.sql": "SELECT {{ 1 }}",
+    "jinja/includes_tpl.sql": "{% include 'fans/ids.tpl.sql' %}",
+}
+
+
+@pytest.fixture
+def included(tmp_path: Path, db: Database) -> Database:
+    db.templates = Templates(write(tmp_path, TEMPLATES | INCLUDES))
+    return db
+
+
+def test_include_puts_a_whole_query_in_place(included: Database) -> None:
+    assert names(included, "fans/names.tpl.sql", teams=["red"], q="n") == [
+        "Ann",
+        "dan_x",
+    ]
+    with included.connect():
+        count = included.sql("fans/count.tpl.sql", teams=["red", "blue"], q=None)
+        assert count.scalars().one() == 4
+
+
+def test_include_writes_the_query_in_parentheses_labelled_once(
+    included: Database,
+) -> None:
+    with included.connect():
+        statement = included.sql("fans/count.tpl.sql", teams=["red"], q="a").statement
+    assert str(statement) == (
+        "/* fans/count.tpl.sql */\n"
+        "SELECT count(*) FROM (SELECT id FROM users\n"
+        "WHERE team IN (__[POSTCOMPILE_teams]) AND lower(name) LIKE "
+        "lower(:q__like__1) ESCAPE '!') AS f\n"
+        "WHERE lower('x') LIKE lower(:q__like__2) ESCAPE '!' OR TRUE"
+    )
+
+
+def test_include_refuses_a_template_that_includes_itself(included: Database) -> None:
+    with pytest.raises(MacroArgumentError) as raised:
+        included.sql("loop/a.tpl.sql").statement
+    assert str(raised.value) == (
+        "tpl.include: includes itself: loop/a.tpl.sql -> loop/b.tpl.sql -> "
+        "loop/a.tpl.sql in loop/b.tpl.sql:1 (included from loop/a.tpl.sql:1)."
+    )
+
+
+def test_check_finds_what_an_include_breaks(included: Database) -> None:
+    with pytest.raises(MacroArgumentError, match="includes itself"):
+        included.sql.check()
+
+
+def test_an_error_in_an_included_template_says_where_it_was_included(
+    included: Database,
+) -> None:
+    with pytest.raises(MacroArgumentError) as raised, included.connect():
+        included.sql("broken/outer.tpl.sql").all()
+    assert str(raised.value) == (
+        "tpl.icontains: `:missing` was not passed in broken/inner.tpl.sql:2 "
+        "(included from broken/outer.tpl.sql:2)."
+    )
+
+
+def test_a_missing_included_template_is_refused_on_load(tmp_path: Path) -> None:
+    write(
+        tmp_path, {"outer.tpl.sql": "SELECT 1\nFROM tpl.include('gone.tpl.sql') AS g"}
+    )
+    db = Database("sqlite://", templates=tmp_path)
+    with pytest.raises(
+        MacroArgumentError,
+        match=r"No SQL template named `gone\.tpl\.sql`.* in outer\.tpl\.sql:2\.",
+    ):
+        db.sql.check()
+
+
+@pytest.mark.parametrize(
+    ("argument", "written"),
+    [
+        (":name", "':name'"),
+        ("'a.tpl.sql', 'b.tpl.sql'", "\"'a.tpl.sql', 'b.tpl.sql'\""),
+    ],
+)
+def test_include_takes_one_path_written_out(argument: str, written: str) -> None:
+    with pytest.raises(MacroArgumentError) as raised:
+        source = "SELECT * FROM tpl.include(" + argument + ") AS x"  # noqa: S608
+        render(source, postgresql.dialect())
+    assert str(raised.value) == (
+        "tpl.include: takes the path of a template as a string, such as "
+        f"'reports/ids.tpl.sql', got {written} in inline.tpl.sql:1."
+    )
+
+
+def test_include_refuses_a_jinja_template(included: Database, tmp_path: Path) -> None:
+    write(
+        tmp_path, {"outer.tpl.sql": "SELECT * FROM tpl.include('jinja/plain.sql') AS j"}
+    )
+    with pytest.raises(
+        MacroArgumentError, match=r"`jinja/plain\.sql` is a Jinja template"
+    ):
+        included.sql("outer.tpl.sql").statement
+
+
+def test_the_tpl_engine_includes_a_plain_sql_file(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "one.sql": "SELECT 1 AS n;",
+            "two.sql": "SELECT n FROM tpl.include('one.sql') AS o",
+        },
+    )
+    db = Database("sqlite://", templates=Templates(tmp_path, engine="tpl"))
+    with db.connect():
+        assert db.sql("two.sql").scalars().one() == 1
+
+
+def test_jinja_refuses_to_include_a_macro_template(included: Database) -> None:
+    with pytest.raises(
+        Exception, match="is a macro template, which Jinja cannot include"
+    ):
+        included.sql("jinja/includes_tpl.sql", teams=[], q=None).statement
+
+
+def test_include_is_not_a_name_a_macro_can_take() -> None:
+    @sql_macro(name="include")
+    def mine(value: Param) -> str:
+        return str(value)
+
+    with pytest.raises(MacroDefinitionError, match="another macro has that name"):
+        Templates(macros=[mine])
+
+
+def test_auto_reload_reads_a_changed_included_file(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "inner.tpl.sql": "SELECT 1 AS n",
+            "outer.tpl.sql": "SELECT n FROM tpl.include('inner.tpl.sql') AS i",
+        },
+    )
+    db = Database("sqlite://", templates=Templates(tmp_path, auto_reload=True))
+    with db.connect():
+        assert db.sql("outer.tpl.sql").scalars().one() == 1
+        path = tmp_path / "inner.tpl.sql"
+        path.write_text("SELECT 2 AS n")
+        stat = path.stat()
+        os.utime(path, (stat.st_atime, stat.st_mtime + 1))
+        assert db.sql("outer.tpl.sql").scalars().one() == 2

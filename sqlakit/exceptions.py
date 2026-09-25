@@ -370,28 +370,37 @@ class StrayParameterError(SQLAKitError, ValueError):
 class MacroSyntaxError(SQLAKitError, ValueError):
     """Raised when a `.tpl.sql` template cannot be cut into text and macro calls."""
 
-    def __init__(self, template: str = "", line: int = 0, problem: str = "") -> None:
+    def __init__(
+        self,
+        template: str = "",
+        line: int = 0,
+        problem: str = "",
+        included_from: str = "",
+    ) -> None:
         self.template = template
         self.line = line
-        super().__init__(f"{template}:{line}: {problem}.")
+        super().__init__(f"{template}:{line}{included_from}: {problem}.")
 
 
 class UnknownMacroError(SQLAKitError, ValueError):
     """Raised when a template calls a `tpl.` macro that nobody registered."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - where the call is, and what there is
         self,
         name: str = "",
         template: str = "",
         line: int = 0,
         available: Iterable[str] = (),
+        *,
         namespace: str = "tpl",
+        included_from: str = "",
     ) -> None:
         self.name = name
         self.template = template
         self.line = line
         super().__init__(
-            f"Unknown macro {namespace}.{name} in {template}:{line}; available: "
+            f"Unknown macro {namespace}.{name} in {template}:{line}{included_from}; "
+            f"available: "
             f"{', '.join(sorted(available)) or 'none'}. Register one with "
             f"`Templates(..., macros=[...])`."
         )
@@ -400,18 +409,20 @@ class UnknownMacroError(SQLAKitError, ValueError):
 class MacroArgumentError(SQLAKitError, ValueError):
     """Raised when a `tpl.` call has arguments its macro cannot take."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - what was refused, and where
         self,
         name: str = "",
         problem: str = "",
         template: str = "",
         line: int = 0,
+        *,
         namespace: str = "tpl",
+        included_from: str = "",
     ) -> None:
         self.name = name
         self.problem = problem
         self.template = template
-        where = f" in {template}:{line}" if template else ""
+        where = f" in {template}:{line}{included_from}" if template else ""
         super().__init__(f"{namespace}.{name}: {problem}{where}.")
 
 

@@ -160,6 +160,17 @@ class _Value(Param):
         return self._placeholder
 
 
+def _named(param: Param, *suffix: str) -> str | None:
+    """Return the name to bind a value derived from a parameter under.
+
+    `:q` binds its pattern as `:q__like__1`. A value passed in Python has no
+    name of its own, and binds as `:__p1`.
+    """
+    if isinstance(param, _Value):
+        return None
+    return "__".join((param.name, *suffix))
+
+
 def _outside_a_template(macro: str) -> MacroArgumentError:
     problem = "called outside a template, where there is nothing to bind to"
     return MacroArgumentError(macro, problem)
@@ -192,12 +203,19 @@ class Context:
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.dialect!r})"
 
-    def bind(self, value: Any) -> str:  # noqa: ANN401
-        """Bind a value, and return the placeholder to write in its place."""
-        self._bound += 1
-        name = f"__p{self._bound}"
-        self.values[name] = value
-        return f":{name}"
+    def bind(self, value: Any, name: str | None = None) -> str:  # noqa: ANN401
+        """Bind a value, and return the placeholder to write in its place.
+
+        ``name`` is what the log and the debug server call it: `search_like`
+        binds `:search_like__1`, and no name binds `:__p1`.
+        """
+        while True:
+            self._bound += 1
+            key = f"{name}__{self._bound}" if name else f"__p{self._bound}"
+            if key not in self.values:
+                break
+        self.values[key] = value
+        return f":{key}"
 
     def quote(self, name: str) -> str:
         """Return an identifier quoted the way this database quotes one."""
@@ -412,10 +430,13 @@ def _patterns(namespace: str) -> tuple[re.Pattern[str], re.Pattern[str]]:
 class _Scanner:
     """Cut a template into text and `tpl.` calls, past strings and comments."""
 
-    def __init__(self, source: str, template: str, namespace: str) -> None:
+    def __init__(
+        self, source: str, template: str, namespace: str, included_from: str = ""
+    ) -> None:
         self.source = source
         self.template = template
         self.namespace = namespace
+        self.included_from = included_from
         self.decide, self.call = _patterns(namespace)
 
     def parts(self) -> tuple[str | _Call, ...]:
@@ -522,7 +543,9 @@ class _Scanner:
         return self.source.count("\n", 0, index) + 1
 
     def _error(self, problem: str, index: int) -> MacroSyntaxError:
-        return MacroSyntaxError(self.template, self._line(index), problem)
+        return MacroSyntaxError(
+            self.template, self._line(index), problem, self.included_from
+        )
 
 
 def _joined(parts: list[str | _Call]) -> tuple[str | _Call, ...]:
@@ -547,22 +570,49 @@ def _argument(parts: tuple[str | _Call, ...]) -> _Arg:
 # Loading and rendering.
 
 
-class MacroTemplate:
-    """A `.tpl.sql` file, read and checked against the macros it calls."""
+INCLUDE = "include"
+"""The call that puts a whole query from another template in place, as `(...)`."""
 
-    def __init__(
+_QUOTED_PATH = re.compile(r"'([^']+)'")
+
+
+class MacroTemplate:
+    """A `.tpl.sql` file, read and checked against the macros it calls.
+
+    `tpl.include('other.tpl.sql')` puts the query of another template in its
+    place, in parentheses, where a table goes:
+
+    ```sql
+    SELECT f.fan_id FROM tpl.include('audience-fan/ids.tpl.sql') AS f
+    ```
+
+    The path is a string, read with the file: a template that is missing, or
+    that includes itself through others, is refused there. The included query
+    shares the parameters of the call, and loses a trailing `;`.
+    """
+
+    def __init__(  # noqa: PLR0913 - what a template is read with
         self,
         name: str,
         source: str,
         macros: Mapping[str, Macro],
         mtime: float = 0,
         namespace: str = NAMESPACE,
+        *,
+        load: Callable[[str], tuple[str, float]] | None = None,
+        chain: tuple[tuple[str, int], ...] = (),
     ) -> None:
         self.name = name
         self.mtime = mtime
         self.macros = macros
         self.namespace = namespace
-        self.parts = _Scanner(source, name, namespace).parts()
+        self.load = load
+        self.chain = chain
+        """The templates this one was included from, and the line of each call."""
+        self.included_from = _included_from(chain)
+        self.includes: dict[str, float] = {}
+        """Every template this one includes, however deep, and when it changed."""
+        self.parts = _Scanner(source, name, namespace, self.included_from).parts()
         self._check(self.parts)
         self._compiled = self._compile(self.parts)
 
@@ -575,10 +625,46 @@ class MacroTemplate:
             _context.reset(token)
 
     def _compile(self, parts: Sequence[str | _Call]) -> tuple[str | _Expansion, ...]:
-        """Resolve every call to its macro once, so rendering only calls them."""
-        return tuple(
-            part if isinstance(part, str) else self._expansion(part) for part in parts
+        """Resolve every call to its macro once, so rendering only calls them.
+
+        An included template is read here, and its pieces become these.
+        """
+        compiled: list[str | _Expansion] = []
+        for part in parts:
+            if isinstance(part, str):
+                compiled.append(part)
+            elif part.name == INCLUDE:
+                compiled.extend(("(", *self._include(part), ")"))
+            else:
+                compiled.append(self._expansion(part))
+        return tuple(compiled)
+
+    def _include(self, call: _Call) -> tuple[str | _Expansion, ...]:
+        path = _QUOTED_PATH.fullmatch(self._written(call.args[0].parts))
+        assert path is not None  # noqa: S101 - checked on load
+        name = path.group(1)
+        chain = (*self.chain, (self.name, call.line))
+        if name in {template for template, _ in chain}:
+            cycle = " -> ".join((*(template for template, _ in chain), name))
+            raise self._refuse(INCLUDE, f"includes itself: {cycle}", call.line)
+        if self.load is None:
+            problem = "has no template paths to read from"
+            raise self._refuse(INCLUDE, problem, call.line)
+        try:
+            source, mtime = self.load(name)
+        except MacroArgumentError as error:
+            raise self._refuse(INCLUDE, error.problem, call.line) from None
+        included = MacroTemplate(
+            name,
+            _without_semicolon(source),
+            self.macros,
+            mtime,
+            self.namespace,
+            load=self.load,
+            chain=chain,
         )
+        self.includes.update({name: mtime, **included.includes})
+        return included._compiled
 
     def _expansion(self, call: _Call) -> _Expansion:
         macro = self.macros[call.name]
@@ -589,7 +675,7 @@ class MacroTemplate:
             for index, arg in enumerate(call.args)
         )
         params = tuple(param for param, _ in args if param is not None)
-        return _Expansion(macro, call.line, args, params)
+        return _Expansion(macro, call.line, args, params, self.name, self.included_from)
 
     def _check(self, parts: Sequence[str | _Call]) -> None:
         """Refuse an unknown macro or a call it cannot take, where the file is read.
@@ -613,10 +699,18 @@ class MacroTemplate:
                     "Pass the default as an argument: 'nulls_last' or 'nulls_first'"
                 )
                 raise self._refuse(part.name, problem, part.line)
+            if part.name == INCLUDE:
+                self._check_include(part)
+                continue
             macro = self.macros.get(part.name)
             if macro is None:
                 raise UnknownMacroError(
-                    part.name, self.name, part.line, self.macros, self.namespace
+                    part.name,
+                    self.name,
+                    part.line,
+                    [*self.macros, INCLUDE],
+                    namespace=self.namespace,
+                    included_from=self.included_from,
                 )
             count = len(part.args)
             if not macro.minimum <= count <= macro.maximum:
@@ -630,6 +724,15 @@ class MacroTemplate:
                     )
                     raise self._refuse(macro.name, problem, part.line)
                 self._check(arg.parts)
+
+    def _check_include(self, call: _Call) -> None:
+        written = [self._written(arg.parts) for arg in call.args]
+        if len(written) != 1 or not _QUOTED_PATH.fullmatch(written[0]):
+            problem = (
+                "takes the path of a template as a string, such as "
+                f"'reports/ids.tpl.sql', got {', '.join(written)!r}"
+            )
+            raise self._refuse(INCLUDE, problem, call.line)
 
     def _render(self, parts: Sequence[str | _Expansion], ctx: Context) -> str:
         return "".join(
@@ -645,7 +748,7 @@ class MacroTemplate:
         missing = [name for name in call.params if name not in values]
         if missing and not macro.optional:
             problem = f"`:{missing[0]}` was not passed"
-            raise self._refuse(macro.name, problem, call.line)
+            raise call.refuse(problem, self.namespace)
         # An optional macro reads what was not passed as None, and so do the
         # calls inside its arguments: `if_set(:q, icontains(name, :q))`.
         values.update(dict.fromkeys(missing))
@@ -655,13 +758,20 @@ class MacroTemplate:
             if error.template:
                 raise
             # A macro's own refusal, said where the call is.
-            raise self._refuse(macro.name, error.problem, call.line) from None
+            raise call.refuse(error.problem, self.namespace) from None
         finally:
             for name in missing:
                 del values[name]
 
     def _refuse(self, macro: str, problem: str, line: int) -> MacroArgumentError:
-        return MacroArgumentError(macro, problem, self.name, line, self.namespace)
+        return MacroArgumentError(
+            macro,
+            problem,
+            self.name,
+            line,
+            namespace=self.namespace,
+            included_from=self.included_from,
+        )
 
     def _written(self, parts: Sequence[str | _Call]) -> str:
         return "".join(
@@ -687,6 +797,33 @@ class _Expansion:
     line: int
     args: tuple[tuple[str | None, tuple[str | _Expansion, ...] | None], ...]
     params: tuple[str, ...]
+    template: str
+    """The template the call is written in, which an include makes another."""
+    included_from: str
+
+    def refuse(self, problem: str, namespace: str) -> MacroArgumentError:
+        return MacroArgumentError(
+            self.macro.name,
+            problem,
+            self.template,
+            self.line,
+            namespace=namespace,
+            included_from=self.included_from,
+        )
+
+
+def _included_from(chain: Sequence[tuple[str, int]]) -> str:
+    """Return where a template was included from, as an error says it."""
+    if not chain:
+        return ""
+    calls = ", from ".join(f"{name}:{line}" for name, line in reversed(chain))
+    return f" (included from {calls})"
+
+
+def _without_semicolon(source: str) -> str:
+    """Return a query without the `;` that ends it, which a subquery cannot hold."""
+    stripped = source.rstrip()
+    return stripped[:-1] if stripped.endswith(";") else source
 
 
 def _arity(macro: Macro) -> str:
@@ -708,16 +845,19 @@ class MacroEngine:
         *,
         auto_reload: bool = False,
         namespace: str = NAMESPACE,
+        every_file: bool = False,
     ) -> None:
         self.paths = tuple(Path(path) for path in paths)
         self.macros = macros
         self.auto_reload = auto_reload
         self.namespace = namespace
+        self.every_file = every_file
+        """Whether a `.sql` file is a macro template too, and not only `.tpl.sql`."""
         self._loaded: dict[str, MacroTemplate] = {}
         # A string is read once too: the same few are written out again and again.
         self._from_string = lru_cache(maxsize=256)(
             lambda source: MacroTemplate(
-                "<string>", source, self.macros, namespace=namespace
+                "<string>", source, self.macros, namespace=namespace, load=self._read
             )
         )
 
@@ -752,20 +892,48 @@ class MacroEngine:
 
         """
         loaded = self._loaded.get(name)
-        if loaded is not None and not self.auto_reload:
+        if loaded is not None and not (self.auto_reload and self._changed(loaded)):
             return loaded
         path = self._find(name)
-        mtime = path.stat().st_mtime
-        if loaded is None or loaded.mtime != mtime:
-            loaded = MacroTemplate(
-                name,
-                path.read_text(encoding="utf-8"),
-                self.macros,
-                mtime,
-                self.namespace,
-            )
-            self._loaded[name] = loaded
+        loaded = MacroTemplate(
+            name,
+            path.read_text(encoding="utf-8"),
+            self.macros,
+            path.stat().st_mtime,
+            self.namespace,
+            load=self._read,
+        )
+        self._loaded[name] = loaded
         return loaded
+
+    def _changed(self, template: MacroTemplate) -> bool:
+        """Whether the file, or a file it includes, changed since it was read."""
+        files = {template.name: template.mtime, **template.includes}
+        try:
+            return any(
+                self._find(name).stat().st_mtime != mtime
+                for name, mtime in files.items()
+            )
+        except TemplateNotFoundError:
+            return True
+
+    def _read(self, name: str) -> tuple[str, float]:
+        """Return an included template's source, and when it changed.
+
+        Raises:
+            MacroArgumentError: if it is not under the paths, or is a Jinja one.
+
+        """
+        if not (self.every_file or name.endswith(SUFFIX)):
+            problem = (
+                f"`{name}` is a Jinja template, and only a `{SUFFIX}` one is included"
+            )
+            raise MacroArgumentError(INCLUDE, problem)
+        try:
+            path = self._find(name)
+        except TemplateNotFoundError as error:
+            raise MacroArgumentError(INCLUDE, str(error).rstrip(".")) from None
+        return path.read_text(encoding="utf-8"), path.stat().st_mtime
 
     def _find(self, name: str) -> Path:
         pieces = name.split("/")
@@ -802,7 +970,7 @@ def registered(macros: Iterable[Macro]) -> dict[str, Macro]:
                 getattr(macro, "__name__", repr(macro)),
                 "it is not decorated @sql_macro",
             )
-        if macro.name in by_name:
+        if macro.name in by_name or macro.name == INCLUDE:
             raise MacroDefinitionError(macro.name, "another macro has that name")
         by_name[macro.name] = macro
     return by_name
@@ -933,7 +1101,7 @@ def icontains(
     if ctx.dialect == "snowflake":
         return f"CONTAINS(COLLATE({column}, {collation}), {text})"
     escaped = str(text.value).replace("!", "!!").replace("%", "!%").replace("_", "!_")
-    pattern = ctx.bind(f"%{escaped}%")
+    pattern = ctx.bind(f"%{escaped}%", _named(text, "like"))
     if ctx.dialect == "postgresql":
         return f"{column} ILIKE {pattern} ESCAPE '!'"
     return f"lower({column}) LIKE lower({pattern}) ESCAPE '!'"
@@ -989,7 +1157,7 @@ def each(ctx: Context, values: Param) -> str:
     if not items:
         problem = f"`:{values.name}` is empty, and `IN ()` is not SQL"
         raise MacroArgumentError(each.name, problem)
-    return ", ".join(ctx.bind(item) for item in items)
+    return ", ".join(ctx.bind(item, _named(values)) for item in items)
 
 
 BUILTIN_MACROS: Mapping[str, Macro] = {
@@ -1071,7 +1239,7 @@ class JinjaEngine:
         """
         jinja2sql = _required(Jinja2SQL, "jinja2sql", "SQL templates", "sqlakit[sql]")
         environment = jinja2.Environment(
-            loader=jinja2.FileSystemLoader([str(path) for path in self.paths]),
+            loader=_jinja_loader([str(path) for path in self.paths]),
             auto_reload=self.auto_reload,
             autoescape=True,
         )
@@ -1097,7 +1265,9 @@ class JinjaEngine:
         token = _preparer.set(preparer)
         try:
             sql, params = self.renderer.from_file(name, context=context)
-        except jinja2.TemplateNotFound:
+        except jinja2.TemplateNotFound as error:
+            if error.name != name:
+                raise  # what the template includes, said as Jinja says it
             raise TemplateNotFoundError(name, self.paths) from None
         finally:
             _preparer.reset(token)
@@ -1209,6 +1379,7 @@ class Templates:
             self.macros,
             auto_reload=self.auto_reload,
             namespace=self.namespace,
+            every_file=self.engine == "tpl",
         )
 
     @cached_property
@@ -1377,6 +1548,29 @@ class BaseSQLQuery(Generic[RowT, DatabaseT]):
         if size is None:
             return self.statement
         return self.statement.execution_options(yield_per=size)
+
+
+def _jinja_loader(paths: list[str]) -> jinja2.BaseLoader:
+    """Return a loader of the Jinja templates under the paths, and of no others.
+
+    `{% include %}` of a `.tpl.sql` file would put its `tpl.` calls in the SQL
+    unexpanded, so it is refused.
+    """
+
+    class Loader(jinja2.FileSystemLoader):
+        def get_source(
+            self, environment: jinja2.Environment, template: str
+        ) -> tuple[str, str, Callable[[], bool]]:
+            if template.endswith(SUFFIX):
+                message = (
+                    f"`{template}` is a macro template, which Jinja cannot include: "
+                    f"turn this one into a `{SUFFIX}` template, and include it with "
+                    f"`tpl.include('{template}')`"
+                )
+                raise jinja2.TemplateNotFound(template, message)
+            return super().get_source(environment, template)
+
+    return Loader(paths)
 
 
 def _identifier(value: Any) -> Markup:  # noqa: ANN401
