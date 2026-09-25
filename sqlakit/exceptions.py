@@ -19,6 +19,9 @@ __all__ = [
     "InvalidDatabaseConfigError",
     "InvalidNullsError",
     "InvalidOrderFieldError",
+    "MacroArgumentError",
+    "MacroDefinitionError",
+    "MacroSyntaxError",
     "MissingConnectionError",
     "MissingDatabaseUrlError",
     "MissingDefaultDatabaseError",
@@ -37,6 +40,7 @@ __all__ = [
     "UnknownDatabaseError",
     "UnknownFieldError",
     "UnknownImportPathError",
+    "UnknownMacroError",
     "UnorderedPageError",
     "UnregisteredDatabaseError",
 ]
@@ -360,6 +364,54 @@ class StrayParameterError(SQLAKitError, ValueError):
             f"inside a JSON document or a string that starts with one, is "
             f"written `\\:`."
         )
+
+
+class MacroSyntaxError(SQLAKitError, ValueError):
+    """Raised when a `.tpl.sql` template cannot be cut into text and macro calls."""
+
+    def __init__(self, template: str = "", line: int = 0, problem: str = "") -> None:
+        self.template = template
+        self.line = line
+        super().__init__(f"{template}:{line}: {problem}.")
+
+
+class UnknownMacroError(SQLAKitError, ValueError):
+    """Raised when a template calls a `tpl.` macro that nobody registered."""
+
+    def __init__(
+        self,
+        name: str = "",
+        template: str = "",
+        line: int = 0,
+        available: Iterable[str] = (),
+    ) -> None:
+        self.name = name
+        self.template = template
+        self.line = line
+        super().__init__(
+            f"Unknown macro tpl.{name} in {template}:{line}; available: "
+            f"{', '.join(sorted(available)) or 'none'}. Register one with "
+            f"`Templates(..., macros=[...])`."
+        )
+
+
+class MacroArgumentError(SQLAKitError, ValueError):
+    """Raised when a `tpl.` call has arguments its macro cannot take."""
+
+    def __init__(
+        self, name: str = "", problem: str = "", template: str = "", line: int = 0
+    ) -> None:
+        self.name = name
+        where = f" in {template}:{line}" if template else ""
+        super().__init__(f"tpl.{name}: {problem}{where}.")
+
+
+class MacroDefinitionError(SQLAKitError, TypeError):
+    """Raised when a function cannot be a macro as written."""
+
+    def __init__(self, name: str = "", problem: str = "") -> None:
+        self.name = name
+        super().__init__(f"`{name}` cannot be a macro: {problem}.")
 
 
 class RawStatementError(SQLAKitError, TypeError):

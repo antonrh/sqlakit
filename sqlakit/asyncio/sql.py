@@ -8,9 +8,13 @@ from typing_extensions import Unpack
 from sqlakit._query import merged
 from sqlakit._sql import (
     BaseSQLQuery,
+    Context,
     Filter,
+    Param,
+    Sql,
     Templates,
     require_pydantic,
+    sql_macro,
     templates_of,
 )
 
@@ -25,7 +29,17 @@ if TYPE_CHECKING:
 
     from ._db import Database
 
-__all__ = ["SQL", "Filter", "SQLQuery", "SQLRows", "Templates"]
+__all__ = [
+    "SQL",
+    "Context",
+    "Filter",
+    "Param",
+    "SQLQuery",
+    "SQLRows",
+    "Sql",
+    "Templates",
+    "sql_macro",
+]
 
 RowT = TypeVar("RowT")
 OtherT = TypeVar("OtherT")

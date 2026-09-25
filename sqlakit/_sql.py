@@ -1,26 +1,44 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+import inspect
+import re
+from collections.abc import Mapping, Sized
 from contextvars import ContextVar
-from dataclasses import is_dataclass
+from dataclasses import dataclass, is_dataclass
 from functools import cache, cached_property
 from inspect import iscoroutinefunction
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast, get_origin, is_typeddict
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    Literal,
+    TypeVar,
+    cast,
+    get_origin,
+    get_type_hints,
+    is_typeddict,
+)
 
 import sqlalchemy as sa
 from markupsafe import Markup
 
+from ._query import _field_named, _parse_sort_field
 from .exceptions import (
     AsyncFilterError,
+    MacroArgumentError,
+    MacroDefinitionError,
+    MacroSyntaxError,
     MissingDependencyError,
     SQLNotConfiguredError,
     StrayParameterError,
     TemplateNotFoundError,
+    UnknownMacroError,
+    UnknownOrderFieldError,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
 
     import jinja2
     from jinja2sql import Jinja2SQL
@@ -43,10 +61,19 @@ else:
         BaseModel = TypeAdapter = None
 
 __all__ = [
+    "BUILTIN_MACROS",
     "BaseSQLQuery",
+    "Context",
     "Filter",
+    "JinjaEngine",
+    "Macro",
+    "MacroEngine",
+    "Param",
+    "Sql",
     "Templates",
     "require_pydantic",
+    "signature_of",
+    "sql_macro",
     "templates_of",
 ]
 
@@ -61,6 +88,606 @@ QueryT = TypeVar("QueryT", bound="BaseSQLQuery[Any, Any]")
 
 PathLike = str | Path
 """Where templates are looked for: one directory, or several."""
+
+
+# Templates that stay SQL: `tpl.` macros in place of Jinja.
+#
+# A `.tpl.sql` file is SQL in the production dialect, with `:name` parameters.
+# What changes per call is a `tpl.<macro>(...)` call, which every SQL tool reads
+# as a function of a schema named `tpl`. A file is cut into text and calls once,
+# when it is first read; rendering joins the pieces and calls the macros.
+
+SUFFIX = ".tpl.sql"
+"""The extension that picks macros over Jinja."""
+
+_CALL = re.compile(r"tpl\.([A-Za-z_]\w*)\s*\(", re.IGNORECASE)
+_PARAMETER = re.compile(r"\s*:([A-Za-z_]\w*)\s*")
+_IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+_SORT_FIELD = re.compile(r"[^.]+(\.(asc|desc)(\.nulls_(first|last))?)?", re.IGNORECASE)
+
+
+class Param:
+    """An argument written as `:name`: its name, and the value the call passed.
+
+    `str(param)` is the placeholder, so a macro puts the parameter back into the
+    SQL as it was written and it is bound like any other.
+    """
+
+    __slots__ = ("name", "value")
+
+    def __init__(self, name: str, value: Any) -> None:  # noqa: ANN401
+        self.name = name
+        self.value = value
+
+    def __str__(self) -> str:
+        return f":{self.name}"
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.name!r}, {self.value!r})"
+
+
+class Sql(str):
+    """An argument as SQL text, with the macros inside it already expanded."""
+
+    __slots__ = ()
+
+
+class Context:
+    """What a macro knows about the call beyond its arguments.
+
+    ``dialect`` is the name of the database's dialect, such as `postgresql` or
+    `snowflake`. `bind` adds a value of the macro's own to the statement.
+    """
+
+    def __init__(
+        self,
+        dialect: str,
+        preparer: Any,  # noqa: ANN401 - SQLAlchemy's IdentifierPreparer
+        values: Mapping[str, Any],
+    ) -> None:
+        self.dialect = dialect
+        self.preparer = preparer
+        self.values: dict[str, Any] = dict(values)
+        self._bound = 0
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.dialect!r})"
+
+    def bind(self, value: Any) -> str:  # noqa: ANN401
+        """Bind a value, and return the placeholder to write in its place."""
+        self._bound += 1
+        name = f"__p{self._bound}"
+        self.values[name] = value
+        return f":{name}"
+
+    def quote(self, name: str) -> str:
+        """Return an identifier quoted the way this database quotes one."""
+        return self.preparer.quote(name)
+
+
+@dataclass(frozen=True, slots=True)
+class _Slot:
+    """One parameter of a macro, as a call fills it."""
+
+    name: str
+    kind: type[Param | Sql]
+    default: Any = inspect.Parameter.empty
+
+    @property
+    def required(self) -> bool:
+        return self.default is inspect.Parameter.empty
+
+
+class Macro:
+    """A function that `tpl.<name>(...)` calls, made by `sql_macro`.
+
+    It stays callable as the function it wraps.
+    """
+
+    def __init__(self, func: Callable[..., str], name: str | None = None) -> None:
+        self.func = func
+        self.name = (name or getattr(func, "__name__", "")).lower()
+        self.doc = inspect.getdoc(func) or ""
+        self.context, self.slots, self.variadic = _slots_of(func, self.name)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.name!r})"
+
+    def __call__(self, *args: Any) -> str:  # noqa: ANN401
+        return self.func(*args)
+
+    @property
+    def minimum(self) -> int:
+        return sum(slot.required for slot in self.slots)
+
+    @property
+    def maximum(self) -> float:
+        return float("inf") if self.variadic else len(self.slots)
+
+    def kind_at(self, index: int) -> type[Param | Sql]:
+        if index < len(self.slots):
+            return self.slots[index].kind
+        assert self.variadic is not None  # noqa: S101 - the count was checked
+        return self.variadic.kind
+
+
+def sql_macro(
+    func: Callable[..., str] | None = None, /, *, name: str | None = None
+) -> Any:  # noqa: ANN401
+    """Make a function a macro that `.tpl.sql` templates call as `tpl.<name>(...)`.
+
+    ```python
+    @sql_macro
+    def for_accounts(vendor_ids: Param, subaccount_ids: Param) -> str:
+        return f"(vendor_id IN {vendor_ids} OR subaccount_id IN {subaccount_ids})"
+    ```
+
+    The annotations say what each argument is: a `Param` is written `:name` and
+    brings its value, a `Sql` is the argument's text, and a `Context` first
+    brings the dialect and a way to bind values of the macro's own.
+
+    Raises:
+        MacroDefinitionError: if a parameter is annotated as none of them.
+
+    """
+    if func is None:
+        return lambda func: Macro(func, name)
+    return Macro(func, name)
+
+
+def _slots_of(
+    func: Callable[..., Any], name: str
+) -> tuple[bool, tuple[_Slot, ...], _Slot | None]:
+    """Return whether a macro takes the context, its slots, and its `*args`."""
+    hints = get_type_hints(func)
+    context = False
+    slots: list[_Slot] = []
+    variadic = None
+    for index, parameter in enumerate(inspect.signature(func).parameters.values()):
+        kind = hints.get(parameter.name)
+        if kind is Context and index == 0:
+            context = True
+            continue
+        if kind not in (Param, Sql):
+            raise MacroDefinitionError(
+                name,
+                f"`{parameter.name}` is annotated `{kind}`: annotate it `Param`, "
+                f"`Sql`, or `Context` as the first parameter",
+            )
+        if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
+            variadic = _Slot(parameter.name, kind)
+        elif parameter.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            if kind is Param and parameter.default is not inspect.Parameter.empty:
+                raise MacroDefinitionError(
+                    name, f"`{parameter.name}` is a `Param` with a default"
+                )
+            slots.append(_Slot(parameter.name, kind, parameter.default))
+        else:
+            raise MacroDefinitionError(
+                name, f"`{parameter.name}` is keyword-only, and calls in SQL are not"
+            )
+    return context, tuple(slots), variadic
+
+
+def signature_of(macro: Macro) -> str:
+    """Return how a template calls a macro: `tpl.if_set(:p, expr[, otherwise])`."""
+    written = ""
+    for index, slot in enumerate(macro.slots):
+        shown = f":{slot.name}" if slot.kind is Param else slot.name
+        separator = ", " if index else ""
+        written += f"{separator}{shown}" if slot.required else f"[{separator}{shown}]"
+    if macro.variadic is not None:
+        separator = ", " if macro.slots else ""
+        shown = macro.variadic.name
+        written += f"{separator}*{':' if macro.variadic.kind is Param else ''}{shown}"
+    return f"tpl.{macro.name}({written})"
+
+
+# The template, cut into text and calls.
+
+
+@dataclass(frozen=True, slots=True)
+class _Arg:
+    parts: tuple[str | _Call, ...]
+    param: str | None
+    """The name, when the argument is `:name` and nothing else."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Call:
+    name: str
+    args: tuple[_Arg, ...]
+    line: int
+
+
+class _Scanner:
+    """Cut a template into text and `tpl.` calls, past strings and comments."""
+
+    def __init__(self, source: str, template: str) -> None:
+        self.source = source
+        self.template = template
+
+    def parts(self) -> tuple[str | _Call, ...]:
+        return self._scan(0, in_args=False)[0]
+
+    def _scan(
+        self, start: int, *, in_args: bool
+    ) -> tuple[tuple[str | _Call, ...], int, str | None]:
+        """Read up to the end, or to the `,` or `)` that ends an argument."""
+        source = self.source
+        parts: list[str | _Call] = []
+        text_from = index = start
+        depth = 0
+        while index < len(source):
+            char = source[index]
+            if char in "'\"":
+                index = self._past_quoted(index, char)
+            elif source.startswith("--", index):
+                newline = source.find("\n", index)
+                index = len(source) if newline < 0 else newline
+            elif source.startswith("/*", index):
+                end = source.find("*/", index + 2)
+                if end < 0:
+                    problem = "a comment is never closed"
+                    raise self._error(problem, index)
+                index = end + 2
+            elif (call := _CALL.match(source, index)) and not self._inside_name(index):
+                parts.append(source[text_from:index])
+                args, index = self._args(call.end())
+                parts.append(
+                    _Call(call.group(1).lower(), args, self._line(call.start()))
+                )
+                text_from = index
+            elif in_args and char == "(":
+                depth += 1
+                index += 1
+            elif in_args and char == ")" and depth:
+                depth -= 1
+                index += 1
+            elif in_args and (char == ")" or (char == "," and not depth)):
+                parts.append(source[text_from:index])
+                return _joined(parts), index, char
+            else:
+                index += 1
+        parts.append(source[text_from:])
+        return _joined(parts), index, None
+
+    def _args(self, start: int) -> tuple[tuple[_Arg, ...], int]:
+        """Read a call's arguments, and return where the call ends."""
+        args = []
+        index = start
+        while True:
+            parts, index, closer = self._scan(index, in_args=True)
+            if closer is None:
+                problem = "a `tpl.` call is never closed"
+                raise self._error(problem, start - 1)
+            args.append(_argument(parts))
+            index += 1
+            if closer == ")":
+                break
+        if len(args) == 1 and args[0].parts == ():
+            args = []
+        return tuple(args), index
+
+    def _past_quoted(self, start: int, quote: str) -> int:
+        """Return where a string or a quoted name ends; a doubled quote is inside it."""
+        index = start + 1
+        while True:
+            index = self.source.find(quote, index)
+            if index < 0:
+                problem = "a quoted string is never closed"
+                raise self._error(problem, start)
+            if self.source.startswith(quote * 2, index):
+                index += 2
+                continue
+            return index + 1
+
+    def _inside_name(self, index: int) -> bool:
+        """Whether `tpl.` here is the tail of a longer name, as in `x.tpl.f(`."""
+        before = self.source[index - 1] if index else ""
+        return before == "." or before.isalnum() or before == "_"
+
+    def _line(self, index: int) -> int:
+        return self.source.count("\n", 0, index) + 1
+
+    def _error(self, problem: str, index: int) -> MacroSyntaxError:
+        return MacroSyntaxError(self.template, self._line(index), problem)
+
+
+def _joined(parts: list[str | _Call]) -> tuple[str | _Call, ...]:
+    return tuple(part for part in parts if part != "")
+
+
+def _argument(parts: tuple[str | _Call, ...]) -> _Arg:
+    """Return an argument, trimmed, and whether it is a parameter alone."""
+    trimmed = list(parts)
+    if trimmed and isinstance(trimmed[0], str):
+        trimmed[0] = trimmed[0].lstrip()
+    if trimmed and isinstance(trimmed[-1], str):
+        trimmed[-1] = trimmed[-1].rstrip()
+    trimmed_parts = _joined(trimmed)
+    param = None
+    if len(trimmed_parts) == 1 and isinstance(trimmed_parts[0], str):
+        match = _PARAMETER.fullmatch(trimmed_parts[0])
+        param = match.group(1) if match else None
+    return _Arg(trimmed_parts, param)
+
+
+# Loading and rendering.
+
+
+class MacroTemplate:
+    """A `.tpl.sql` file, read and checked against the macros it calls."""
+
+    def __init__(
+        self, name: str, source: str, macros: Mapping[str, Macro], mtime: float = 0
+    ) -> None:
+        self.name = name
+        self.mtime = mtime
+        self.macros = macros
+        self.parts = _Scanner(source, name).parts()
+        self._check(self.parts)
+
+    def render(self, ctx: Context) -> str:
+        """Return the SQL for this call, the values it bound going to ``ctx``."""
+        return self._render(self.parts, ctx)
+
+    def _check(self, parts: Sequence[str | _Call]) -> None:
+        """Refuse an unknown macro or a call it cannot take, where the file is read.
+
+        Raises:
+            UnknownMacroError: naming the macro and what there is.
+            MacroArgumentError: if a call has the wrong arguments.
+
+        """
+        for part in parts:
+            if isinstance(part, str):
+                continue
+            macro = self.macros.get(part.name)
+            if macro is None:
+                raise UnknownMacroError(part.name, self.name, part.line, self.macros)
+            count = len(part.args)
+            if not macro.minimum <= count <= macro.maximum:
+                raise MacroArgumentError(
+                    macro.name,
+                    f"takes {_arity(macro)} arguments, got {count}",
+                    self.name,
+                    part.line,
+                )
+            for index, arg in enumerate(part.args):
+                if macro.kind_at(index) is Param and arg.param is None:
+                    written = _written(arg.parts)
+                    raise MacroArgumentError(
+                        macro.name,
+                        f"argument {index + 1} must be a :parameter, got {written!r}",
+                        self.name,
+                        part.line,
+                    )
+                self._check(arg.parts)
+
+    def _render(self, parts: Sequence[str | _Call], ctx: Context) -> str:
+        return "".join(
+            part if isinstance(part, str) else self._expand(part, ctx) for part in parts
+        )
+
+    def _expand(self, call: _Call, ctx: Context) -> str:
+        macro = self.macros[call.name]
+        args: list[Any] = [ctx] if macro.context else []
+        for index, arg in enumerate(call.args):
+            if macro.kind_at(index) is Param:
+                assert arg.param is not None  # noqa: S101 - checked on load
+                if arg.param not in ctx.values:
+                    raise MacroArgumentError(
+                        macro.name,
+                        f"`:{arg.param}` was not passed",
+                        self.name,
+                        call.line,
+                    )
+                args.append(Param(arg.param, ctx.values[arg.param]))
+            else:
+                args.append(Sql(self._render(arg.parts, ctx)))
+        return macro(*args)
+
+
+def _arity(macro: Macro) -> str:
+    """Return how many arguments a macro takes, as a message says it."""
+    if macro.variadic:
+        return f"at least {macro.minimum}"
+    if macro.minimum == macro.maximum:
+        return str(macro.minimum)
+    return f"{macro.minimum} to {int(macro.maximum)}"
+
+
+def _written(parts: Sequence[str | _Call]) -> str:
+    return "".join(
+        part if isinstance(part, str) else f"tpl.{part.name}(...)" for part in parts
+    )
+
+
+class MacroEngine:
+    """Renders templates with `tpl.` macros, each file read once and kept."""
+
+    def __init__(
+        self,
+        paths: Sequence[Path | str],
+        macros: Mapping[str, Macro],
+        *,
+        auto_reload: bool = False,
+    ) -> None:
+        self.paths = tuple(Path(path) for path in paths)
+        self.macros = macros
+        self.auto_reload = auto_reload
+        self._loaded: dict[str, MacroTemplate] = {}
+
+    def render_file(
+        self,
+        name: str,
+        context: Mapping[str, Any],
+        preparer: Any,  # noqa: ANN401
+    ) -> tuple[str, Mapping[str, Any]]:
+        """Return the SQL of a template file, and the values to bind to it."""
+        return _rendered(self.get(name), context, preparer)
+
+    def render_string(
+        self,
+        source: str,
+        context: Mapping[str, Any],
+        preparer: Any,  # noqa: ANN401
+    ) -> tuple[str, Mapping[str, Any]]:
+        """Return the SQL of a template written out, and the values to bind to it."""
+        return _rendered(
+            MacroTemplate("<string>", source, self.macros), context, preparer
+        )
+
+    def check(self, names: Iterable[str]) -> None:
+        """Read these templates, which checks every call in them."""
+        for name in names:
+            self.get(name)
+
+    def get(self, name: str) -> MacroTemplate:
+        """Return a template by its name under the paths.
+
+        Raises:
+            TemplateNotFoundError: if no path holds it.
+
+        """
+        loaded = self._loaded.get(name)
+        if loaded is not None and not self.auto_reload:
+            return loaded
+        path = self._find(name)
+        mtime = path.stat().st_mtime
+        if loaded is None or loaded.mtime != mtime:
+            loaded = MacroTemplate(
+                name, path.read_text(encoding="utf-8"), self.macros, mtime
+            )
+            self._loaded[name] = loaded
+        return loaded
+
+    def _find(self, name: str) -> Path:
+        pieces = name.split("/")
+        if ".." in pieces or name.startswith("/"):
+            raise TemplateNotFoundError(name, self.paths)
+        for root in self.paths:
+            path = root.joinpath(*pieces)
+            if path.is_file():
+                return path
+        raise TemplateNotFoundError(name, self.paths)
+
+
+def _rendered(
+    template: MacroTemplate,
+    context: Mapping[str, Any],
+    preparer: Any,  # noqa: ANN401
+) -> tuple[str, Mapping[str, Any]]:
+    dialect = getattr(getattr(preparer, "dialect", None), "name", "")
+    ctx = Context(dialect, preparer, context)
+    return template.render(ctx), ctx.values
+
+
+def registered(macros: Iterable[Macro]) -> dict[str, Macro]:
+    """Return the built-in macros and these, by name.
+
+    Raises:
+        MacroDefinitionError: if two macros share a name.
+
+    """
+    by_name = dict(BUILTIN_MACROS)
+    for macro in macros:
+        if not isinstance(macro, Macro):
+            raise MacroDefinitionError(
+                getattr(macro, "__name__", repr(macro)),
+                "it is not decorated @sql_macro",
+            )
+        if macro.name in by_name:
+            raise MacroDefinitionError(macro.name, "another macro has that name")
+        by_name[macro.name] = macro
+    return by_name
+
+
+# The built-in macros.
+
+
+@sql_macro
+def if_set(value: Param, expr: Sql, otherwise: Sql = Sql("TRUE")) -> str:  # noqa: B008
+    """`expr` when the parameter holds a value, `otherwise` when it does not.
+
+    `None`, an empty string, an empty list and `False` hold none. `otherwise` is
+    `TRUE`, which leaves a `WHERE` or an `AND` as though the condition were not
+    there.
+    """
+    return expr if _is_set(value.value) else otherwise
+
+
+def _is_set(value: Any) -> bool:  # noqa: ANN401
+    """Whether a value is there: not None, not False, and not empty. `0` is there."""
+    if value is None or value is False:
+        return False
+    return not isinstance(value, Sized) or len(value) > 0
+
+
+@sql_macro
+def sort_by(ctx: Context, order_by: Param, *allowed: Sql) -> str:
+    """`ORDER BY` terms from sort strings: `name`, `name.desc`, `name.desc.nulls_last`.
+
+    One string or a list of them. With the columns it may sort by listed after
+    the parameter, a name that is not one of them is refused; without them, any
+    plain name is quoted as an identifier. `(SELECT NULL)`, which orders by
+    nothing, when there is nothing to sort by: PostgreSQL refuses a bare `NULL`.
+    """
+    requested = order_by.value
+    if not requested:
+        return _NO_ORDER
+    fields = [requested] if isinstance(requested, str) else list(requested)
+    columns = {_last_name(column): column for column in allowed}
+    terms = []
+    for field in fields:
+        if not _SORT_FIELD.fullmatch(str(field)):
+            raise UnknownOrderFieldError(str(field), columns)
+        name, descending, nulls = _parse_sort_field(str(field))
+        if columns:
+            column = columns[_field_named(name, columns)]
+        elif _IDENTIFIER.fullmatch(name):
+            column = ctx.quote(name)
+        else:
+            raise UnknownOrderFieldError(name)
+        term = f"{column} {'DESC' if descending else 'ASC'}"
+        if nulls:
+            term += " NULLS FIRST" if nulls == "nulls_first" else " NULLS LAST"
+        terms.append(term)
+    return ", ".join(terms) or _NO_ORDER
+
+
+_NO_ORDER = "(SELECT NULL)"
+
+
+def _last_name(column: str) -> str:
+    """Return the name a column is asked for by: `u.name` is `name`."""
+    return column.strip().rsplit(".", 1)[-1].strip('"`[]')
+
+
+@sql_macro
+def ci_contains(ctx: Context, column: Sql, text: Param) -> str:
+    """Whether a column holds the text anywhere, regardless of case.
+
+    `ILIKE` on PostgreSQL, `CONTAINS(COLLATE(...))` on Snowflake, and `lower()`
+    on both sides with `LIKE` elsewhere. `%` and `_` in the text match only
+    themselves.
+    """
+    if ctx.dialect == "snowflake":
+        return f"CONTAINS(COLLATE({column}, 'en-ci'), {text})"
+    escaped = str(text.value).replace("!", "!!").replace("%", "!%").replace("_", "!_")
+    pattern = ctx.bind(f"%{escaped}%")
+    if ctx.dialect == "postgresql":
+        return f"{column} ILIKE {pattern} ESCAPE '!'"
+    return f"lower({column}) LIKE lower({pattern}) ESCAPE '!'"
+
+
+BUILTIN_MACROS: Mapping[str, Macro] = {
+    macro.name: macro for macro in (if_set, sort_by, ci_contains)
+}
 
 
 class Filter:
@@ -95,47 +722,24 @@ class Filter:
         return f"{type(self).__name__}({self.func!r}, bind={self.bind})"
 
 
-class Templates:
-    """The directory a database's SQL templates live in, and how they render.
+class JinjaEngine:
+    """Renders Jinja templates through jinja2sql.
 
-    A path is enough; the object is for the rest:
-
-    ```python
-    db = Database(DB_URL, templates=Templates("app/sql", auto_reload=DEBUG))
-    ```
-
-    ``auto_reload`` reads a template again when its file changes, which a
-    development server wants and a production one does not. ``filters`` and
-    ``globals`` are handed to the Jinja environment, and are refused if they have
-    to be awaited: rendering makes a string, in both APIs.
-
-    A filter is a plain function, whose return value is bound as one more value
-    of the statement. `Filter(func, bind=True)` registers one that writes SQL of
-    its own instead, and is handed a binder for the values inside it.
+    Everything Jinja lives here, so that moving off it is deleting this class.
     """
 
     def __init__(
         self,
-        path: PathLike | Sequence[PathLike] = (),
+        paths: Sequence[PathLike],
         *,
-        auto_reload: bool = False,
-        filters: Mapping[str, Callable[..., Any] | Filter] | None = None,
-        globals: Mapping[str, Any] | None = None,  # noqa: A002
+        auto_reload: bool,
+        filters: Mapping[str, Callable[..., Any] | Filter],
+        globals: Mapping[str, Any],  # noqa: A002
     ) -> None:
-        self.paths = (
-            (path,) if isinstance(path, str | Path) else tuple(path)  # type: ignore[misc]
-        )
+        self.paths = paths
         self.auto_reload = auto_reload
-        self.filters = dict(filters or {})
-        self.globals = dict(globals or {})
-        for name, value in (*self.filters.items(), *self.globals.items()):
-            called = value.func if isinstance(value, Filter) else value
-            if iscoroutinefunction(called):
-                raise AsyncFilterError(name)
-
-    def __repr__(self) -> str:
-        paths = ", ".join(str(path) for path in self.paths)
-        return f"{type(self).__name__}({paths!r})"
+        self.filters = filters
+        self.globals = globals
 
     @cached_property
     def renderer(self) -> Jinja2SQL:
@@ -163,6 +767,136 @@ class Templates:
                 renderer.register_filter(name, filter_)
         return renderer
 
+    def render_file(
+        self,
+        name: str,
+        context: Mapping[str, Any],
+        preparer: Any,  # noqa: ANN401
+    ) -> tuple[str, Mapping[str, Any]]:
+        """Return the SQL of a template file, and the values to bind to it."""
+        token = _preparer.set(preparer)
+        try:
+            sql, params = self.renderer.from_file(name, context=context)
+        except jinja2.TemplateNotFound:
+            raise TemplateNotFoundError(name, self.paths) from None
+        finally:
+            _preparer.reset(token)
+        # Named parameters come back as a mapping, positional ones as a sequence.
+        return sql, cast("Mapping[str, Any]", params)
+
+    def render_string(
+        self,
+        source: str,
+        context: Mapping[str, Any],
+        preparer: Any,  # noqa: ANN401
+    ) -> tuple[str, Mapping[str, Any]]:
+        """Return the SQL of a template written out, and the values to bind to it."""
+        token = _preparer.set(preparer)
+        try:
+            sql, params = self.renderer.from_string(source, context=context)
+        finally:
+            _preparer.reset(token)
+        return sql, cast("Mapping[str, Any]", params)
+
+    def check(self, names: Iterable[str]) -> None:
+        """Compile these templates.
+
+        Raises:
+            jinja2.TemplateSyntaxError: naming the file and the line.
+
+        """
+        environment = self.renderer.env
+        for name in names:
+            environment.get_template(name)
+
+
+class Templates:
+    """The directory a database's SQL templates live in, and how they render.
+
+    A path is enough; the object is for the rest:
+
+    ```python
+    db = Database(DB_URL, templates=Templates("app/sql", auto_reload=DEBUG))
+    ```
+
+    ``auto_reload`` reads a template again when its file changes, which a
+    development server wants and a production one does not. ``filters`` and
+    ``globals`` are handed to the Jinja environment, and are refused if they have
+    to be awaited: rendering makes a string, in both APIs.
+
+    A filter is a plain function, whose return value is bound as one more value
+    of the statement. `Filter(func, bind=True)` registers one that writes SQL of
+    its own instead, and is handed a binder for the values inside it.
+
+    A file named `*.tpl.sql` is not Jinja: it is SQL with `:name` parameters and
+    `tpl.<macro>(...)` calls. ``macros`` are the ones an application adds to the
+    built-in `if_set`, `sort_by` and `ci_contains`:
+
+    ```python
+    Templates("app/sql", macros=[for_accounts])
+    ```
+
+    ``engine`` says what renders everything else, a `.sql` file and
+    `db.sql.from_string(...)`: `jinja`, or `tpl` once no template needs Jinja,
+    which then is never imported.
+    """
+
+    def __init__(  # noqa: PLR0913 - the options of one object
+        self,
+        path: PathLike | Sequence[PathLike] = (),
+        *,
+        auto_reload: bool = False,
+        filters: Mapping[str, Callable[..., Any] | Filter] | None = None,
+        globals: Mapping[str, Any] | None = None,  # noqa: A002
+        macros: Iterable[Macro] = (),
+        engine: Literal["jinja", "tpl"] = "jinja",
+    ) -> None:
+        self.paths = (
+            (path,) if isinstance(path, str | Path) else tuple(path)  # type: ignore[misc]
+        )
+        self.auto_reload = auto_reload
+        self.filters = dict(filters or {})
+        self.globals = dict(globals or {})
+        self.macros = registered(macros)
+        if engine not in ("jinja", "tpl"):
+            msg = f"`engine` is `jinja` or `tpl`, not {engine!r}"
+            raise ValueError(msg)
+        self.engine = engine
+        for name, value in (*self.filters.items(), *self.globals.items()):
+            called = value.func if isinstance(value, Filter) else value
+            if iscoroutinefunction(called):
+                raise AsyncFilterError(name)
+
+    def __repr__(self) -> str:
+        paths = ", ".join(str(path) for path in self.paths)
+        return f"{type(self).__name__}({paths!r})"
+
+    @cached_property
+    def macro_engine(self) -> MacroEngine:
+        """What renders templates with `tpl.` macros."""
+        return MacroEngine(self.paths, self.macros, auto_reload=self.auto_reload)
+
+    @cached_property
+    def jinja_engine(self) -> JinjaEngine:
+        """What renders Jinja templates."""
+        return JinjaEngine(
+            self.paths,
+            auto_reload=self.auto_reload,
+            filters=self.filters,
+            globals=self.globals,
+        )
+
+    @property
+    def renderer(self) -> Jinja2SQL:
+        """The Jinja environment behind the Jinja templates."""
+        return self.jinja_engine.renderer
+
+    def engine_for(self, name: str | None) -> MacroEngine | JinjaEngine:
+        """Return what renders a template file, or a string when ``name`` is None."""
+        if self.engine == "tpl" or (name is not None and name.endswith(SUFFIX)):
+            return self.macro_engine
+        return self.jinja_engine
+
     def render(
         self,
         source: str,
@@ -180,21 +914,20 @@ class Templates:
             TemplateNotFoundError: if no path holds that template.
 
         """
-        token = _preparer.set(preparer)
-        try:
-            if inline:
-                sql, params = self.renderer.from_string(source, context=context)
-            else:
-                if not self.paths:
-                    raise SQLNotConfiguredError
-                try:
-                    sql, params = self.renderer.from_file(source, context=context)
-                except jinja2.TemplateNotFound:
-                    raise TemplateNotFoundError(source, self.paths) from None
-        finally:
-            _preparer.reset(token)
-        # Named parameters come back as a mapping, positional ones as a sequence.
-        return sql, cast("Mapping[str, Any]", params)
+        if inline:
+            return self.engine_for(None).render_string(source, context, preparer)
+        if not self.paths:
+            raise SQLNotConfiguredError
+        return self.engine_for(source).render_file(source, context, preparer)
+
+    def names(self) -> list[str]:
+        """Return the name of every `.sql` file under the paths."""
+        found = {
+            path.relative_to(root).as_posix()
+            for root in map(Path, self.paths)
+            for path in root.rglob("*.sql")
+        }
+        return sorted(found)
 
     def check(self) -> None:
         """Compile every `.sql` template, so a broken one fails where deploys do.
@@ -203,13 +936,18 @@ class Templates:
             SQLNotConfiguredError: if there is nowhere to look, which makes checking
                 a lie rather than a pass.
             jinja2.TemplateSyntaxError: naming the file and the line.
+            MacroSyntaxError: if a macro template cannot be read.
+            UnknownMacroError: if it calls a macro nobody registered.
+            MacroArgumentError: if a call has arguments its macro cannot take.
 
         """
         if not self.paths:
             raise SQLNotConfiguredError
-        environment = self.renderer.env
-        for name in environment.list_templates(extensions=("sql",)):
-            environment.get_template(name)
+        by_engine: dict[MacroEngine | JinjaEngine, list[str]] = {}
+        for name in self.names():
+            by_engine.setdefault(self.engine_for(name), []).append(name)
+        for engine, names in by_engine.items():
+            engine.check(names)
 
 
 class BaseSQLQuery(Generic[RowT, DatabaseT]):
@@ -393,7 +1131,10 @@ def _statement(
     stray = named - set(params)
     if stray:
         raise StrayParameterError(sorted(stray), label)
-    return clause.bindparams(*(_bound(name, value) for name, value in params.items()))
+    # A macro template hands over its whole context, and binds what the SQL names.
+    return clause.bindparams(
+        *(_bound(name, value) for name, value in params.items() if name in named)
+    )
 
 
 def _bound(name: str, value: Any) -> sa.BindParameter[Any]:  # noqa: ANN401

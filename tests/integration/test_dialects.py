@@ -245,6 +245,40 @@ def test_a_template_knows_which_database_it_renders_for(
         assert said.first() == NAMES[dialect]
 
 
+@pytest.fixture
+def _macro_templates(db: Database, tmp_path: Path) -> None:
+    """Point the database at a `.tpl.sql` template written for this test."""
+    (tmp_path / "events").mkdir()
+    (tmp_path / "events" / "search.tpl.sql").write_text(
+        "SELECT name FROM events\n"
+        "WHERE id IN :ids AND tpl.if_set(:search, tpl.ci_contains(name, :search), 1 = 1)\n"
+        "ORDER BY tpl.sort_by(:order_by, id, name)"
+    )
+    db.templates = tmp_path
+
+
+@pytest.mark.usefixtures("_macro_templates")
+def test_a_macro_template_searches_and_sorts_on_this_dialect(db: Database) -> None:
+    with db.transaction():
+        for index, name in enumerate(["Apple", "maple", "a_b", "axb"], 1):
+            Event.query.get_one(index).name = name
+
+    with db.connect():
+
+        def names(**values: Any) -> list[str]:
+            query = db.sql("events/search.tpl.sql", ids=[1, 2, 3, 4], **values)
+            return list(query.scalars().all())
+
+        assert names(search="APL", order_by="id.desc") == ["maple"]
+        assert names(search="_", order_by="id") == ["a_b"]
+        assert names(search=None, order_by="id.desc") == [
+            "axb",
+            "a_b",
+            "maple",
+            "Apple",
+        ]
+
+
 # the asyncio twin
 
 
