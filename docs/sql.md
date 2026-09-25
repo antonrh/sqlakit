@@ -365,7 +365,8 @@ about it:
 
 A call in the `tpl` schema writes the SQL that depends on the call's values or
 on the database. These are built in, and `sqlakit macros` lists them with their
-docstrings:
+docstrings. `sqlakit macros app.sql.macros` adds the macros of a module, and
+`--markdown` prints the list as Markdown for your own docs:
 
 | macro | writes |
 | --- | --- |
@@ -479,6 +480,17 @@ Templates(BASE_DIR, macros=[owned_by, search])
 Templates(BASE_DIR, macros=["app.sql.macros"])
 ```
 
+A macro calls another as a template does, through `tpl`, with strings for SQL
+and values for parameters.
+
+`sql_macro` takes three options:
+
+| option | effect |
+| --- | --- |
+| `name="..."` | the name templates call, in place of the function's |
+| `optional=True` | a parameter the call didn't pass reads as `None`, the way `if_set` does |
+| `lazy=True` | a `Sql` argument expands only when the macro turns it into a string, so a macro that picks one branch never expands the others |
+
 ## Macros written in SQL
 
 A macro that is a piece of SQL needs no Python. Write it in a `.sql` file as a
@@ -521,10 +533,6 @@ The file is SQL a linter reads like a template, with each argument declared as
 a table, so it checks the references in the expression too. `check()`,
 `sqlakit check` and `sqlakit lsp` read it as well: an unknown macro in a body
 is reported on its line in the file.
-
-A macro calls another as a template does, through `tpl`, with strings for SQL
-and values for parameters. `@sql_macro(optional=True)` reads a parameter the
-call didn't pass as `None`, the way `if_set` does.
 
 ## Macros with their SQL in a file
 
@@ -632,7 +640,12 @@ The command line checks them without an application to start:
 ```console
 $ sqlakit check
 app/sql/users/search.sql:4:7: Unknown macro tpl.nope in users/search.sql:4; ...
+12 templates, 1 problems
 ```
+
+It exits with `1` when it finds a problem, so it fits CI and a pre-commit hook.
+`--format json` prints a list of `path`, `line`, `column` and `message` for a
+tool to read, and `--project app` checks the project around another directory.
 
 It reads your code rather than running it. The `Templates(...)` you build says
 where the templates are, which files hold SQL macros and the namespace, and a
@@ -647,15 +660,75 @@ in `pyproject.toml`:
 [tool.sqlakit.templates]
 paths = ["app/sql"]
 macros = ["app/sql/_macros.sql"]
+namespace = "tpl"
+dialect = "postgresql"
 ```
 
-`sqlakit lsp` serves the same checks to an editor as you type, with completion
-of macros and hover documentation. Go to definition opens a macro where it's
-written, and an included template. In your Python, the name in
-`db.sql("users/search.sql")`, `from_file` or `from_sql` completes, links to the
-file, and is marked when no template directory holds it. Register the server
-for `.sql` and `.py` files, next to the language servers you run for them. It
-needs `pip install "sqlakit[lsp]"`.
+| key | holds |
+| --- | --- |
+| `paths` | the template directories, from the file's directory |
+| `macros` | the files of [SQL macros](#macros-written-in-sql) outside those directories |
+| `namespace` | the schema name the calls are written under |
+| `dialect` | the dialect `sqlakit export` writes for, unless `--dialect` says another |
+
+Each key replaces what the reading found, and a key left out keeps it. Python
+macros are always found by their decorator. `sqlakit check`, `sqlakit lsp` and
+`sqlakit export` all read this table, and the application never does.
+
+## Editor support
+
+`sqlakit lsp` is a language server for your templates. Install the extra:
+
+```console
+$ pip install "sqlakit[lsp]"
+```
+
+In a `.sql` template it gives:
+
+- the problems `sqlakit check` finds, as you type
+- completion after `tpl.` and in `tpl.include('`
+- the macro's signature and docstring on hover
+- go to definition on a macro, to its function or its SQL, and on an included
+  template, to the file
+
+In your Python, the name in `db.sql("users/search.sql")`, `from_file` or
+`from_sql` completes, links to the file, and is marked when no template
+directory holds it.
+
+The server talks over stdio. Register `sqlakit lsp` for `.sql` and `.py` files,
+next to the language servers you already run for them. In Neovim 0.11:
+
+```lua
+vim.lsp.config("sqlakit", {
+  cmd = { "sqlakit", "lsp" },
+  filetypes = { "sql", "python" },
+  root_markers = { "pyproject.toml" },
+})
+vim.lsp.enable("sqlakit")
+```
+
+PyCharm and DataGrip check SQL against a database schema, so every `tpl.`
+call reads as an unknown function there. `sqlakit export pycharm` writes a
+schema that declares them:
+
+```console
+$ sqlakit export pycharm --dialect postgresql
+wrote .idea/sqlakit.sql and .idea/sqldialects.xml
+```
+
+`.idea/sqlakit.sql` declares each macro as a function of the `tpl` schema,
+with its docstring as the comment quick documentation shows.
+`.idea/sqldialects.xml` sets the dialect of the template directories, and
+keeps the directories set there already. Two steps in the IDE, once:
+
+1. **Database > + > DDL Data Source**, and add `.idea/sqlakit.sql` to it.
+2. **Settings > Tools > Database > User Parameters**: add the pattern
+   `:(\w+(?:\.\w+)*)`, turned on for SQL, so `:team.id` reads as a
+   parameter.
+
+The DDL is written for PostgreSQL or Snowflake: another dialect gets the
+PostgreSQL one. Run the command again when a macro changes, and
+`sqlakit export pycharm --check` fails in CI when the files are out of date.
 
 ## Async templates
 

@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--format", choices=("text", "json"), default="text")
 
     commands.add_parser(
-        "lsp", help="run the language server for .tpl.sql templates, over stdio"
+        "lsp", help="run the language server for SQL templates, over stdio"
     )
 
     export = commands.add_parser(

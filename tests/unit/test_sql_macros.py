@@ -750,7 +750,7 @@ def test_include_takes_one_path_written_out(argument: str, written: str) -> None
         render(source, postgresql.dialect())
     assert str(raised.value) == (
         "tpl.include: takes the path of a template as a string, such as "
-        f"'reports/ids.tpl.sql', got {written} in inline.tpl.sql:1."
+        f"'reports/ids.sql', got {written} in inline.tpl.sql:1."
     )
 
 

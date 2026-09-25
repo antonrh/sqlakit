@@ -594,12 +594,12 @@ def sql_macro(
     optional: bool = False,
     lazy: bool = False,
 ) -> Any:  # noqa: ANN401
-    """Make a function a macro that `.tpl.sql` templates call as `tpl.<name>(...)`.
+    """Make a function a macro that templates call as `tpl.<name>(...)`.
 
     ```python
     @sql_macro
-    def for_accounts(vendor_ids: Param, subaccount_ids: Param) -> str:
-        return f"(vendor_id IN {vendor_ids} OR subaccount_id IN {subaccount_ids})"
+    def owned_by(team_ids: Param, user_ids: Param) -> str:
+        return f"(team_id IN {team_ids} OR user_id IN {user_ids})"
     ```
 
     The annotations say what each argument is: a `Param` is written `:name` and
@@ -952,13 +952,13 @@ _QUOTED_PATH = re.compile(r"'([^']+)'")
 
 
 class MacroTemplate:
-    """A `.tpl.sql` file, read and checked against the macros it calls.
+    """A `.sql` template, read and checked against the macros it calls.
 
-    `tpl.include('other.tpl.sql')` puts the query of another template in its
+    `tpl.include('other.sql')` puts the query of another template in its
     place, in parentheses, where a table goes:
 
     ```sql
-    SELECT f.fan_id FROM tpl.include('audience-fan/ids.tpl.sql') AS f
+    SELECT u.id FROM tpl.include('users/search.sql') AS u
     ```
 
     The path is a string, read with the file: a template that is missing, or
@@ -1206,7 +1206,7 @@ class MacroTemplate:
         if len(written) != 1 or not _QUOTED_PATH.fullmatch(written[0]):
             problem = (
                 "takes the path of a template as a string, such as "
-                f"'reports/ids.tpl.sql', got {', '.join(written)!r}"
+                f"'reports/ids.sql', got {', '.join(written)!r}"
             )
             raise self._refuse(INCLUDE, problem, call)
 

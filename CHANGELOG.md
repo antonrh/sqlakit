@@ -52,6 +52,13 @@
 - `sqlakit export sqruff` writes the `sqruff` settings that read the templates
   as SQL into `pyproject.toml`: the `placeholder` templater, and a value for
   each parameter named like a keyword, such as `:limit`.
+- `sqlakit export pycharm` writes `.idea/sqlakit.sql`, which declares the
+  macros as functions of the `tpl` schema for a DDL data source, and sets the
+  dialect of the template directories in `.idea/sqldialects.xml`, so PyCharm
+  and DataGrip read a `tpl.` call as a known function.
+- `[tool.sqlakit.templates]` in `pyproject.toml` takes `paths`, `macros`,
+  `namespace` and `dialect`, for a project whose code builds its paths in a way
+  `sqlakit check`, `lsp` and `export` can't read.
 - `Inline` writes a value into the SQL where SQL takes no bound one: a stage
   in `COPY INTO`, a table being created, a sample's size. `Inline.stage` and
   `Inline.name` check what they are given, and a value is written only in those

@@ -373,7 +373,7 @@ def _included_from(chain: Chain) -> str:
 
 
 class MacroSyntaxError(SQLAKitError, ValueError):
-    """Raised when a `.tpl.sql` template cannot be cut into text and macro calls."""
+    """Raised when a template cannot be cut into text and macro calls."""
 
     def __init__(
         self,

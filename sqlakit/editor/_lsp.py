@@ -1,4 +1,4 @@
-"""`sqlakit lsp`, a language server for `.tpl.sql` templates.
+"""`sqlakit lsp`, a language server for SQL templates.
 
 It reads the project the way `sqlakit check` does, from `pyproject.toml`, and
 offers what an editor asks for while a template is written:
@@ -156,7 +156,7 @@ class _Assistant:
         name = self._macro_at(source, offset)
         if name == INCLUDE:
             return (
-                f"```sql\n{self.project.templates.namespace}.{INCLUDE}('path.tpl.sql')"
+                f"```sql\n{self.project.templates.namespace}.{INCLUDE}('path.sql')"
                 "\n```\n\nThe query of another template, in parentheses, where a "
                 "table goes. It shares the parameters of the call."
             )
@@ -261,7 +261,7 @@ class _Assistant:
                 Completion(
                     INCLUDE,
                     "macro",
-                    f"{namespace}.{INCLUDE}('path.tpl.sql')",
+                    f"{namespace}.{INCLUDE}('path.sql')",
                     "The query of another template, in parentheses.",
                     f"{INCLUDE}('${{1}}')",
                 )
