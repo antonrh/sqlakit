@@ -34,7 +34,7 @@ from sqlakit._sql import Macro
 from sqlakit.sql import Context, Inline, Param, Sql, Templates, sql_macro, tpl
 
 TEMPLATES = {
-    "users/list.tpl.sql": """
+    "users/list.sql": """
         SELECT name FROM users
         WHERE
             team IN :teams
@@ -42,19 +42,19 @@ TEMPLATES = {
         ORDER BY tpl.order_by(:order_by, id, name, team, 'nulls_last')
         LIMIT :limit
     """,
-    "users/for_teams.tpl.sql": """
+    "users/for_teams.sql": """
         SELECT name FROM users WHERE tpl.for_teams(:teams) ORDER BY id
     """,
-    "users/in_teams.tpl.sql": """
+    "users/in_teams.sql": """
         SELECT name FROM users WHERE team IN (tpl.each(:teams)) ORDER BY id
     """,
-    "users/search.tpl.sql": """
+    "users/search.sql": """
         SELECT name FROM users WHERE tpl.search(:q, name, team) ORDER BY id
     """,
-    "users/blue_or.tpl.sql": """
+    "users/blue_or.sql": """
         SELECT name FROM users WHERE tpl.blue_or(:teams) ORDER BY id
     """,
-    "users/bluish.tpl.sql": """
+    "users/bluish.sql": """
         SELECT name FROM users WHERE tpl.bluish() ORDER BY id
     """,
 }
@@ -124,7 +124,7 @@ def names(db: Database, template: str, **values: Any) -> list[str]:
 def render(source: str, dialect: sa.Dialect, **values: object) -> str:
     """Return what a template becomes on a dialect, parameters left as written."""
     template = sql_module.MacroTemplate(
-        "inline.tpl.sql",
+        "inline.sql",
         source,
         sql_module.registered([for_teams, search, blue_or, bluish]),
     )
@@ -141,34 +141,34 @@ LIST: dict[str, Any] = {
 
 
 def test_a_template_runs_with_nothing_optional(db: Database) -> None:
-    assert names(db, "users/list.tpl.sql", **LIST) == ["Ann", "bob", "Cid", "dan_x"]
+    assert names(db, "users/list.sql", **LIST) == ["Ann", "bob", "Cid", "dan_x"]
 
 
 def test_if_set_keeps_the_condition_when_the_value_is_there(db: Database) -> None:
     values = LIST | {"search": "AN"}
-    assert names(db, "users/list.tpl.sql", **values) == ["Ann", "dan_x"]
+    assert names(db, "users/list.sql", **values) == ["Ann", "dan_x"]
 
 
 def test_icontains_matches_a_percent_or_underscore_only_as_itself(
     db: Database,
 ) -> None:
-    assert names(db, "users/list.tpl.sql", **LIST | {"search": "_"}) == ["dan_x"]
-    assert names(db, "users/list.tpl.sql", **LIST | {"search": "%"}) == []
+    assert names(db, "users/list.sql", **LIST | {"search": "_"}) == ["dan_x"]
+    assert names(db, "users/list.sql", **LIST | {"search": "%"}) == []
 
 
 def test_order_by_orders_by_sort_strings(db: Database) -> None:
     values = LIST | {"order_by": ["team.desc", "name.desc"]}
-    assert names(db, "users/list.tpl.sql", **values) == ["dan_x", "Cid", "Ann", "bob"]
+    assert names(db, "users/list.sql", **values) == ["dan_x", "Cid", "Ann", "bob"]
 
 
 def test_order_by_folds_the_case_convention_of_a_request(db: Database) -> None:
     values = LIST | {"order_by": "Name"}
-    assert names(db, "users/list.tpl.sql", **values) == ["Ann", "Cid", "bob", "dan_x"]
+    assert names(db, "users/list.sql", **values) == ["Ann", "Cid", "bob", "dan_x"]
 
 
 def test_order_by_refuses_a_field_it_was_not_given(db: Database) -> None:
     with pytest.raises(UnknownOrderFieldError, match="password"):
-        names(db, "users/list.tpl.sql", **LIST | {"order_by": "password"})
+        names(db, "users/list.sql", **LIST | {"order_by": "password"})
 
 
 @pytest.mark.parametrize("sort", ["id.sideways", "id.asc.nulls_middle", "id.asc.x.y"])
@@ -234,12 +234,12 @@ def test_order_by_orders_by_nothing_when_nothing_is_asked() -> None:
 
 def test_limit_and_list_parameters_are_bound(db: Database) -> None:
     values = LIST | {"teams": ["blue"], "limit": 1}
-    assert names(db, "users/list.tpl.sql", **values) == ["bob"]
+    assert names(db, "users/list.sql", **values) == ["bob"]
 
 
 def test_an_application_macro_takes_a_parameter(db: Database) -> None:
-    assert names(db, "users/for_teams.tpl.sql", teams=["blue"]) == ["bob"]
-    assert names(db, "users/for_teams.tpl.sql", teams=[]) == []
+    assert names(db, "users/for_teams.sql", teams=["blue"]) == ["bob"]
+    assert names(db, "users/for_teams.sql", teams=[]) == []
 
 
 def test_a_macro_writes_sql_for_the_dialect() -> None:
@@ -256,9 +256,9 @@ def test_icontains_is_ilike_on_postgres() -> None:
 
 def test_the_layout_of_a_template_survives_rendering(db: Database) -> None:
     with db.connect():
-        statement = db.sql("users/list.tpl.sql", **LIST).statement
+        statement = db.sql("users/list.sql", **LIST).statement
     assert str(statement) == (
-        "/* users/list.tpl.sql */\n"
+        "/* users/list.sql */\n"
         "\n"
         "        SELECT name FROM users\n"
         "        WHERE\n"
@@ -292,7 +292,7 @@ def test_an_unknown_macro_is_refused_when_the_file_is_read() -> None:
     with pytest.raises(UnknownMacroError) as raised:
         render("SELECT 1\nWHERE tpl.foo(:x)", postgresql.dialect(), x=1)
     assert str(raised.value) == (
-        f"Unknown macro tpl.foo in inline.tpl.sql:2; available: {available}. "
+        f"Unknown macro tpl.foo in inline.sql:2; available: {available}. "
         "Register one with `Templates(..., macros=[...])`."
     )
 
@@ -301,7 +301,7 @@ def test_a_parameter_argument_must_be_a_parameter() -> None:
     with pytest.raises(MacroArgumentError) as raised:
         render("WHERE tpl.if_set(name, TRUE)", postgresql.dialect())
     assert str(raised.value) == (
-        "tpl.if_set: argument 1 must be a :parameter, got 'name' in inline.tpl.sql:1."
+        "tpl.if_set: argument 1 must be a :parameter, got 'name' in inline.sql:1."
     )
 
 
@@ -363,7 +363,7 @@ def test_a_coroutine_function_is_not_a_macro() -> None:
     ["tpl.if_set(:a, (1)", "SELECT 'open", "SELECT /* open"],
 )
 def test_what_is_never_closed_is_refused(source: str) -> None:
-    with pytest.raises(MacroSyntaxError, match=r"inline\.tpl\.sql:1: .* never closed"):
+    with pytest.raises(MacroSyntaxError, match=r"inline\.sql:1: .* never closed"):
         render(source, postgresql.dialect(), a=1)
 
 
@@ -385,9 +385,9 @@ def test_a_macro_cannot_take_a_builtin_name() -> None:
 
 
 def test_check_reads_every_macro_template(tmp_path: Path) -> None:
-    write(tmp_path, {"ok.tpl.sql": "SELECT 1", "bad/one.tpl.sql": "SELECT tpl.foo()"})
+    write(tmp_path, {"ok.sql": "SELECT 1", "bad/one.sql": "SELECT tpl.foo()"})
     db = Database("sqlite://", templates=tmp_path)
-    with pytest.raises(UnknownMacroError, match=r"bad/one\.tpl\.sql:1"):
+    with pytest.raises(UnknownMacroError, match=r"bad/one\.sql:1"):
         db.sql.check()
 
 
@@ -397,18 +397,18 @@ def test_check_passes_every_template(db: Database) -> None:
 
 def test_a_template_outside_the_paths_is_not_found(db: Database) -> None:
     with pytest.raises(FileNotFoundError), db.connect():
-        db.sql("../etc/passwd.tpl.sql").all()
+        db.sql("../etc/passwd.sql").all()
 
 
 def test_auto_reload_reads_a_changed_file(tmp_path: Path) -> None:
-    path = write(tmp_path, {"one.tpl.sql": "SELECT 1"}) / "one.tpl.sql"
+    path = write(tmp_path, {"one.sql": "SELECT 1"}) / "one.sql"
     db = Database("sqlite://", templates=Templates(tmp_path, auto_reload=True))
     with db.connect():
-        assert db.sql("one.tpl.sql").scalars().one() == 1
+        assert db.sql("one.sql").scalars().one() == 1
         path.write_text("SELECT 2")
         stat = path.stat()
         os.utime(path, (stat.st_atime, stat.st_mtime + 1))
-        assert db.sql("one.tpl.sql").scalars().one() == 2
+        assert db.sql("one.sql").scalars().one() == 2
 
 
 def test_signature_says_how_a_template_calls_a_macro() -> None:
@@ -491,15 +491,15 @@ async def test_the_async_api_renders_the_same_macros(tmp_path: Path) -> None:
     write(
         tmp_path,
         {
-            "one.tpl.sql": "SELECT team FROM (SELECT 'red' AS team) WHERE tpl.blue_or(:teams)"
+            "one.sql": "SELECT team FROM (SELECT 'red' AS team) WHERE tpl.blue_or(:teams)"
         },
     )
     db = AsyncDatabase(
         "sqlite+aiosqlite://", templates=Templates(tmp_path, macros=[blue_or])
     )
     async with db.connect():
-        assert await db.sql("one.tpl.sql", teams=["red"]).scalars().all() == ["red"]
-        assert await db.sql("one.tpl.sql", teams=["green"]).scalars().all() == []
+        assert await db.sql("one.sql", teams=["red"]).scalars().all() == ["red"]
+        assert await db.sql("one.sql", teams=["green"]).scalars().all() == []
     await db.dispose()
 
 
@@ -537,7 +537,7 @@ def test_each_binds_each_value_as_a_parameter(db: Database) -> None:
     assert render(source, postgresql.dialect(), teams=["red", "blue"]) == (
         "WHERE team IN (:teams__1, :teams__2)"
     )
-    assert names(db, "users/in_teams.tpl.sql", teams=["blue"]) == ["bob"]
+    assert names(db, "users/in_teams.sql", teams=["blue"]) == ["bob"]
 
 
 def test_each_refuses_an_empty_list() -> None:
@@ -546,12 +546,12 @@ def test_each_refuses_an_empty_list() -> None:
 
 
 def test_a_namespace_replaces_tpl_where_a_schema_has_that_name(tmp_path: Path) -> None:
-    write(tmp_path, {"one.tpl.sql": "SELECT q.if_set(:x, 1, 2), tpl.f(1) FROM tpl.t"})
+    write(tmp_path, {"one.sql": "SELECT q.if_set(:x, 1, 2), tpl.f(1) FROM tpl.t"})
     db = Database(
         "sqlite://",
         templates=Templates(tmp_path, namespace="q", macros=[for_teams]),
     )
-    statement = db.sql("one.tpl.sql", x=None).statement
+    statement = db.sql("one.sql", x=None).statement
     assert str(statement).splitlines()[-1] == "SELECT 2, tpl.f(1) FROM tpl.t"
 
 
@@ -576,20 +576,20 @@ def test_a_macros_own_refusal_says_where_the_call_is() -> None:
             teams=[],
         )
     assert str(raised.value) == (
-        "tpl.each: `:teams` is empty, and `IN ()` is not SQL in inline.tpl.sql:2."
+        "tpl.each: `:teams` is empty, and `IN ()` is not SQL in inline.sql:2."
     )
 
 
 def test_a_macro_calls_a_builtin_one_as_a_template_would(db: Database) -> None:
-    assert names(db, "users/search.tpl.sql", q="BLU") == ["bob"]
-    assert names(db, "users/search.tpl.sql", q="") == ["Ann", "bob", "Cid", "dan_x"]
+    assert names(db, "users/search.sql", q="BLU") == ["bob"]
+    assert names(db, "users/search.sql", q="") == ["Ann", "bob", "Cid", "dan_x"]
     assert render("WHERE tpl.search(:q, a, b)", postgresql.dialect(), q="x") == (
         "WHERE a ILIKE :q__like__1 ESCAPE '!' OR b ILIKE :q__like__2 ESCAPE '!'"
     )
 
 
 def test_a_macro_binds_a_list_of_its_own_for_in(db: Database) -> None:
-    assert names(db, "users/blue_or.tpl.sql", teams=["red"]) == [
+    assert names(db, "users/blue_or.sql", teams=["red"]) == [
         "Ann",
         "bob",
         "Cid",
@@ -601,7 +601,7 @@ def test_a_macro_binds_a_list_of_its_own_for_in(db: Database) -> None:
 
 
 def test_a_value_where_a_parameter_goes_is_bound(db: Database) -> None:
-    assert names(db, "users/bluish.tpl.sql") == ["bob"]
+    assert names(db, "users/bluish.sql") == ["bob"]
     assert render("WHERE tpl.bluish()", postgresql.dialect()) == (
         "WHERE team IN (SELECT column1 FROM (VALUES (:__p1)) AS v)"
     )
@@ -652,21 +652,21 @@ def test_a_macro_names_the_values_it_binds() -> None:
 
 
 INCLUDES = {
-    "fans/ids.tpl.sql": """SELECT id FROM users
+    "fans/ids.sql": """SELECT id FROM users
 WHERE team IN :teams AND tpl.if_set(:q, tpl.icontains(name, :q));
 """,
-    "fans/count.tpl.sql": (
-        "SELECT count(*) FROM tpl.include('fans/ids.tpl.sql') AS f\n"
+    "fans/count.sql": (
+        "SELECT count(*) FROM tpl.include('fans/ids.sql') AS f\n"
         "WHERE tpl.icontains('x', :q) OR TRUE"
     ),
-    "fans/names.tpl.sql": """SELECT u.name
+    "fans/names.sql": """SELECT u.name
 FROM users AS u
-JOIN tpl.include('fans/ids.tpl.sql') AS f ON f.id = u.id
+JOIN tpl.include('fans/ids.sql') AS f ON f.id = u.id
 ORDER BY u.id""",
-    "loop/a.tpl.sql": "SELECT * FROM tpl.include('loop/b.tpl.sql') AS b",
-    "loop/b.tpl.sql": "SELECT * FROM tpl.include('loop/a.tpl.sql') AS a",
-    "broken/outer.tpl.sql": "SELECT 1\nFROM tpl.include('broken/inner.tpl.sql') AS i",
-    "broken/inner.tpl.sql": "SELECT 1\nWHERE x IN (tpl.each(:missing))",
+    "loop/a.sql": "SELECT * FROM tpl.include('loop/b.sql') AS b",
+    "loop/b.sql": "SELECT * FROM tpl.include('loop/a.sql') AS a",
+    "broken/outer.sql": "SELECT 1\nFROM tpl.include('broken/inner.sql') AS i",
+    "broken/inner.sql": "SELECT 1\nWHERE x IN (tpl.each(:missing))",
 }
 
 
@@ -677,12 +677,12 @@ def included(tmp_path: Path, db: Database) -> Database:
 
 
 def test_include_puts_a_whole_query_in_place(included: Database) -> None:
-    assert names(included, "fans/names.tpl.sql", teams=["red"], q="n") == [
+    assert names(included, "fans/names.sql", teams=["red"], q="n") == [
         "Ann",
         "dan_x",
     ]
     with included.connect():
-        count = included.sql("fans/count.tpl.sql", teams=["red", "blue"], q=None)
+        count = included.sql("fans/count.sql", teams=["red", "blue"], q=None)
         assert count.scalars().one() == 4
 
 
@@ -690,9 +690,9 @@ def test_include_writes_the_query_in_parentheses_labelled_once(
     included: Database,
 ) -> None:
     with included.connect():
-        statement = included.sql("fans/count.tpl.sql", teams=["red"], q="a").statement
+        statement = included.sql("fans/count.sql", teams=["red"], q="a").statement
     assert str(statement) == (
-        "/* fans/count.tpl.sql */\n"
+        "/* fans/count.sql */\n"
         "SELECT count(*) FROM (SELECT id FROM users\n"
         "WHERE team IN (__[POSTCOMPILE_teams]) AND lower(name) LIKE "
         "lower(:q__like__1) ESCAPE '!'\n) AS f\n"
@@ -702,10 +702,10 @@ def test_include_writes_the_query_in_parentheses_labelled_once(
 
 def test_include_refuses_a_template_that_includes_itself(included: Database) -> None:
     with pytest.raises(MacroArgumentError) as raised:
-        included.sql("loop/a.tpl.sql").statement
+        included.sql("loop/a.sql").statement
     assert str(raised.value) == (
-        "tpl.include: includes itself: loop/a.tpl.sql -> loop/b.tpl.sql -> "
-        "loop/a.tpl.sql in loop/b.tpl.sql:1 (included from loop/a.tpl.sql:1)."
+        "tpl.include: includes itself: loop/a.sql -> loop/b.sql -> "
+        "loop/a.sql in loop/b.sql:1 (included from loop/a.sql:1)."
     )
 
 
@@ -718,21 +718,19 @@ def test_an_error_in_an_included_template_says_where_it_was_included(
     included: Database,
 ) -> None:
     with pytest.raises(MacroArgumentError) as raised, included.connect():
-        included.sql("broken/outer.tpl.sql").all()
+        included.sql("broken/outer.sql").all()
     assert str(raised.value) == (
-        "tpl.each: `:missing` was not passed in broken/inner.tpl.sql:2 "
-        "(included from broken/outer.tpl.sql:2)."
+        "tpl.each: `:missing` was not passed in broken/inner.sql:2 "
+        "(included from broken/outer.sql:2)."
     )
 
 
 def test_a_missing_included_template_is_refused_on_load(tmp_path: Path) -> None:
-    write(
-        tmp_path, {"outer.tpl.sql": "SELECT 1\nFROM tpl.include('gone.tpl.sql') AS g"}
-    )
+    write(tmp_path, {"outer.sql": "SELECT 1\nFROM tpl.include('gone.sql') AS g"})
     db = Database("sqlite://", templates=tmp_path)
     with pytest.raises(
         MacroArgumentError,
-        match=r"No SQL template named `gone\.tpl\.sql`.* in outer\.tpl\.sql:2\.",
+        match=r"No SQL template named `gone\.sql`.* in outer\.sql:2\.",
     ):
         db.sql.check()
 
@@ -741,7 +739,7 @@ def test_a_missing_included_template_is_refused_on_load(tmp_path: Path) -> None:
     ("argument", "written"),
     [
         (":name", "':name'"),
-        ("'a.tpl.sql', 'b.tpl.sql'", "\"'a.tpl.sql', 'b.tpl.sql'\""),
+        ("'a.sql', 'b.sql'", "\"'a.sql', 'b.sql'\""),
     ],
 )
 def test_include_takes_one_path_written_out(argument: str, written: str) -> None:
@@ -750,7 +748,7 @@ def test_include_takes_one_path_written_out(argument: str, written: str) -> None
         render(source, postgresql.dialect())
     assert str(raised.value) == (
         "tpl.include: takes the path of a template as a string, such as "
-        f"'reports/ids.sql', got {written} in inline.tpl.sql:1."
+        f"'reports/ids.sql', got {written} in inline.sql:1."
     )
 
 
@@ -780,18 +778,18 @@ def test_auto_reload_reads_a_changed_included_file(tmp_path: Path) -> None:
     write(
         tmp_path,
         {
-            "inner.tpl.sql": "SELECT 1 AS n",
-            "outer.tpl.sql": "SELECT n FROM tpl.include('inner.tpl.sql') AS i",
+            "inner.sql": "SELECT 1 AS n",
+            "outer.sql": "SELECT n FROM tpl.include('inner.sql') AS i",
         },
     )
     db = Database("sqlite://", templates=Templates(tmp_path, auto_reload=True))
     with db.connect():
-        assert db.sql("outer.tpl.sql").scalars().one() == 1
-        path = tmp_path / "inner.tpl.sql"
+        assert db.sql("outer.sql").scalars().one() == 1
+        path = tmp_path / "inner.sql"
         path.write_text("SELECT 2 AS n")
         stat = path.stat()
         os.utime(path, (stat.st_atime, stat.st_mtime + 1))
-        assert db.sql("outer.tpl.sql").scalars().one() == 2
+        assert db.sql("outer.sql").scalars().one() == 2
 
 
 def snowflake() -> sa.Dialect:
@@ -836,14 +834,14 @@ def test_icollate_sorts_under_order_by_without_case(tmp_path: Path) -> None:
     write(
         tmp_path,
         {
-            "sorted.tpl.sql": "SELECT name FROM (SELECT 'b' AS name UNION ALL "
+            "sorted.sql": "SELECT name FROM (SELECT 'b' AS name UNION ALL "
             "SELECT 'a' UNION ALL SELECT 'C') AS t "
             "ORDER BY tpl.order_by(:sort, name = tpl.icollate(name))"
         },
     )
     db = Database("sqlite://", templates=tmp_path)
     with db.connect():
-        rows = db.sql("sorted.tpl.sql", sort="name").scalars().all()
+        rows = db.sql("sorted.sql", sort="name").scalars().all()
         plain = db.sql.from_string(
             "SELECT name FROM (SELECT 'b' AS name UNION ALL SELECT 'a' "
             "UNION ALL SELECT 'C') AS t ORDER BY name"
@@ -881,7 +879,7 @@ def test_between_refuses_other_bounds_when_the_file_is_read() -> None:
     with pytest.raises(MacroArgumentError) as raised:
         render("WHERE tpl.between(d, :s, :e, '(]')", postgresql.dialect())
     assert str(raised.value) == (
-        "tpl.between: argument 4 is '[]' or '[)', got '(]' in inline.tpl.sql:1."
+        "tpl.between: argument 4 is '[]' or '[)', got '(]' in inline.sql:1."
     )
 
 
@@ -907,13 +905,13 @@ def test_values_runs_as_a_table(tmp_path: Path) -> None:
     write(
         tmp_path,
         {
-            "segments.tpl.sql": "SELECT column1, column2 FROM tpl.values(:segments) "
+            "segments.sql": "SELECT column1, column2 FROM tpl.values(:segments) "
             "AS v ORDER BY column1"
         },
     )
     db = Database("sqlite://", templates=tmp_path)
     with db.connect():
-        rows = db.sql("segments.tpl.sql", segments=[[2, "b"], (1, "a")]).all()
+        rows = db.sql("segments.sql", segments=[[2, "b"], (1, "a")]).all()
     assert [tuple(row) for row in rows] == [(1, "a"), (2, "b")]
 
 
@@ -927,7 +925,7 @@ def test_values_runs_as_a_table(tmp_path: Path) -> None:
 def test_values_refuses_what_is_not_a_table(rows: Any, problem: str) -> None:
     with pytest.raises(MacroArgumentError) as raised:
         render("SELECT * FROM tpl.values(:rows) AS v", postgresql.dialect(), rows=rows)
-    assert str(raised.value) == f"tpl.values: {problem} in inline.tpl.sql:1."
+    assert str(raised.value) == f"tpl.values: {problem} in inline.sql:1."
 
 
 def test_a_literal_annotation_names_the_sql_an_argument_may_be() -> None:
@@ -979,17 +977,17 @@ def test_an_included_query_ends_where_its_sql_ends(
     write(
         tmp_path,
         {
-            "inner.tpl.sql": inner,
-            "outer.tpl.sql": "SELECT n FROM tpl.include('inner.tpl.sql') AS i",
+            "inner.sql": inner,
+            "outer.sql": "SELECT n FROM tpl.include('inner.sql') AS i",
         },
     )
     db = Database("sqlite://", templates=tmp_path)
-    statement = str(db.sql("outer.tpl.sql").statement)
+    statement = str(db.sql("outer.sql").statement)
     expected = "SELECT n FROM " + included + " AS i"  # noqa: S608 - the test's own SQL
     assert statement.split("\n", 1)[1] == expected
     if "$$" not in inner:
         with db.connect():
-            assert db.sql("outer.tpl.sql").scalars().one() in (1, ";")
+            assert db.sql("outer.sql").scalars().one() in (1, ";")
 
 
 def test_a_posix_class_is_not_a_parameter() -> None:
@@ -1021,7 +1019,7 @@ def test_a_parameter_reads_an_attribute_or_a_key(db: Database, tmp_path: Path) -
     write(
         tmp_path,
         {
-            "users/criteria.tpl.sql": """
+            "users/criteria.sql": """
                 SELECT name FROM users
                 WHERE team IN :criteria.teams
                   AND tpl.if_set(:criteria.search, tpl.icontains(name, :criteria.search))
@@ -1032,7 +1030,7 @@ def test_a_parameter_reads_an_attribute_or_a_key(db: Database, tmp_path: Path) -
     )
     criteria = Criteria(teams=["red"], search="n")
     assert names(
-        db, "users/criteria.tpl.sql", criteria=criteria, filters={"kind": "people"}
+        db, "users/criteria.sql", criteria=criteria, filters={"kind": "people"}
     ) == [
         "Ann",
         "dan_x",
@@ -1046,7 +1044,7 @@ def test_a_path_reads_a_property_and_an_enum_value() -> None:
         postgresql.dialect().identifier_preparer,
         {"c": Criteria(teams=["red"]), "rotation": Rotation},
     )
-    template = sql_module.MacroTemplate("x.tpl.sql", source, sql_module.registered([]))
+    template = sql_module.MacroTemplate("x.sql", source, sql_module.registered([]))
     assert template.render(ctx) == (
         "WHERE team IN :c__upper_teams AND way = :rotation__IN__value"
     )
@@ -1078,13 +1076,13 @@ def test_an_included_template_reads_paths_too(tmp_path: Path) -> None:
     write(
         tmp_path,
         {
-            "inner.tpl.sql": "SELECT :c.search AS s",
-            "outer.tpl.sql": "SELECT s FROM tpl.include('inner.tpl.sql') AS i",
+            "inner.sql": "SELECT :c.search AS s",
+            "outer.sql": "SELECT s FROM tpl.include('inner.sql') AS i",
         },
     )
     db = Database("sqlite://", templates=tmp_path)
     with db.connect():
-        query = db.sql("outer.tpl.sql", c=Criteria(teams=[], search="x"))
+        query = db.sql("outer.sql", c=Criteria(teams=[], search="x"))
         assert query.scalars().one() == "x"
 
 
@@ -1106,13 +1104,13 @@ def test_icontains_matches_an_expression_only_as_itself(
     write(
         tmp_path,
         {
-            "users/like.tpl.sql": (
+            "users/like.sql": (
                 "SELECT name FROM users WHERE tpl.icontains(name, lower(:q)) ORDER BY id"
             )
         },
     )
-    assert names(db, "users/like.tpl.sql", q="_") == ["dan_x"]
-    assert names(db, "users/like.tpl.sql", q="N") == ["Ann", "dan_x"]
+    assert names(db, "users/like.sql", q="_") == ["dan_x"]
+    assert names(db, "users/like.sql", q="N") == ["Ann", "dan_x"]
 
 
 # dialect macros
@@ -1186,7 +1184,7 @@ def test_json_object_and_string_agg_run(db: Database, tmp_path: Path) -> None:
     write(
         tmp_path,
         {
-            "users/summary.tpl.sql": """
+            "users/summary.sql": """
                 SELECT team, tpl.string_agg(name, '/'), tpl.json_object('n', count(*))
                 FROM (SELECT * FROM users ORDER BY id)
                 GROUP BY team ORDER BY team
@@ -1194,7 +1192,7 @@ def test_json_object_and_string_agg_run(db: Database, tmp_path: Path) -> None:
         },
     )
     with db.connect():
-        rows = [tuple(row) for row in db.sql("users/summary.tpl.sql").all()]
+        rows = [tuple(row) for row in db.sql("users/summary.sql").all()]
     assert rows == [("blue", "bob", '{"n":1}'), ("red", "Ann/Cid/dan_x", '{"n":3}')]
 
 
@@ -1221,7 +1219,7 @@ def test_on_dialect_refuses_a_database_it_has_no_branch_for() -> None:
         render("FROM tpl.on_dialect(postgresql = a)\n", mysql.dialect())
     assert str(raised.value) == (
         "tpl.on_dialect: has no branch for mysql, and no `default = ...`: "
-        "it has postgresql in inline.tpl.sql:1."
+        "it has postgresql in inline.sql:1."
     )
 
 

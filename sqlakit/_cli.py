@@ -206,8 +206,6 @@ def _relative(path: Path) -> str:
         return str(path)
 
 
-
-
 BOLD = "1"
 DIM = "2"
 
@@ -231,10 +229,6 @@ def _paint(text: str, *codes: str) -> str:
 def _say(text: str) -> None:
     """Print, and flush: the server then blocks, and a pipe would hold this."""
     print(text, flush=True)  # noqa: T201
-
-
-
-
 
 
 if __name__ == "__main__":

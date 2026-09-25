@@ -247,9 +247,9 @@ def test_a_template_knows_which_database_it_renders_for(
 
 @pytest.fixture
 def _macro_templates(db: Database, tmp_path: Path) -> None:
-    """Point the database at a `.tpl.sql` template written for this test."""
+    """Point the database at a `.sql` template written for this test."""
     (tmp_path / "events").mkdir()
-    (tmp_path / "events" / "search.tpl.sql").write_text(
+    (tmp_path / "events" / "search.sql").write_text(
         "SELECT name FROM events\n"
         "WHERE id IN :ids AND tpl.if_set(:search, tpl.icontains(name, :search), 1 = 1)\n"
         "ORDER BY tpl.order_by(:order_by, id, name)"
@@ -266,7 +266,7 @@ def test_a_macro_template_searches_and_sorts_on_this_dialect(db: Database) -> No
     with db.connect():
 
         def names(**values: Any) -> list[str]:
-            query = db.sql("events/search.tpl.sql", ids=[1, 2, 3, 4], **values)
+            query = db.sql("events/search.sql", ids=[1, 2, 3, 4], **values)
             return list(query.scalars().all())
 
         assert names(search="APL", order_by="id.desc") == ["maple"]

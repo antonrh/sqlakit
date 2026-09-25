@@ -49,9 +49,9 @@ SELECT tpl.for_team(t) OR t.public AS visible FROM t;
 """
 
 TEMPLATES = {
-    "good.tpl.sql": "SELECT * FROM users\nWHERE tpl.mine(:teams)\n  AND tpl.if_set(:q, name = :q)",
-    "inner.tpl.sql": "SELECT 1\nWHERE tpl.nope(:x)",
-    "outer.tpl.sql": "SELECT *\nFROM tpl.include('inner.tpl.sql') AS i",
+    "good.sql": "SELECT * FROM users\nWHERE tpl.mine(:teams)\n  AND tpl.if_set(:q, name = :q)",
+    "inner.sql": "SELECT 1\nWHERE tpl.nope(:x)",
+    "outer.sql": "SELECT *\nFROM tpl.include('inner.sql') AS i",
     "open.sql": "SELECT 1,\n  'never closed",
 }
 
@@ -209,7 +209,7 @@ def test_check_names_every_problem_once_where_it_is(
     assert main(["check"]) == 1
     assert capsys.readouterr().out.splitlines() == [
         (
-            "sql/inner.tpl.sql:2:7: Unknown macro tpl.nope in inner.tpl.sql:2; "
+            "sql/inner.sql:2:7: Unknown macro tpl.nope in inner.sql:2; "
             f"available: {available}. Register one with "
             "`Templates(..., macros=[...])`."
         ),
@@ -222,7 +222,7 @@ def test_check_writes_json(project: Path, capsys: pytest.CaptureFixture[str]) ->
     assert main(["check", "--format", "json"]) == 1
     found = json.loads(capsys.readouterr().out)
     assert [(one["path"], one["line"], one["column"]) for one in found] == [
-        ("sql/inner.tpl.sql", 2, 7),
+        ("sql/inner.sql", 2, 7),
         ("sql/open.sql", 2, 3),
     ]
 
@@ -230,22 +230,20 @@ def test_check_writes_json(project: Path, capsys: pytest.CaptureFixture[str]) ->
 def test_check_names_a_missing_include_where_the_include_is(
     project: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    (project / "sql" / "inner.tpl.sql").unlink()
+    (project / "sql" / "inner.sql").unlink()
     (project / "sql" / "open.sql").unlink()
     assert main(["check"]) == 1
     assert (
         capsys.readouterr()
         .out.splitlines()[0]
-        .startswith(
-            "sql/outer.tpl.sql:2:6: tpl.include: No SQL template named `inner.tpl.sql`"
-        )
+        .startswith("sql/outer.sql:2:6: tpl.include: No SQL template named `inner.sql`")
     )
 
 
 def test_check_passes_a_clean_project(
     project: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    for name in ("inner.tpl.sql", "outer.tpl.sql", "open.sql"):
+    for name in ("inner.sql", "outer.sql", "open.sql"):
         (project / "sql" / name).unlink()
     assert main(["check"]) == 0
     assert capsys.readouterr().out == "1 templates, 0 problems\n"
@@ -262,7 +260,7 @@ def test_check_says_when_the_project_says_nothing(
 
 
 def test_a_good_template_has_no_problems(assistant: _Assistant, project: Path) -> None:
-    path = project / "sql" / "good.tpl.sql"
+    path = project / "sql" / "good.sql"
     assert assistant.diagnose(path, path.read_text()) == []
 
 
@@ -270,7 +268,7 @@ def test_an_unknown_macro_is_marked_where_the_call_is(
     assistant: _Assistant, project: Path
 ) -> None:
     source = "SELECT 1\nWHERE tpl.nope(:x) AND TRUE"
-    [found] = assistant.diagnose(project / "sql" / "new.tpl.sql", source)
+    [found] = assistant.diagnose(project / "sql" / "new.sql", source)
     assert source[found.start : found.end] == "tpl.nope(:x)"
     assert found.message.startswith("unknown macro tpl.nope; available: ")
 
@@ -279,7 +277,7 @@ def test_an_argument_is_marked_where_it_is(
     assistant: _Assistant, project: Path
 ) -> None:
     source = "WHERE tpl.mine( teams )"
-    [found] = assistant.diagnose(project / "sql" / "new.tpl.sql", source)
+    [found] = assistant.diagnose(project / "sql" / "new.sql", source)
     assert found == Diagnostic(
         16, 21, "tpl.mine: argument 1 must be a :parameter, got 'teams'"
     )
@@ -289,24 +287,24 @@ def test_what_is_never_closed_is_marked_where_it_opens(
     assistant: _Assistant, project: Path
 ) -> None:
     source = "SELECT 1,\n  'open"
-    [found] = assistant.diagnose(project / "sql" / "new.tpl.sql", source)
+    [found] = assistant.diagnose(project / "sql" / "new.sql", source)
     assert (found.start, found.message) == (12, "a quoted string is never closed")
 
 
 def test_a_problem_in_an_included_template_is_marked_on_the_include(
     assistant: _Assistant, project: Path
 ) -> None:
-    path = project / "sql" / "outer.tpl.sql"
+    path = project / "sql" / "outer.sql"
     source = path.read_text()
     [found] = assistant.diagnose(path, source)
-    assert source[found.start : found.end] == "FROM tpl.include('inner.tpl.sql') AS i"
-    assert "(included from outer.tpl.sql:2)" in found.message
+    assert source[found.start : found.end] == "FROM tpl.include('inner.sql') AS i"
+    assert "(included from outer.sql:2)" in found.message
 
 
 def test_the_server_reads_the_sql_files_under_the_paths(
     assistant: _Assistant, project: Path
 ) -> None:
-    assert assistant.applies_to(project / "sql" / "good.tpl.sql")
+    assert assistant.applies_to(project / "sql" / "good.sql")
     assert assistant.applies_to(project / "sql" / "open.sql")
     assert not assistant.applies_to(project / "sql" / "notes.txt")
     assert not assistant.applies_to(project / "elsewhere.sql")
@@ -344,7 +342,7 @@ def test_a_macro_completes_as_a_call_with_placeholders(assistant: _Assistant) ->
 def test_an_include_completes_the_macro_templates(assistant: _Assistant) -> None:
     source = "FROM tpl.include('in"
     assert assistant.complete(source, len(source)) == [
-        Completion("inner.tpl.sql", "template")
+        Completion("inner.sql", "template")
     ]
 
 
@@ -369,10 +367,8 @@ def test_definition_goes_to_the_macro_and_to_the_included_file(
     assert assistant.definition("WHERE tpl.mine(:t)", 11) == Target(
         project / "lsp_macros.py", 5, 4
     )
-    source = "FROM tpl.include('inner.tpl.sql') AS i"
-    assert assistant.definition(source, 20) == Target(
-        project / "sql" / "inner.tpl.sql", 0
-    )
+    source = "FROM tpl.include('inner.sql') AS i"
+    assert assistant.definition(source, 20) == Target(project / "sql" / "inner.sql", 0)
 
 
 # positions
@@ -424,7 +420,7 @@ async def test_the_server_answers_an_editor(project: Path) -> None:
         )
     )
     client.initialized(types.InitializedParams())
-    uri = (project / "sql" / "new.tpl.sql").as_uri()
+    uri = (project / "sql" / "new.sql").as_uri()
     client.text_document_did_open(
         types.DidOpenTextDocumentParams(
             types.TextDocumentItem(uri, "sql", 1, "SELECT 1\nWHERE tpl.nope(:x)")
@@ -461,11 +457,11 @@ async def test_the_server_answers_an_editor(project: Path) -> None:
         if isinstance(place, types.Location)
     ] == [((project / "lsp_macros.py").resolve().as_uri(), 5, 4)] * 3
 
-    outer = (project / "sql" / "outer.tpl.sql").as_uri()
+    outer = (project / "sql" / "outer.sql").as_uri()
     client.text_document_did_open(
         types.DidOpenTextDocumentParams(
             types.TextDocumentItem(
-                outer, "sql", 1, (project / "sql" / "outer.tpl.sql").read_text()
+                outer, "sql", 1, (project / "sql" / "outer.sql").read_text()
             )
         )
     )
@@ -473,7 +469,7 @@ async def test_the_server_answers_an_editor(project: Path) -> None:
         types.DocumentLinkParams(types.TextDocumentIdentifier(outer))
     )
     assert [link.target for link in links or []] == [
-        (project / "sql" / "inner.tpl.sql").resolve().as_uri()
+        (project / "sql" / "inner.sql").resolve().as_uri()
     ]
 
     await client.shutdown_async(None)
@@ -534,7 +530,7 @@ def test_a_template_calling_an_sql_macro_wrongly_is_marked(
 def test_check_names_a_broken_sql_macro(
     project: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    for name in ("inner.tpl.sql", "outer.tpl.sql", "open.sql"):
+    for name in ("inner.sql", "outer.sql", "open.sql"):
         (project / "sql" / name).unlink()
     (project / "_macros.sql").write_text(SQL_MACROS.replace("t.public", "tpl.nope(t)"))
     assert main(["check"]) == 1
@@ -600,7 +596,7 @@ def test_sqruff_reads_a_template_with_what_export_wrote(project: Path) -> None:
     sqruff = shutil.which("sqruff")
     assert sqruff is not None
     ran = subprocess.run(  # noqa: S603 - the linter the project installs
-        [sqruff, "lint", "--parsing-errors", "sql/good.tpl.sql", "_macros.sql"],
+        [sqruff, "lint", "--parsing-errors", "sql/good.sql", "_macros.sql"],
         cwd=project,
         capture_output=True,
         text=True,
@@ -613,9 +609,9 @@ def test_sqruff_reads_a_template_with_what_export_wrote(project: Path) -> None:
 
 CODE = """from app import User, db, other
 
-print("имя"); db.sql("good.tpl.sql", teams=[])
+print("имя"); db.sql("good.sql", teams=[])
 db.sql.from_file("missing.sql")
-User.query.from_sql("inner.tpl.sql")
+User.query.from_sql("inner.sql")
 db.sql.from_string("SELECT 1 -- not a file.sql")
 other.sql("not_a_template")
 """
@@ -632,9 +628,9 @@ def test_the_code_is_checked_for_templates_that_are_not_there(
 def test_a_template_name_in_the_code_goes_to_its_file(
     assistant: _Assistant, project: Path
 ) -> None:
-    offset = CODE.index("good.tpl.sql") + 3
+    offset = CODE.index("good.sql") + 3
     assert assistant.python_definition(CODE, offset) == Target(
-        project / "sql" / "good.tpl.sql", 0
+        project / "sql" / "good.sql", 0
     )
     assert assistant.python_definition(CODE, CODE.index("print")) is None
 
@@ -642,7 +638,7 @@ def test_a_template_name_in_the_code_goes_to_its_file(
 def test_a_template_name_completes_in_the_code(assistant: _Assistant) -> None:
     source = 'rows = db.sql("go'
     assert assistant.python_complete(source, len(source)) == [
-        Completion("good.tpl.sql", "template")
+        Completion("good.sql", "template")
     ]
     assert assistant.python_complete("print('go", 9) == []
 
@@ -652,13 +648,13 @@ def test_template_names_are_links(assistant: _Assistant, project: Path) -> None:
     assert [
         (CODE[start:end], target.name)
         for start, end, target in assistant.links(code, CODE)
-    ] == [("good.tpl.sql", "good.tpl.sql"), ("inner.tpl.sql", "inner.tpl.sql")]
-    outer = project / "sql" / "outer.tpl.sql"
+    ] == [("good.sql", "good.sql"), ("inner.sql", "inner.sql")]
+    outer = project / "sql" / "outer.sql"
     source = outer.read_text()
     [(start, end, target)] = assistant.links(outer, source)
     assert (source[start:end], target) == (
-        "inner.tpl.sql",
-        project / "sql" / "inner.tpl.sql",
+        "inner.sql",
+        project / "sql" / "inner.sql",
     )
 
 
@@ -668,7 +664,7 @@ def test_the_server_reads_the_python_of_the_project(
     assert assistant.reads_python(project / "code.py")
     assert not assistant.reads_python(project / "tests" / "test_code.py")
     assert not assistant.reads_python(tmp_path_factory.mktemp("elsewhere") / "x.py")
-    assert not assistant.reads_python(project / "sql" / "good.tpl.sql")
+    assert not assistant.reads_python(project / "sql" / "good.sql")
 
 
 def test_a_file_of_sql_macros_passes_arguments_where_parameters_go(
