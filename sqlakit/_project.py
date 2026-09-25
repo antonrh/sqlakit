@@ -24,7 +24,14 @@ from sqlalchemy.dialects.postgresql.base import (
 )
 from sqlalchemy.sql.compiler import RESERVED_WORDS
 
-from ._sql import MacroTemplate, SqlMacro, Templates, sql_macros
+from ._sql import (
+    SAMPLE_AFTER,
+    STAGE_AFTER,
+    MacroTemplate,
+    SqlMacro,
+    Templates,
+    sql_macros,
+)
 from ._static import discover
 from .exceptions import (
     MacroArgumentError,
@@ -143,17 +150,16 @@ class Project:
         """Return a value for each parameter a linter cannot read by its name.
 
         With no value, the `placeholder` templater writes a parameter's name in
-        its place: `:status` reads as a column. A name SQL reserves does not,
-        `LIMIT :limit` reading `LIMIT limit`, so it gets `1`, or its name with
-        `_` after it when a path follows, `:order.id`.
+        its place: `:status` reads as a column. Where a stage goes, after `LIST`,
+        `PUT <file>` or `COPY INTO ... FROM`, a linter reads only `@stage/path`,
+        and inside `SAMPLE (...)` only a number. A name SQL reserves reads as
+        neither, `LIMIT :limit` reading `LIMIT limit`, so it gets `1`, or its
+        name with `_` after it when a path follows, `:order.id`.
         """
         values: dict[str, str] = {}
         paths = [self.path_of(name) for name in self.templates.names()]
         for path in {*(one for one in paths if one is not None), *self.macro_files()}:
-            for found in _PARAMETER_IN_TEXT.finditer(path.read_text(encoding="utf-8")):
-                param, dotted = found.groups()
-                if param is not None and param.lower() in _RESERVED:
-                    values[param] = f"{param}_" if dotted else "1"
+            placeholders_of(path.read_text(encoding="utf-8"), values)
         return dict(sorted(values.items()))
 
     def macro_files(self) -> list[Path]:
@@ -183,6 +189,25 @@ class Project:
                 line = error.chain[0][1] if error.chain else error.line
                 found.append((line, str(error)))
         return found
+
+
+def placeholders_of(text: str, values: dict[str, str]) -> dict[str, str]:
+    """Add to ``values`` what a linter needs for each parameter of the text.
+
+    See `Project.placeholder_values`, which reads every template with it.
+    """
+    for found in _PARAMETER_IN_TEXT.finditer(text):
+        param, dotted = found.groups()
+        if param is None:
+            continue
+        before = text[: found.start()]
+        if STAGE_AFTER.search(before):
+            values[param] = "@stage/path"
+        elif SAMPLE_AFTER.search(before):
+            values[param] = "10"
+        elif param.lower() in _RESERVED:
+            values.setdefault(param, f"{param}_" if dotted else "1")
+    return values
 
 
 def _line_start(source: str, line: int) -> int:

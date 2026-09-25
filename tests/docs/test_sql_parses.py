@@ -16,7 +16,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import default
 
 from sqlakit import _sql as sql_module
-from sqlakit._project import _PARAMETER_IN_TEXT
+from sqlakit._project import placeholders_of
 from sqlakit.sql import Context
 
 ROOT = Path(__file__).parent.parent.parent
@@ -31,11 +31,7 @@ pytestmark = pytest.mark.skipif(SQRUFF is None, reason="sqruff is not installed"
 
 def unparsable(sql: str, dialect: str, tmp_path: Path) -> str:
     """Return what `sqruff` could not parse in the SQL, or nothing."""
-    values = {
-        found.group(1): found.group(1) if found.group(2) else "1"
-        for found in _PARAMETER_IN_TEXT.finditer(sql)
-        if found.group(1)
-    }
+    values = placeholders_of(sql, {})
     (tmp_path / "pyproject.toml").write_text(
         "[tool.sqruff.core]\n"
         f'dialect = "{dialect}"\n'
@@ -69,6 +65,8 @@ def blocks() -> list[Any]:
 @pytest.mark.parametrize("dialect", DIALECTS)
 @pytest.mark.parametrize("block", blocks())
 def test_a_documented_template_parses(block: str, dialect: str, tmp_path: Path) -> None:
+    if block.startswith("-- Snowflake") and dialect != "snowflake":
+        pytest.skip("written for Snowflake alone")
     assert unparsable(block, dialect, tmp_path) == ""
 
 

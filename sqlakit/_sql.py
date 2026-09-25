@@ -29,6 +29,7 @@ from ._discovery import import_string
 from ._query import _field_named, _parse_sort_field
 from .exceptions import (
     Chain,
+    InlineValueError,
     InvalidSortStringError,
     MacroArgumentError,
     MacroDefinitionError,
@@ -62,6 +63,7 @@ __all__ = [
     "BUILTIN_MACROS",
     "BaseSQLQuery",
     "Context",
+    "Inline",
     "Macro",
     "MacroEngine",
     "Param",
@@ -175,6 +177,96 @@ def _named(param: Param, *suffix: str) -> str | None:
 def _outside_a_template(macro: str) -> MacroArgumentError:
     problem = "called outside a template, where there is nothing to bind to"
     return MacroArgumentError(macro, problem)
+
+
+class Inline:
+    """A value written into the SQL, where SQL takes no bound value.
+
+    ```python
+    db.sql(
+        "exports/orders.sql", location=Inline.stage("exports", f"orders/{day}/")
+    )
+    ```
+
+    ```sql
+    COPY INTO :location FROM (SELECT * FROM orders) FILE_FORMAT = (TYPE = CSV)
+    ```
+
+    A stage, a table or schema being created or renamed, a sample's size: SQL
+    takes none of them as a parameter. The template still names it `:location`,
+    so a linter reads it, and the value is written in as it is. Every other
+    value is bound.
+
+    Writing a value into SQL is how injection happens, so the value is written
+    only after `INTO`, `FROM`, `JOIN`, `LIST`, `PUT <file>`, `TABLE`, `VIEW`,
+    `STAGE`, `TO`, `SCHEMA`, `DATABASE`, `USE` and inside `SAMPLE (...)`, and
+    refused where a bound value would do. `Inline.stage` and `Inline.name` check
+    what they are given, and `Inline(text)` is for the rest: its name marks the
+    call a review looks at.
+    """
+
+    __slots__ = ("text",)
+
+    def __init__(self, text: str, /) -> None:
+        if not isinstance(text, str):
+            msg = f"`Inline` takes the text to write, a `str`, not {text!r}"
+            raise TypeError(msg)
+        self.text = text
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.text!r})"
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Inline) and other.text == self.text
+
+    def __hash__(self) -> int:
+        return hash((Inline, self.text))
+
+    @classmethod
+    def stage(cls, name: str, path: str = "") -> Inline:
+        """Write a stage location: `@name`, or `@name/path`.
+
+        ``name`` is a stage, qualified or not, `~` for the user's, or `%table`
+        for a table's. ``path`` is parts of letters, digits, `_`, `.`, `-` and
+        `=`, as a partition writes them, joined by `/` and ending in one for a
+        prefix. `..` and an empty part are refused.
+
+        Raises:
+            InlineValueError: if either holds anything else.
+
+        """
+        if not _STAGE_NAME.fullmatch(name):
+            raise InlineValueError(name, "is not the name of a stage")
+        parts = path.split("/") if path else []
+        prefix = bool(parts) and parts[-1] == ""
+        for part in parts[:-1] if prefix else parts:
+            if part in (".", "..") or not _PATH_PART.fullmatch(part):
+                raise InlineValueError(
+                    path, f"holds `{part}`, which a stage path does not"
+                )
+        return cls("/".join([f"@{name}", *parts]))
+
+    @classmethod
+    def name(cls, value: str, *allowed: str) -> Inline:
+        """Write a name: of a table, a schema, a view.
+
+        With names after it, only one of those. Without, only a plain one:
+        letters, digits and `_`, qualified with `.`, which needs no quoting.
+
+        Raises:
+            InlineValueError: if the value is neither.
+
+        """
+        if allowed and value not in allowed:
+            raise InlineValueError(value, f"is none of {', '.join(allowed)}")
+        if not _PLAIN_NAME.fullmatch(value):
+            raise InlineValueError(value, "is not a plain name")
+        return cls(value)
+
+
+_STAGE_NAME = re.compile(r"~|%?[A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)*")
+_PATH_PART = re.compile(r"[\w.=-]+")
+_PLAIN_NAME = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
 
 
 class Sql(str):
@@ -1339,7 +1431,67 @@ def _as_bound(sql: str, values: Mapping[str, Any], dialect: str) -> str:
         written = "0" if clause.upper() == "OFFSET" else _UNLIMITED.get(dialect)
         return found.group() if written is None else f"{clause}{space}{written}"
 
-    return _LIMIT.sub(limit, _IN_ONE.sub(in_list, sql))
+    sql = _LIMIT.sub(limit, _IN_ONE.sub(in_list, sql))
+    if not any(isinstance(value, Inline) for value in values.values()):
+        return sql
+    return _written_in(sql, values)
+
+
+def _written_in(sql: str, values: Mapping[str, Any]) -> str:
+    """Return the SQL with each `Inline` value written where its parameter stands.
+
+    Raises:
+        InlineValueError: for one where SQL takes a bound value instead.
+
+    """
+    written: list[str] = []
+    done = 0
+    for found in PARAMETER_IN_TEXT.finditer(sql):
+        name = found.group(1)
+        value = values.get(name) if name else None
+        if not isinstance(value, Inline):
+            continue
+        if not inline_position(sql[: found.start()]):
+            before = " ".join(sql[: found.start()].split()[-2:])
+            raise InlineValueError(
+                name,
+                f"stands after `{before}`, where SQL takes a bound value: pass the "
+                f"value itself, and it is bound",
+            )
+        written.extend((sql[done : found.start()], value.text))
+        done = found.end()
+    return "".join(written) + sql[done:]
+
+
+PARAMETER_IN_TEXT = re.compile(
+    r"""'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|/\*.*?\*/"""
+    r"|(?<![:\w\\]):([A-Za-z_]\w*)",
+    re.DOTALL,
+)
+"""A `:parameter`, past the strings and comments that may hold a colon."""
+
+_INLINE_AFTER = re.compile(
+    r"(?:\b(?:INTO|FROM|JOIN|LIST|TABLE|VIEW|STAGE|TO|SCHEMA|DATABASE|USE)"
+    r"|\bPUT\s+\S+"
+    r"|\b(?:TABLE)?SAMPLE\s*(?:[A-Za-z_]+\s*)?\()\s*$",
+    re.IGNORECASE,
+)
+"""Where SQL takes no bound value, only one written in: a stage, a name, a sample."""
+
+STAGE_AFTER = re.compile(
+    r"(?:\bCOPY\s+INTO\s+\S+\s+FROM|\bLIST|\bPUT\s+\S+)\s*$", re.IGNORECASE
+)
+"""Where a stage goes, which a linter reads only in its own shape: `@stage/path`."""
+
+SAMPLE_AFTER = re.compile(
+    r"\b(?:TABLE)?SAMPLE\s*(?:[A-Za-z_]+\s*)?\(\s*$", re.IGNORECASE
+)
+"""Where a sample's size goes, which a linter reads only as a number."""
+
+
+def inline_position(before: str) -> bool:
+    """Whether a parameter after this SQL stands where an `Inline` value may."""
+    return _INLINE_AFTER.search(before) is not None
 
 
 def registered(macros: Iterable[Macro | str | Path]) -> dict[str, Macro]:

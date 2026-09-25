@@ -322,6 +322,45 @@ type:
 db.sql("events/at.sql", at=sa.bindparam("at", when, type_=sa.DateTime(timezone=True)))
 ```
 
+## Values written into the SQL
+
+Some places in SQL take no bound value, only something written into the
+statement: a stage in `COPY INTO`, a table being created or renamed, a sample's
+size. Pass an `Inline` value, and the template names it like any parameter:
+
+```python
+from sqlakit.sql import Inline
+
+db.sql(
+    "exports/orders.sql",
+    location=Inline.stage("exports", f"orders/{day}/"),
+    since=since,
+).execute()
+```
+
+```sql
+-- Snowflake
+COPY INTO :location
+FROM (SELECT * FROM orders WHERE placed_at >= :since)
+FILE_FORMAT = (TYPE = CSV)
+```
+
+`:location` is written as `@exports/orders/2026-09-25/`, and `:since` is bound
+as usual. A linter reads `:location` as a parameter, so the template stays SQL
+to it.
+
+Writing a value into SQL is how injection happens, so `SQLAKit` is strict
+about it:
+
+- `Inline.stage(name, path)` takes a stage name, and a path of letters,
+  digits, `_`, `.`, `-` and `=`, with no `..`. `Inline.name(value, *allowed)`
+  takes one of the names listed, or a plain one without a list.
+  `Inline(text)` writes anything, so keep it to code that checked the text.
+- The value is written only after `INTO`, `FROM`, `JOIN`, `LIST`,
+  `PUT <file>`, `TABLE`, `VIEW`, `STAGE`, `TO`, `SCHEMA`, `DATABASE`, `USE`,
+  and inside `SAMPLE (...)`. Anywhere else, such as `WHERE x = :v`, it raises
+  `InlineValueError`, since a bound value does the same there without the risk.
+
 ## Macros
 
 A call in the `tpl` schema writes the SQL that depends on the call's values or

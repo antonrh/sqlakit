@@ -9,6 +9,7 @@ from sqlakit._query import merged
 from sqlakit._sql import (
     BaseSQLQuery,
     Context,
+    Inline,
     Param,
     Sql,
     Templates,
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 __all__ = [
     "SQL",
     "Context",
+    "Inline",
     "Param",
     "SQLQuery",
     "SQLRows",

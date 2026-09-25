@@ -13,6 +13,7 @@ __all__ = [
     "DatabaseNotConfiguredError",
     "DefaultAliasError",
     "DetachedInstanceError",
+    "InlineValueError",
     "InstanceNotFoundError",
     "InvalidCursorError",
     "InvalidDatabaseConfigError",
@@ -506,6 +507,17 @@ class PageItemsMismatchError(SQLAKitError, TypeError):
             f"The page holds {expected} items and the transform returned {got}. "
             f"Totals and cursors belong to the page's rows, so a transform has "
             f"to return one item per row."
+        )
+
+
+class InlineValueError(SQLAKitError, ValueError):
+    """Raised when a value to write into the SQL is not one it can take."""
+
+    def __init__(self, value: object = "", problem: str = "") -> None:
+        self.value = value
+        super().__init__(
+            f"`{value}` {problem}. A value written into the SQL rather than bound "
+            f"is checked where it is built: see `Inline`."
         )
 
 

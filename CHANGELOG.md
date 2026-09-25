@@ -49,6 +49,10 @@
 - `sqlakit export sqruff` writes the `sqruff` settings that read the templates
   as SQL into `pyproject.toml`: the `placeholder` templater, and a value for
   each parameter named like a keyword, such as `:limit`.
+- `Inline` writes a value into the SQL where SQL takes no bound one: a stage
+  in `COPY INTO`, a table being created, a sample's size. `Inline.stage` and
+  `Inline.name` check what they are given, and a value is written only in those
+  places.
 - `IN (:ids)` binds a list as `IN :ids` does, and a `LIMIT :limit` or
   `OFFSET :offset` with no value takes every row and skips none, on every
   database.

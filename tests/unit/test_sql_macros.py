@@ -8,7 +8,7 @@ import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import sqlalchemy as sa
@@ -17,6 +17,7 @@ from sqlalchemy.engine import default
 
 from sqlakit import (
     Database,
+    InlineValueError,
     InvalidSortStringError,
     MacroArgumentError,
     MacroDefinitionError,
@@ -29,7 +30,7 @@ from sqlakit import (
     UnknownOrderFieldError,
 )
 from sqlakit import _sql as sql_module
-from sqlakit.sql import Context, Param, Sql, Templates, sql_macro, tpl
+from sqlakit.sql import Context, Inline, Param, Sql, Templates, sql_macro, tpl
 
 TEMPLATES = {
     "users/list.tpl.sql": """
@@ -1692,3 +1693,123 @@ def test_check_reads_the_body_of_a_macro_nothing_calls(tmp_path: Path) -> None:
     )
     with pytest.raises(UnknownMacroError, match=r"tpl\.nope in _macros\.sql:1"):
         db.sql.check()
+
+
+# values written into the SQL
+
+
+@pytest.mark.parametrize(
+    ("name", "path", "written"),
+    [
+        ("exports", "", "@exports"),
+        ("db.raw.exports", "orders/2026/", "@db.raw.exports/orders/2026/"),
+        ("~", "a.csv", "@~/a.csv"),
+        (
+            "%orders",
+            "date=2026-09-25/part-0.csv",
+            "@%orders/date=2026-09-25/part-0.csv",
+        ),
+    ],
+)
+def test_a_stage_is_written_as_snowflake_names_one(
+    name: str, path: str, written: str
+) -> None:
+    assert Inline.stage(name, path) == Inline(written)
+
+
+@pytest.mark.parametrize(
+    ("name", "path"),
+    [
+        ("a b", ""),
+        ("x;drop", ""),
+        ("exports", "../secrets"),
+        ("exports", "a//b"),
+        ("exports", "a b.csv"),
+        ("exports", "a';--"),
+    ],
+)
+def test_a_stage_that_is_not_one_is_refused(name: str, path: str) -> None:
+    with pytest.raises(InlineValueError):
+        Inline.stage(name, path)
+
+
+def test_a_name_is_plain_or_one_of_those_listed() -> None:
+    assert Inline.name("orders_2026") == Inline("orders_2026")
+    assert Inline.name("raw.orders") == Inline("raw.orders")
+    assert Inline.name("b", "a", "b") == Inline("b")
+    with pytest.raises(InlineValueError, match="is none of a, b"):
+        Inline.name("c", "a", "b")
+    with pytest.raises(InlineValueError, match="is not a plain name"):
+        Inline.name("x; DROP TABLE users")
+    with pytest.raises(TypeError, match="takes the text to write"):
+        Inline(1)  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "COPY INTO :v FROM (SELECT 1)",
+        "COPY INTO orders FROM :v",
+        "LIST :v",
+        "PUT file:///tmp/a.csv :v",
+        "CREATE TABLE :v (id INT)",
+        "ALTER TABLE t RENAME TO :v",
+        "USE SCHEMA :v",
+        "SELECT * FROM :v",
+        "SELECT * FROM t JOIN :v ON TRUE",
+        "SELECT * FROM t SAMPLE (:v)",
+        "SELECT * FROM t TABLESAMPLE BERNOULLI (:v)",
+    ],
+)
+def test_an_inline_value_is_written_where_sql_takes_no_bound_one(source: str) -> None:
+    assert bound(source, postgresql.dialect(), v=Inline("x_1")) == source.replace(
+        ":v", "x_1"
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "after"),
+    [
+        ("SELECT * FROM t WHERE x = :v", "x ="),
+        ("SELECT * FROM t WHERE x IN (:v)", "IN ("),
+        ("SELECT :v", "SELECT"),
+        ("SELECT * FROM t LIMIT :v", "t LIMIT"),
+    ],
+)
+def test_an_inline_value_where_a_bound_one_would_do_is_refused(
+    source: str, after: str
+) -> None:
+    with pytest.raises(InlineValueError) as raised:
+        bound(source, postgresql.dialect(), v=Inline("1"))
+    assert str(raised.value).startswith(f"`v` stands after `{after}`, where SQL")
+
+
+def test_an_inline_value_leaves_strings_and_comments_alone() -> None:
+    source = "COPY INTO :v FROM (SELECT ':v' AS s -- :v\n)"
+    assert bound(source, postgresql.dialect(), v=Inline("@s")) == (
+        "COPY INTO @s FROM (SELECT ':v' AS s -- :v\n)"
+    )
+
+
+def test_an_inline_value_is_read_through_a_path() -> None:
+    source = "COPY INTO :export.location FROM (SELECT 1)"
+    assert bound(
+        source, postgresql.dialect(), export={"location": Inline.stage("out", "a/")}
+    ) == ("COPY INTO @out/a/ FROM (SELECT 1)")
+
+
+def test_an_inline_value_runs_and_binds_nothing(tmp_path: Path) -> None:
+    write(tmp_path, {"make.sql": "CREATE TABLE :name (id INT)"})
+    db = Database(
+        "sqlite://", engine_args={"poolclass": sa.StaticPool}, templates=tmp_path
+    )
+    with db.connect():
+        statement = cast(
+            "sa.TextClause", db.sql("make.sql", name=Inline.name("made")).statement
+        )
+        assert (str(statement).splitlines()[-1], statement.compile().params) == (
+            "CREATE TABLE made (id INT)",
+            {},
+        )
+        db.sql("make.sql", name=Inline.name("made")).execute()
+        assert db.sql.from_string("SELECT count(*) FROM made").scalars().one() == 0

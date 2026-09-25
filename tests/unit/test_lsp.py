@@ -708,3 +708,19 @@ def test_a_column_goes_to_the_editor_in_utf16(tmp_path: Path) -> None:
     target = _source_of(macro)
     assert target == Target(path, 0, 21)
     assert _utf16_column(target) == 22
+
+
+def test_export_gives_a_stage_and_a_sample_the_value_a_linter_reads(
+    project: Path,
+) -> None:
+    (project / "sql" / "copy.sql").write_text(
+        "COPY INTO orders FROM :location;\n"
+        "LIST :listed;\n"
+        "COPY INTO :target FROM (SELECT * FROM t SAMPLE (:percent) LIMIT :limit);\n"
+    )
+    assert load_project(project).placeholder_values() == {
+        "limit": "1",
+        "listed": "@stage/path",
+        "location": "@stage/path",
+        "percent": "10",
+    }

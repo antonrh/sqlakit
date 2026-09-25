@@ -185,6 +185,8 @@ Covered in [SQL templates](sql.md).
 
 ::: sqlakit.sql.Context
 
+::: sqlakit.sql.Inline
+
 ## The async classes
 
 The same classes, awaited.
@@ -355,6 +357,8 @@ except ValueError:  # any bad input, from here or elsewhere
 ::: sqlakit.StrayParameterError
 
 ::: sqlakit.ParameterPathError
+
+::: sqlakit.InlineValueError
 
 ::: sqlakit.MacroSyntaxError
 
