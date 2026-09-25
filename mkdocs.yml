@@ -1,6 +1,6 @@
 site_name: SQLAKit
 site_description: "A toolkit for SQLAlchemy applications."
-repo_url: https://github.com/antonrh/sqlakit
+repo_url: https://github.com/sqlakit/sqlakit
 edit_uri: ""
 
 theme:

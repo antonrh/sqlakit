@@ -1,7 +1,7 @@
 # Examples
 
 Complete programs, not snippets. Each one is a file in the repository under
-[`examples/`](https://github.com/antonrh/sqlakit/tree/main/examples), and the
+[`examples/`](https://github.com/sqlakit/sqlakit/tree/main/examples), and the
 test suite runs each one, so the code on this page is tested code.
 
 | | |

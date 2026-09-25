@@ -30,8 +30,8 @@ dependencies = [
 sqlakit = "sqlakit.pytest_plugin"
 
 [project.urls]
-Repository = "https://github.com/antonrh/sqlakit"
-Documentation = "https://github.com/antonrh/sqlakit"
+Repository = "https://github.com/sqlakit/sqlakit"
+Documentation = "https://sqlakit.readthedocs.io/en/stable/"
 
 [project.optional-dependencies]
 asyncio = [

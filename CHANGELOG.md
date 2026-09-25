@@ -606,7 +606,7 @@
   places.
 
 Every released version, and what changed in it. The same text is on the
-[releases page](https://github.com/antonrh/sqlakit/releases).
+[releases page](https://github.com/sqlakit/sqlakit/releases).
 
 `SQLAKit` is on `0.x`, so a minor version is where something breaks and a patch
 version is where nothing does.
