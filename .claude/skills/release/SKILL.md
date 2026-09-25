@@ -73,7 +73,7 @@ came from, the way the generated list does:
 ## Breaking
 
 * `order_by` takes `ignore_case` in place of `ci_fields`, and asks the dialect
-  how to compare. by @antonrh in https://github.com/antonrh/sqlakit/pull/20
+  how to compare. by @antonrh in https://github.com/sqlakit/sqlakit/pull/20
 ```
 
 Say what a reader has to do differently. A breaking change gets the old code
@@ -87,7 +87,7 @@ lockfile updates.
 
 ## Once, on the publishing side
 
-Trusted publishing needs a publisher on PyPI (owner `antonrh`, repository
+Trusted publishing needs a publisher on PyPI (owner `sqlakit`, repository
 `sqlakit`, workflow `release.yml`, environment `release`) and a `release`
 environment on GitHub. Without them the workflow runs green until the upload
 step and fails there with `invalid-publisher`. The environment is also where a
