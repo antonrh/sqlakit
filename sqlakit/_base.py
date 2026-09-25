@@ -24,7 +24,6 @@ import sqlalchemy as sa
 import sqlalchemy.event
 from typing_extensions import Unpack
 
-from ._debugserver import DebugServer, send_recording
 from ._discovery import import_string
 from ._recording import (
     KEEP,
@@ -358,7 +357,7 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
         stacks: bool = False,
         skip_queries_from: Sequence[str | PathLike[str]] = (),
         into: Recording | None = None,
-        debugserver: DebugServer | tuple[str, int] | None = None,
+        send_to: Callable[[Recording], object] | None = None,
     ) -> Iterator[Recording]:
         """Record the statements of this block, and what they add up to.
 
@@ -373,8 +372,8 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
 
         ``logger`` writes a summary when the block ends, at a level the numbers
         choose. ``echo`` prints the statements instead, coloured where `rich` is
-        installed. ``debugserver`` sends the recording to a `sqlakit debugserver`
-        listening there, and says nothing when none is. ``stacks`` has every
+        installed. ``send_to`` is called with the recording, to hand it on:
+        `sqlakit_debugserver.DebugServer` is one. ``stacks`` has every
         statement remember the frames that led to it, at the cost of a stack walk
         each time. ``skip_queries_from`` names the files whose statements are none of
         your business: what those run is not recorded at all, which leaves a test's
@@ -403,8 +402,8 @@ class BaseDatabase(Generic[ConnectionT, SessionT]):
                 recording.log(logger)
             if echo:
                 recording.echo()
-            if debugserver is not None:
-                send_recording(recording, debugserver)
+            if send_to is not None:
+                send_to(recording)
 
     @contextmanager
     def assert_queries(
@@ -886,7 +885,7 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
         stacks: bool = False,
         skip_queries_from: Sequence[str | PathLike[str]] = (),
         into: Recording | None = None,
-        debugserver: DebugServer | tuple[str, int] | None = None,
+        send_to: Callable[[Recording], object] | None = None,
         using: str | DatabaseT | Sequence[str | DatabaseT] | None = None,
     ) -> Iterator[Recording]:
         """Record every database this registry has, not the default one alone.
@@ -936,8 +935,8 @@ class _DatabaseRegistryMixin(BaseDatabase[Any, Any], Generic[DatabaseT]):
                     together.log(logger)
                 if echo:
                     together.echo()
-                if debugserver is not None:
-                    send_recording(together, debugserver)
+                if send_to is not None:
+                    send_to(together)
 
     @contextmanager
     def unbound(self) -> Iterator[None]:

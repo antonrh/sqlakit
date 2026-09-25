@@ -26,9 +26,6 @@ dependencies = [
     "typing-extensions>=4.13",
 ]
 
-[project.scripts]
-sqlakit = "sqlakit._cli:main"
-
 [project.entry-points.pytest11]
 sqlakit = "sqlakit.pytest_plugin"
 
@@ -211,4 +208,4 @@ default_item_type = "cmd"
 [tool.codespell]
 # `froms` is SQLAlchemy's own word for what a SELECT selects from.
 ignore-words-list = "froms"
-skip = "./.venv,./site,./uv.lock,./.git,./debugserver/node_modules,./debugserver/bun.lock,./sqlakit/debugserver.html"
+skip = "./.venv,./site,./uv.lock,./.git"

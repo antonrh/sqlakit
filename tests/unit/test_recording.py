@@ -322,6 +322,31 @@ def test_a_database_of_its_own_says_which_one_it_is() -> None:
     warehouse.dispose()
 
 
+def test_a_recording_is_sent_on_when_the_block_ends(db: Database) -> None:
+    sent: list[Recording] = []
+
+    with db.recording("GET /players", send_to=sent.append) as record, db.connect():
+        Player.query.count()
+
+        assert sent == []
+
+    assert sent == [record]
+    assert sent[0].count == 1
+
+
+def test_a_registry_sends_its_recording_once(registry: None) -> None:
+    sent: list[Recording] = []
+
+    with sqlakit.db.recording(send_to=sent.append) as record:
+        with sqlakit.db.connect() as conn:
+            conn.execute(sa.text("SELECT 1"))
+        with sqlakit.db["warehouse"].connect() as conn:
+            conn.execute(sa.text("SELECT 1"))
+
+    assert sent == [record]
+    assert record.databases == ("default", "warehouse")
+
+
 def test_a_recording_watches_the_databases_it_was_given(registry: None) -> None:
     def run(where: Any) -> None:
         with where.connect() as conn:

@@ -113,15 +113,19 @@ recording will include the line of your code that issued the repeated query.
 
 ## The debug server
 
-`sqlakit debugserver` serves a page that fills as the recordings arrive:
+`sqlakit-debugserver` serves a page that fills as the recordings arrive. It
+is a package of its own:
 
 ```console
-$ sqlakit debugserver
+$ pip install sqlakit-debugserver
+$ sqlakit-debugserver
 SQLAKit debug server on http://localhost:5555
 
 Send recordings to it:
 
-  │  with db.recording("GET /users", debugserver=("localhost", 5555)):
+  │  from sqlakit_debugserver import DebugServer
+  │
+  │  with db.recording("GET /users", send_to=DebugServer("localhost", 5555)):
   │      list_users()
 ```
 
@@ -148,14 +152,17 @@ One server watches several applications, and a recording says which one ran
 it:
 
 ```python
-from sqlakit import DebugServer
+from sqlakit_debugserver import DebugServer
 
-with db.recording(
-    "GET /users",
-    debugserver=DebugServer("localhost", 5555, app="web", tags=("api",)),
-):
+server = DebugServer("localhost", 5555, app="web", tags=("api",))
+
+with db.recording("GET /users", send_to=server):
     list_users()
 ```
+
+`send_to` takes any function of the recording, called when the block ends.
+`DebugServer` is one, and a function of your own can hand the recording to
+anything else.
 
 The server holds the last 200 recordings in memory and writes nothing to disk.
 Sending runs on a thread of its own, so a block never waits on it, and a
@@ -164,7 +171,7 @@ recording that cannot be delivered is dropped rather than raised.
 ### The queries a test run made
 
 `--sqlakit-report` writes the same page as a file, with the recordings inside
-it, so it opens without a server:
+it, so it opens without a server. It needs `sqlakit-debugserver` installed:
 
 ```console
 $ pytest --sqlakit-report
@@ -293,11 +300,11 @@ recording, which carries the label:
 ```python
 record = Recording(label="GET /users")
 
-with db1.recording(into=record, debugserver=SERVER), db2.recording(into=record):
+with db1.recording(into=record, send_to=server), db2.recording(into=record):
     handle_request()
 ```
 
-The debug server gets that recording once, whether one block names it or both
+The debug server gets that recording once, whether one block sends it or both
 do.
 
 ## Queries in a test

@@ -216,16 +216,20 @@ project has `rich`, the output is colored too.
 
 ### The debug server
 
-`sqlakit debugserver` serves a page that fills as the recordings arrive:
+`sqlakit-debugserver` serves a page that fills as the recordings arrive. It
+is a package of its own:
 
 ```console
-$ sqlakit debugserver
+$ pip install sqlakit-debugserver
+$ sqlakit-debugserver
 
 SQLAKit debug server on http://localhost:5555
 
 Send recordings to it:
 
-  │  with db.recording("GET /users", debugserver=("localhost", 5555)):
+  │  from sqlakit_debugserver import DebugServer
+  │
+  │  with db.recording("GET /users", send_to=DebugServer("localhost", 5555)):
   │      list_users()
 ```
 

@@ -19,13 +19,11 @@ The tag builds from whatever the working tree says, so leave it clean:
 $ uv run poe lint
 $ uv run pytest
 $ uv run mkdocs build --strict
-$ cd debugserver && bun test && bun run dist && cd ..
-$ git diff --stat sqlakit/debugserver.html
 ```
 
-The last two rebuild the debug server's page and show whether what is
-committed is what the source builds. The wheel ships the built file, so a
-release with a stale one ships a stale page.
+The debug server and its page are released from their own repository,
+`sqlakit-debugserver`, which depends on `sqlakit`. A change to what
+`as_payload` sends needs a release of both.
 
 `poe lint` covers `ruff`, `ty`, `codespell` and `tools/lint_docs.py`. The
 integration tests need PostgreSQL and MySQL in containers, and `poe test` skips
