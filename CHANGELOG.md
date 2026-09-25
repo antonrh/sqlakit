@@ -1,10 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.20.0
 
 ### Changed
 
-- The debug server moved to a package of its own, `sqlakit-debugserver`, and
+- The debug server moved to a package of its own,
+  [`sqlakit-debugserver`](https://github.com/sqlakit/sqlakit-debugserver), and
   runs as `sqlakit-debugserver` in place of `sqlakit debugserver`. Install it
   with `pip install sqlakit-debugserver`. `--sqlakit-report` needs it too,
   since the report is the server's page.

@@ -216,8 +216,8 @@ project has `rich`, the output is colored too.
 
 ### The debug server
 
-`sqlakit-debugserver` serves a page that fills as the recordings arrive. It
-is a package of its own:
+[`sqlakit-debugserver`](https://github.com/sqlakit/sqlakit-debugserver) serves a page that fills as the recordings
+arrive. It is a package of its own:
 
 ```console
 $ pip install sqlakit-debugserver
