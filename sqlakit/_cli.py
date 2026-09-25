@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import os
 import sys
 
-from ._discovery import import_string
-from ._sql import Macro, registered, signature_of
+from ._sql import registered, signature_of
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -44,10 +42,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _macros(modules: list[str], *, markdown: bool, namespace: str) -> int:
     """Print every macro: the built-in ones, and those the modules define."""
-    found: list[Macro] = []
-    for path in modules:
-        found.extend(_macros_in(path))
-    for macro in registered(found).values():
+    for macro in registered(modules).values():
         signature = signature_of(macro, namespace)
         if markdown:
             _say(f"### `{signature}`\n\n{macro.doc}\n")
@@ -55,14 +50,6 @@ def _macros(modules: list[str], *, markdown: bool, namespace: str) -> int:
             summary = macro.doc.split("\n", 1)[0]
             _say(f"{_paint(signature, BOLD)}\n    {summary}")
     return 0
-
-
-def _macros_in(path: str) -> list[Macro]:
-    """Return the macro `module:name` names, or every macro of a module."""
-    if ":" in path:
-        return [import_string(path)]
-    module = importlib.import_module(path)
-    return [value for value in vars(module).values() if isinstance(value, Macro)]
 
 
 

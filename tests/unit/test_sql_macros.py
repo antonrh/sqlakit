@@ -19,6 +19,7 @@ from sqlakit import (
     MacroSyntaxError,
     StrayParameterError,
     UnknownIdentifierError,
+    UnknownImportPathError,
     UnknownMacroError,
     UnknownOrderFieldError,
 )
@@ -952,3 +953,26 @@ def test_a_literal_annotation_names_the_sql_an_argument_may_be() -> None:
         return which
 
     assert pick.slots[0].choices == ("'a'", "'b'")
+
+
+def test_macros_are_imported_from_a_path() -> None:
+    assert set(Templates(macros=[__name__]).macros) - set(
+        sql_module.BUILTIN_MACROS
+    ) == {
+        "blue_or",
+        "for_teams",
+        "json_object",
+        "search",
+    }
+    for path in (f"{__name__}:search", f"{__name__}.search"):
+        assert Templates(macros=[path]).macros["search"] is search
+
+
+def test_a_path_to_something_else_is_not_a_macro() -> None:
+    with pytest.raises(MacroDefinitionError, match="it is not decorated @sql_macro"):
+        Templates(macros=[f"{__name__}:write"])
+
+
+def test_a_path_that_names_nothing_is_refused() -> None:
+    with pytest.raises(UnknownImportPathError):
+        Templates(macros=[f"{__name__}:nope"])

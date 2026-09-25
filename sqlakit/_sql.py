@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import inspect
 import re
 from collections.abc import Mapping, Sized
@@ -24,6 +26,7 @@ from typing import (
 
 import sqlalchemy as sa
 
+from ._discovery import import_string
 from ._query import _field_named, _parse_sort_field
 from .exceptions import (
     AsyncFilterError,
@@ -973,15 +976,24 @@ def _rendered(
     return template.render(ctx), ctx.values
 
 
-def registered(macros: Iterable[Macro]) -> dict[str, Macro]:
+def registered(macros: Iterable[Macro | str]) -> dict[str, Macro]:
     """Return the built-in macros and these, by name.
 
+    A string is where to import them from: `app.sql.macros` for every macro of
+    that module, `app.sql.macros:for_accounts` for one of them.
+
     Raises:
-        MacroDefinitionError: if two macros share a name.
+        MacroDefinitionError: if two macros share a name, or a path names
+            something that is not a macro.
+        UnknownImportPathError: if a path names nothing that can be imported.
 
     """
     by_name = dict(BUILTIN_MACROS)
-    for macro in macros:
+    for macro in (
+        found
+        for given in macros
+        for found in (_imported_macros(given) if isinstance(given, str) else [given])
+    ):
         if not isinstance(macro, Macro):
             raise MacroDefinitionError(
                 getattr(macro, "__name__", repr(macro)),
@@ -991,6 +1003,21 @@ def registered(macros: Iterable[Macro]) -> dict[str, Macro]:
             raise MacroDefinitionError(macro.name, "another macro has that name")
         by_name[macro.name] = macro
     return by_name
+
+
+def _imported_macros(path: str) -> list[Any]:
+    """Return the macro a path names, or every macro of the module it names."""
+    if ":" not in path and _is_module(path):
+        module = importlib.import_module(path)
+        return [value for value in vars(module).values() if isinstance(value, Macro)]
+    return [import_string(path)]
+
+
+def _is_module(path: str) -> bool:
+    try:
+        return importlib.util.find_spec(path) is not None
+    except ModuleNotFoundError:  # a parent that is a module, not a package
+        return False
 
 
 # The built-in macros.
@@ -1463,6 +1490,7 @@ class Templates:
 
     ```python
     Templates("app/sql", macros=[for_accounts])
+    Templates("app/sql", macros=["app.sql.macros"])  # every macro of a module
     ```
 
     ``namespace`` is the schema name calls are written under, `tpl` unless a
@@ -1481,7 +1509,7 @@ class Templates:
         auto_reload: bool = False,
         filters: Mapping[str, Callable[..., Any] | Filter] | None = None,
         globals: Mapping[str, Any] | None = None,  # noqa: A002
-        macros: Iterable[Macro] = (),
+        macros: Iterable[Macro | str] = (),
         engine: Literal["jinja", "tpl"] = "jinja",
         namespace: str = NAMESPACE,
     ) -> None:
