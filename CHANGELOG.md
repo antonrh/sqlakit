@@ -45,10 +45,12 @@
   file whose name ends in `macros.sql` is found in the template directories.
   `@sql_macro("file.sql")` keeps a macro's SQL in a file, and its function
   returns the values the SQL reads.
-- `sqlakit macros` lists the macros, `sqlakit check` checks every template of a
-  project, and `sqlakit lsp` serves the same checks to an editor, with
-  completion and hover. Both read where the templates and the macros are from
-  the project's code without running it. The server needs the `lsp` extra.
+- `sqlakit macros` lists the macros, and `sqlakit check` checks every template
+  of a project. It reads where the templates and the macros are from the
+  project's code without running it. The `sqlakit` command is back for these,
+  without `debugserver`.
+- [`sqlakit-lsp`](https://github.com/sqlakit/sqlakit-lsp), a package of its own, serves the same
+  checks to an editor, with completion, hover and go to definition.
 - `sqlakit export sqruff` writes the `sqruff` settings that read the templates
   as SQL into `pyproject.toml`: the `placeholder` templater, and a value for
   each parameter named like a keyword, such as `:limit`.
@@ -58,7 +60,7 @@
   and DataGrip read a `tpl.` call as a known function.
 - `[tool.sqlakit.templates]` in `pyproject.toml` takes `paths`, `macros`,
   `namespace` and `dialect`, for a project whose code builds its paths in a way
-  `sqlakit check`, `lsp` and `export` can't read.
+  `sqlakit check`, `export` and `sqlakit-lsp` can't read.
 - `Inline` writes a value into the SQL where SQL takes no bound one: a stage
   in `COPY INTO`, a table being created, a sample's size. `Inline.stage` and
   `Inline.name` check what they are given, and a value is written only in those

@@ -24,7 +24,7 @@ from sqlalchemy.dialects.postgresql.base import (
 )
 from sqlalchemy.sql.compiler import RESERVED_WORDS
 
-from sqlakit._sql import (
+from ._sql import (
     SAMPLE_AFTER,
     STAGE_AFTER,
     MacroTemplate,
@@ -33,15 +33,14 @@ from sqlakit._sql import (
     inline_position,
     sql_macros,
 )
-from sqlakit.exceptions import (
+from ._static import discover
+from .exceptions import (
     MacroArgumentError,
     MacroDefinitionError,
     MacroSyntaxError,
     ProjectConfigError,
     UnknownMacroError,
 )
-
-from ._static import discover
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

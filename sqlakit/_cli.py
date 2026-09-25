@@ -8,11 +8,10 @@ import os
 import sys
 from pathlib import Path
 
+from ._project import Problem, load_project
+from ._pycharm import DIALECTS, ddl, dialects
 from ._sql import registered, signature_of
-from .editor._lsp import serve
-from .editor._project import Problem, load_project
-from .editor._pycharm import DIALECTS, ddl, dialects
-from .editor._sqruff import settings, stale
+from ._sqruff import settings, stale
 from .exceptions import ProjectConfigError
 
 
@@ -47,10 +46,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     check.add_argument("--format", choices=("text", "json"), default="text")
 
-    commands.add_parser(
-        "lsp", help="run the language server for SQL templates, over stdio"
-    )
-
     export = commands.add_parser(
         "export", help="write what another tool needs to read the templates"
     )
@@ -75,9 +70,6 @@ def main(argv: list[str] | None = None) -> int:
         return export(
             Path(arguments.project), dialect=arguments.dialect, check=arguments.check
         )
-    if arguments.command == "lsp":  # pragma: no cover - run by an editor
-        serve()
-        return 0
     if arguments.command == "macros":
         return _macros(
             arguments.modules,

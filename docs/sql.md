@@ -531,7 +531,7 @@ Templates(BASE_DIR, macros=["app.sql.macros", SHARED_DIR / "tenant.sql"])
 
 The file is SQL a linter reads like a template, with each argument declared as
 a table, so it checks the references in the expression too. `check()`,
-`sqlakit check` and `sqlakit lsp` read it as well: an unknown macro in a body
+`sqlakit check` and `sqlakit-lsp` read it as well: an unknown macro in a body
 is reported on its line in the file.
 
 ## Macros with their SQL in a file
@@ -672,15 +672,16 @@ dialect = "postgresql"
 | `dialect` | the dialect `sqlakit export` writes for, unless `--dialect` says another |
 
 Each key replaces what the reading found, and a key left out keeps it. Python
-macros are always found by their decorator. `sqlakit check`, `sqlakit lsp` and
-`sqlakit export` all read this table, and the application never does.
+macros are always found by their decorator. `sqlakit check`, `sqlakit export`
+and `sqlakit-lsp` all read this table, and the application never does.
 
 ## Editor support
 
-`sqlakit lsp` is a language server for your templates. Install the extra:
+[`sqlakit-lsp`](https://github.com/sqlakit/sqlakit-lsp) is a language server for your templates. It is a
+package of its own:
 
 ```console
-$ pip install "sqlakit[lsp]"
+$ pip install sqlakit-lsp
 ```
 
 In a `.sql` template it gives:
@@ -695,12 +696,12 @@ In your Python, the name in `db.sql("users/search.sql")`, `from_file` or
 `from_sql` completes, links to the file, and is marked when no template
 directory holds it.
 
-The server talks over stdio. Register `sqlakit lsp` for `.sql` and `.py` files,
+The server talks over stdio. Register `sqlakit-lsp` for `.sql` and `.py` files,
 next to the language servers you already run for them. In Neovim 0.11:
 
 ```lua
 vim.lsp.config("sqlakit", {
-  cmd = { "sqlakit", "lsp" },
+  cmd = { "sqlakit-lsp" },
   filetypes = { "sql", "python" },
   root_markers = { "pyproject.toml" },
 })

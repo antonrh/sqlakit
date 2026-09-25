@@ -16,7 +16,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import default
 
 from sqlakit import _sql as sql_module
-from sqlakit.editor._project import placeholders_of
+from sqlakit._project import placeholders_of
 from sqlakit.sql import Context
 
 ROOT = Path(__file__).parent.parent.parent

@@ -16,7 +16,7 @@ from sqlalchemy.dialects.postgresql.base import (
 )
 from sqlalchemy.sql.compiler import RESERVED_WORDS
 
-from sqlakit._sql import INCLUDE, Macro
+from ._sql import INCLUDE, Macro
 
 if TYPE_CHECKING:
     from pathlib import Path
