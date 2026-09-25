@@ -32,6 +32,7 @@ from .exceptions import (
     SQLNotConfiguredError,
     StrayParameterError,
     TemplateNotFoundError,
+    UnknownIdentifierError,
     UnknownMacroError,
     UnknownOrderFieldError,
 )
@@ -746,16 +747,13 @@ def order_by(ctx: Context, sort: Param, column: Sql, *columns: Sql) -> str:
     string does not say. MySQL has no `NULLS LAST`, and sorts by `IS NULL` first. `(SELECT NULL)`, which orders by nothing, when there is
     nothing to sort by: PostgreSQL refuses a bare `NULL`.
     """
-    offered: dict[str, str] = {}
-    default_nulls = None
-    for written in (column, *columns):
-        option = written.strip().strip("'").lower()
-        if written.strip().startswith("'") and option in ("nulls_first", "nulls_last"):
-            default_nulls = option
-        elif named := _COLUMN_AS.fullmatch(written):
-            offered[named.group(1)] = named.group(2)
-        else:
-            offered[_last_name(written)] = written.strip()
+    nulls_options = {"'nulls_first'", "'nulls_last'"}
+    written = [one.strip() for one in (column, *columns)]
+    options = [
+        one.strip("'").lower() for one in written if one.lower() in nulls_options
+    ]
+    default_nulls = options[-1] if options else None
+    offered = _offered(one for one in written if one.lower() not in nulls_options)
     requested = sort.value
     if not requested:
         return _NO_ORDER
@@ -789,6 +787,21 @@ def _sort_term(
     return f"{term} NULLS {'LAST' if last else 'FIRST'}"
 
 
+def _offered(columns: Iterable[str]) -> dict[str, str]:
+    """Return the columns a template lists, by the name a request asks for each.
+
+    `u.name` is asked for as `name`, and `name = <expression>` is the expression
+    under that name.
+    """
+    offered = {}
+    for column in columns:
+        if named := _COLUMN_AS.fullmatch(column):
+            offered[named.group(1)] = named.group(2)
+        else:
+            offered[_last_name(column)] = column.strip()
+    return offered
+
+
 def _last_name(column: str) -> str:
     """Return the name a column is asked for by: `u.name` is `name`."""
     return column.strip().rsplit(".", 1)[-1].strip('"`[]')
@@ -817,8 +830,61 @@ def ci_contains(
     return f"lower({column}) LIKE lower({pattern}) ESCAPE '!'"
 
 
+@sql_macro
+def identifier(ctx: Context, name: Param, *allowed: Sql) -> str:
+    """Write a name from a parameter, quoted the way this database quotes one.
+
+    What the `identifier` filter does in a Jinja template, and the same SQL: a
+    name that needs no quoting is left alone. A tuple or a list is a qualified
+    name, `("reports", "events")` for `reports.events`.
+
+    With names listed after the parameter, only those are taken, matched the way
+    `order_by` matches a sort string, and written as the template lists them:
+
+    ```sql
+    SELECT tpl.identifier(:column, id, name, fans = fans_count) FROM artists
+    ```
+
+    A name that comes from a request wants the list: quoting keeps SQL out, but
+    not a column the table does not have.
+    """
+    value = name.value
+    if allowed:
+        offered = _offered(allowed)
+        if not isinstance(value, str) or not value:
+            raise UnknownIdentifierError(value, offered)
+        try:
+            return offered[_field_named(value, offered)]
+        except UnknownOrderFieldError:
+            raise UnknownIdentifierError(value, offered) from None
+    parts = (value,) if isinstance(value, str) else tuple(value or ())
+    if not parts or not all(isinstance(part, str) and part for part in parts):
+        raise UnknownIdentifierError(value)
+    return ".".join(ctx.quote(part) for part in parts)
+
+
+@sql_macro
+def inclause(ctx: Context, values: Param) -> str:
+    """Each value of a list as a parameter of its own, for `IN (...)`.
+
+    What the `inclause` filter does in a Jinja template. The parentheses are the
+    template's, so the SQL stays SQL: `WHERE team IN (tpl.inclause(:teams))`.
+    `IN :teams` binds the list as one expanding parameter instead, which is what
+    a template usually wants.
+
+    Raises:
+        MacroArgumentError: if the list is empty: `IN ()` is not SQL.
+
+    """
+    items = list(values.value or ())
+    if not items:
+        problem = f"`:{values.name}` is empty, and `IN ()` is not SQL"
+        raise MacroArgumentError(inclause.name, problem)
+    return ", ".join(ctx.bind(item) for item in items)
+
+
 BUILTIN_MACROS: Mapping[str, Macro] = {
-    macro.name: macro for macro in (if_set, order_by, ci_contains)
+    macro.name: macro for macro in (if_set, order_by, ci_contains, identifier, inclause)
 }
 
 
@@ -962,7 +1028,7 @@ class Templates:
 
     A file named `*.tpl.sql` is not Jinja: it is SQL with `:name` parameters and
     `tpl.<macro>(...)` calls. ``macros`` are the ones an application adds to the
-    built-in `if_set`, `order_by` and `ci_contains`:
+    built-in `if_set`, `order_by`, `ci_contains`, `identifier` and `inclause`:
 
     ```python
     Templates("app/sql", macros=[for_accounts])

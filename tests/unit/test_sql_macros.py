@@ -17,6 +17,7 @@ from sqlakit import (
     MacroDefinitionError,
     MacroSyntaxError,
     StrayParameterError,
+    UnknownIdentifierError,
     UnknownMacroError,
     UnknownOrderFieldError,
 )
@@ -34,6 +35,12 @@ TEMPLATES = {
     """,
     "users/for_teams.tpl.sql": """
         SELECT name FROM users WHERE tpl.for_teams(:teams) ORDER BY id
+    """,
+    "users/in_teams.tpl.sql": """
+        SELECT name FROM users WHERE team IN (tpl.inclause(:teams)) ORDER BY id
+    """,
+    "users/in_teams.sql": """
+        SELECT name FROM users WHERE team IN {{ teams | inclause }} ORDER BY id
     """,
     "users/jinja.sql": """
         SELECT name FROM users WHERE team = {{ team }} ORDER BY id
@@ -241,7 +248,8 @@ def test_an_unknown_macro_is_refused_when_the_file_is_read() -> None:
         render("SELECT 1\nWHERE tpl.foo(:x)", postgresql.dialect(), x=1)
     assert str(raised.value) == (
         "Unknown macro tpl.foo in inline.tpl.sql:2; available: ci_contains, "
-        "for_teams, if_set, json_object, order_by. Register one with "
+        "for_teams, identifier, if_set, inclause, json_object, order_by. "
+        "Register one with "
         "`Templates(..., macros=[...])`."
     )
 
@@ -368,6 +376,8 @@ def test_signature_says_how_a_template_calls_a_macro() -> None:
         "tpl.if_set(:value, expr[, otherwise])",
         "tpl.order_by(:sort, column, *columns)",
         "tpl.ci_contains(column, :text[, collation])",
+        "tpl.identifier(:name, *allowed)",
+        "tpl.inclause(:values)",
         "tpl.json_object(*pairs)",
     ]
 
@@ -440,3 +450,57 @@ async def test_the_async_api_renders_the_same_macros(tmp_path: Path) -> None:
     async with db.connect():
         assert await db.sql("one.tpl.sql", x=None).scalars().one() == 2
     await db.dispose()
+
+
+@pytest.mark.parametrize(
+    ("value", "quoted"),
+    [
+        ("name", "name"),
+        ("Mixed Name", '"Mixed Name"'),
+        ('say "hi"', '"say ""hi"""'),
+        (("reports", "Events"), 'reports."Events"'),
+    ],
+)
+def test_identifier_quotes_as_the_jinja_filter_does(
+    tmp_path: Path, value: Any, quoted: str
+) -> None:
+    write(
+        tmp_path,
+        {
+            "jinja.sql": "SELECT {{ column | identifier }}",
+            "macro.tpl.sql": "SELECT tpl.identifier(:column)",
+        },
+    )
+    db = Database("postgresql+psycopg://", templates=tmp_path)
+    jinja = str(db.sql("jinja.sql", column=value).statement).splitlines()[-1]
+    macro = str(db.sql("macro.tpl.sql", column=value).statement).splitlines()[-1]
+    assert jinja == macro == f"SELECT {quoted}"
+
+
+def test_identifier_takes_only_the_names_it_lists() -> None:
+    source = "SELECT tpl.identifier(:c, a.id, fans = fans_count)"
+    dialect = postgresql.dialect()
+    assert render(source, dialect, c="fans") == "SELECT fans_count"
+    assert render(source, dialect, c="ID") == "SELECT a.id"
+    with pytest.raises(UnknownIdentifierError, match="It takes: fans, id"):
+        render(source, dialect, c="password")
+
+
+@pytest.mark.parametrize("value", [None, "", (), ("a", "")])
+def test_identifier_refuses_an_empty_name(value: Any) -> None:
+    with pytest.raises(UnknownIdentifierError):
+        render("SELECT tpl.identifier(:c)", postgresql.dialect(), c=value)
+
+
+def test_inclause_binds_each_value_as_the_jinja_filter_does(db: Database) -> None:
+    source = "WHERE team IN (tpl.inclause(:teams))"
+    assert render(source, postgresql.dialect(), teams=["red", "blue"]) == (
+        "WHERE team IN (:__p1, :__p2)"
+    )
+    assert names(db, "users/in_teams.tpl.sql", teams=["blue"]) == ["bob"]
+    assert names(db, "users/in_teams.sql", teams=["blue"]) == ["bob"]
+
+
+def test_inclause_refuses_an_empty_list() -> None:
+    with pytest.raises(MacroArgumentError, match="`:teams` is empty"):
+        render("WHERE team IN (tpl.inclause(:teams))", postgresql.dialect(), teams=[])

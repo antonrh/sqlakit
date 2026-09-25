@@ -39,6 +39,7 @@ __all__ = [
     "TransactionRolledBackError",
     "UnknownDatabaseError",
     "UnknownFieldError",
+    "UnknownIdentifierError",
     "UnknownImportPathError",
     "UnknownMacroError",
     "UnorderedPageError",
@@ -465,6 +466,18 @@ class UnknownOrderFieldError(SQLAKitError, ValueError):
         super().__init__(
             f"`{field}` is not something this model orders by. "
             f"It offers: {offered or 'nothing'}."
+        )
+
+
+class UnknownIdentifierError(SQLAKitError, ValueError):
+    """Raised when a template is handed a name it does not take as an identifier."""
+
+    def __init__(self, name: object = None, allowed: Iterable[str] = ()) -> None:
+        self.name = name
+        offered = ", ".join(sorted(allowed))
+        super().__init__(
+            f"`{name}` is not a name this template takes. "
+            + (f"It takes: {offered}." if offered else "Pass a non-empty name.")
         )
 
 
