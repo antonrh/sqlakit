@@ -26,7 +26,7 @@ name = "app"
 
 [tool.sqlakit.templates]
 paths = ["sql"]
-macros = ["lsp_macros"]
+macros = ["lsp_macros", "_macros.sql"]
 """
 
 MACROS = '''
@@ -38,6 +38,13 @@ def mine(teams: Param) -> str:
     """Rows of any of the teams."""
     return f"team IN {teams}"
 '''
+
+SQL_MACROS = """-- tpl.for_team(t): rows of the team the call asks for.
+t.team = :team
+
+-- tpl.visible(t)
+(tpl.for_team(t) OR t.public)
+"""
 
 TEMPLATES = {
     "good.tpl.sql": "SELECT * FROM users\nWHERE tpl.mine(:teams)\n  AND tpl.if_set(:q, name = :q)",
@@ -51,6 +58,7 @@ TEMPLATES = {
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (tmp_path / "pyproject.toml").write_text(PYPROJECT)
     (tmp_path / "lsp_macros.py").write_text(MACROS)
+    (tmp_path / "_macros.sql").write_text(SQL_MACROS)
     for name, source in TEMPLATES.items():
         path = tmp_path / "sql" / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,14 +109,13 @@ def test_a_project_without_a_say_about_templates_is_refused(
 def test_check_names_every_problem_once_where_it_is(
     project: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    available = ", ".join(sorted([*load_project(project).templates.macros, "include"]))
     assert main(["check"]) == 1
     assert capsys.readouterr().out.splitlines() == [
         (
             "sql/inner.tpl.sql:2:7: Unknown macro tpl.nope in inner.tpl.sql:2; "
-            "available: array_agg, array_contains, between, each, icollate, "
-            "icontains, identifier, if_set, include, json_object, mine, "
-            "on_dialect, order_by, string_agg, unless_set, values. Register one "
-            "with `Templates(..., macros=[...])`."
+            f"available: {available}. Register one with "
+            "`Templates(..., macros=[...])`."
         ),
         "sql/open.sql:2:3: open.sql:2: a quoted string is never closed.",
         "4 templates, 2 problems",
@@ -215,7 +222,14 @@ def test_the_server_reads_the_sql_files_under_the_paths(
 def test_macros_complete_after_the_namespace(assistant: _Assistant) -> None:
     source = "WHERE tpl.i"
     labels = [one.label for one in assistant.complete(source, len(source))]
-    assert labels == ["if_set", "icontains", "icollate", "identifier", "include"]
+    assert labels == [
+        "if_set",
+        "icontains",
+        "icollate",
+        "identifier",
+        "in_list",
+        "include",
+    ]
 
 
 def test_a_macro_completes_as_a_call_with_placeholders(assistant: _Assistant) -> None:
@@ -334,3 +348,65 @@ async def test_the_server_answers_an_editor(project: Path) -> None:
     await client.shutdown_async(None)
     client.exit(None)
     await client.stop()
+
+
+# macros written in SQL
+
+
+def test_sql_macros_complete_and_hover_like_the_others(assistant: _Assistant) -> None:
+    source = "WHERE tpl.for_"
+    assert assistant.complete(source, len(source)) == [
+        Completion(
+            "for_team",
+            "macro",
+            "tpl.for_team(t)",
+            "rows of the team the call asks for.",
+            "for_team(${1:t})",
+        )
+    ]
+    assert assistant.hover("WHERE tpl.for_team(u)", 12) == (
+        "```sql\ntpl.for_team(t)\n```\n\nrows of the team the call asks for."
+    )
+
+
+def test_an_sql_macro_is_defined_at_its_header(
+    assistant: _Assistant, project: Path
+) -> None:
+    assert assistant.definition("WHERE tpl.visible(u)", 11) == Target(
+        project / "_macros.sql", 3
+    )
+
+
+def test_a_file_of_sql_macros_is_checked_as_it_stands(
+    assistant: _Assistant, project: Path
+) -> None:
+    path = project / "_macros.sql"
+    assert assistant.applies_to(path)
+    assert assistant.diagnose(path, SQL_MACROS) == []
+    broken = SQL_MACROS.replace("t.public", "tpl.nope(t)")
+    [found] = assistant.diagnose(path, broken)
+    assert broken[found.start : found.end] == "(tpl.for_team(t) OR tpl.nope(t))"
+    assert found.message.startswith("Unknown macro tpl.nope in _macros.sql:5")
+
+
+def test_a_template_calling_an_sql_macro_wrongly_is_marked(
+    assistant: _Assistant, project: Path
+) -> None:
+    source = "SELECT * FROM users AS u WHERE tpl.visible(u, 1)"
+    [found] = assistant.diagnose(project / "sql" / "new.sql", source)
+    assert source[found.start : found.end] == "tpl.visible(u, 1)"
+    assert found.message == "tpl.visible: takes 1 arguments, got 2"
+
+
+def test_check_names_a_broken_sql_macro(
+    project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for name in ("inner.tpl.sql", "outer.tpl.sql", "open.sql"):
+        (project / "sql" / name).unlink()
+    (project / "_macros.sql").write_text(SQL_MACROS.replace("t.public", "tpl.nope(t)"))
+    assert main(["check"]) == 1
+    assert (
+        capsys.readouterr()
+        .out.splitlines()[0]
+        .startswith("_macros.sql:5:1: Unknown macro tpl.nope in _macros.sql:5")
+    )

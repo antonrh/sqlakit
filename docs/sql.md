@@ -324,12 +324,17 @@ docstrings:
 | --- | --- |
 | `tpl.if_set(:x, expr[, otherwise])` | `expr` when `:x` holds a value, `otherwise` (`TRUE`) when it doesn't |
 | `tpl.unless_set(:x, expr[, otherwise])` | `expr` when `:x` holds no value |
+| `tpl.only_if(:x, sql)` | `sql` when `:x` holds a value, nothing when it doesn't: a `JOIN` that is there or not. Everything after `:x` is `sql`, commas and all |
+| `tpl.in_list(col, :values, :exclude)` | `col IN :values`, or `NOT IN` when `:exclude` is set, and `TRUE` when the list is empty |
 | `tpl.between(col, :from, :to[, '[)'])` | a range whose ends may each be missing |
 | `tpl.order_by(:sort, col, ...)` | the terms of an `ORDER BY` from sort strings, only by the columns listed |
+| `LIMIT tpl.limit(:n) OFFSET tpl.offset(:m)` | the count and the rows to skip, every row and none when the call passes no value |
 | `tpl.icontains(col, text)` | a search for the text without regard to case |
 | `tpl.icollate(col)` | the column compared and sorted without regard to case |
 | `tpl.identifier(:name, col, ...)` | a name from a parameter, quoted, only one of those listed |
 | `tpl.each(:list)` | one parameter per value, for a list outside `IN` |
+| `tpl.array(:list[, 'text'])` | an array, cast to the type on PostgreSQL |
+| `tpl.arrays_overlap(a, b)`, `tpl.array_contains_all(a, b)` | `&&` and `@>` on PostgreSQL, their Snowflake functions |
 | `tpl.values(:rows)` | a small table written out in the query |
 | `tpl.json_object(...)`, `tpl.array_agg(...)`, `tpl.string_agg(...)`, `tpl.array_contains(...)` | the function each database spells its own way |
 | `tpl.on_dialect(postgresql = a, snowflake = b)` | the branch of the database in hand |
@@ -349,11 +354,20 @@ A sort string is `name`, `name.desc` or `name.desc.nulls_last`, in any case
 convention, and a request can send a list of them. `order_by` sorts only by the
 columns listed after the parameter, so a name from a request never reaches the
 SQL on its own. `name = <expression>` sorts by an expression under a name, and
-`'nulls_last'` places the nulls of every term that doesn't say:
+`'nulls_last'` places the nulls of every term that doesn't say. Any other
+string in quotes is the sort when the call passes none:
 
 ```sql
-ORDER BY tpl.order_by(:sort, id, created_at, name = tpl.icollate(name), 'nulls_last')
+ORDER BY tpl.order_by(:sort, id, created_at, name = tpl.icollate(name), 'created_at.desc', 'nulls_last')
 ```
+
+`tpl.icollate(name)` is `lower(name)` on PostgreSQL. In a query with
+`GROUP BY name`, sorting by it no longer matches the grouped column, so group
+by the same expression.
+
+`if_set`, `unless_set` and `only_if` expand only the branch they write. A macro
+in the other one never runs, so it can't fail on a value that wasn't meant for
+it.
 
 Where the SQL differs between databases, a macro that names the difference
 writes the right form for each: `icontains` is `ILIKE` on PostgreSQL and
@@ -413,6 +427,41 @@ in:
 Templates(BASE_DIR, macros=[owned_by, search])
 Templates(BASE_DIR, macros=["app.sql.macros"])
 ```
+
+## Macros written in SQL
+
+A macro that is a piece of SQL needs no Python. Write it in a `.sql` file under
+a comment that names it, and several can share a file:
+
+```sql
+-- app/sql/_macros.sql
+
+-- tpl.for_tenant(t): rows of the tenant, and of one team when asked.
+t.tenant_id = :tenant_id AND tpl.if_set(:team_id, t.team_id = :team_id)
+
+-- tpl.active(t): rows that are neither archived nor deleted.
+(NOT t.archived AND t.deleted_at IS NULL)
+```
+
+```sql
+SELECT * FROM orders AS o WHERE tpl.for_tenant(o) AND tpl.active(o)
+```
+
+A call writes the body in its place when the template is read, with each
+argument's text where the body names it: `tpl.for_tenant(o)` writes
+`o.tenant_id`. Parameters are the calling template's own, and the macros in the
+body expand as they would in the template. The body goes in as written, so
+parenthesize one that has to stay together, such as an `OR`.
+
+Register the file with the rest:
+
+```python
+Templates(BASE_DIR, macros=["app.sql.macros", BASE_DIR / "_macros.sql"])
+```
+
+A file of macros holds expressions rather than statements, so leave it out of
+what your linter checks. `check()`, `sqlakit check` and `sqlakit lsp` read it:
+an unknown macro in a body is reported on its line in the file.
 
 A macro calls another as a template does, through `tpl`, with strings for SQL
 and values for parameters. `@sql_macro(optional=True)` reads a parameter the

@@ -2,6 +2,7 @@
 
 import enum
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -284,14 +285,13 @@ def test_a_call_may_hold_parentheses_and_commas() -> None:
 
 
 def test_an_unknown_macro_is_refused_when_the_file_is_read() -> None:
+    macros = sql_module.registered([for_teams, search, blue_or, bluish])
+    available = ", ".join(sorted([*macros, "include"]))
     with pytest.raises(UnknownMacroError) as raised:
         render("SELECT 1\nWHERE tpl.foo(:x)", postgresql.dialect(), x=1)
     assert str(raised.value) == (
-        "Unknown macro tpl.foo in inline.tpl.sql:2; available: array_agg, "
-        "array_contains, between, blue_or, bluish, each, for_teams, icollate, "
-        "icontains, identifier, if_set, include, json_object, on_dialect, "
-        "order_by, search, string_agg, unless_set, values. Register one with "
-        "`Templates(..., macros=[...])`."
+        f"Unknown macro tpl.foo in inline.tpl.sql:2; available: {available}. "
+        "Register one with `Templates(..., macros=[...])`."
     )
 
 
@@ -415,7 +415,10 @@ def test_signature_says_how_a_template_calls_a_macro() -> None:
     ] == [
         "tpl.if_set(:value, expr[, otherwise])",
         "tpl.unless_set(:value, expr[, otherwise])",
+        "tpl.only_if(:value, sql, *more)",
         "tpl.order_by(:sort, column, *columns)",
+        "tpl.limit(:count)",
+        "tpl.offset(:start)",
         "tpl.icontains(column, text[, collation])",
         "tpl.icollate(column[, collation])",
         "tpl.json_object(*pairs)",
@@ -426,6 +429,10 @@ def test_signature_says_how_a_template_calls_a_macro() -> None:
         "tpl.between(column, :start, :end[, bounds])",
         "tpl.identifier(:name, *allowed)",
         "tpl.each(:values)",
+        "tpl.in_list(column, :values, :exclude)",
+        "tpl.array(:values[, type_name])",
+        "tpl.arrays_overlap(array, other)",
+        "tpl.array_contains_all(array, other)",
         "tpl.values(:rows)",
     ]
 
@@ -1115,7 +1122,7 @@ def test_icontains_matches_an_expression_only_as_itself(
     ("dialect", "sql"),
     [
         (postgresql.dialect(), "JSON_BUILD_OBJECT('id', id)"),
-        (snowflake(), "OBJECT_CONSTRUCT('id', id)"),
+        (snowflake(), "OBJECT_CONSTRUCT_KEEP_NULL('id', id)"),
         (mysql.dialect(), "JSON_OBJECT('id', id)"),
         (mariadb(), "JSON_OBJECT('id', id)"),
         (sqlite.dialect(), "json_object('id', id)"),
@@ -1223,3 +1230,337 @@ def test_on_dialect_takes_only_named_branches() -> None:
         MacroArgumentError, match="takes `dialect = sql` branches, got 'a'"
     ):
         render("FROM tpl.on_dialect(a)", postgresql.dialect())
+
+
+# the second list
+
+
+def test_a_path_through_none_reads_as_none() -> None:
+    ctx = Context(
+        "postgresql",
+        postgresql.dialect().identifier_preparer,
+        {"filters": {"campaign": None}},
+    )
+    template = sql_module.MacroTemplate(
+        "x.sql", "WHERE c = :filters.campaign.value", sql_module.registered([])
+    )
+    assert template.render(ctx) == "WHERE c = :filters__campaign__value"
+    assert ctx.values["filters__campaign__value"] is None
+
+
+def test_order_by_orders_by_nothing_when_the_sort_was_not_passed() -> None:
+    assert render("ORDER BY tpl.order_by(:sort, id)", postgresql.dialect()) == (
+        "ORDER BY (SELECT NULL)"
+    )
+
+
+def test_only_if_writes_nothing_when_the_value_is_not_there() -> None:
+    source = "FROM users AS u tpl.only_if(:team, JOIN teams AS t ON t.id = u.team_id)"
+    assert render(source, postgresql.dialect(), team="red") == (
+        "FROM users AS u JOIN teams AS t ON t.id = u.team_id"
+    )
+    assert render(source, postgresql.dialect()) == "FROM users AS u"
+
+
+@pytest.mark.parametrize(
+    ("dialect", "unlimited"),
+    [
+        (postgresql.dialect(), "ALL"),
+        (snowflake(), "NULL"),
+        (mysql.dialect(), "18446744073709551615"),
+        (mariadb(), "18446744073709551615"),
+        (sqlite.dialect(), "-1"),
+    ],
+)
+def test_limit_takes_every_row_when_there_is_no_count(
+    dialect: sa.Dialect, unlimited: str
+) -> None:
+    source = "LIMIT tpl.limit(:limit) OFFSET tpl.offset(:offset)"
+    assert render(source, dialect, limit=None) == f"LIMIT {unlimited} OFFSET 0"
+    assert render(source, dialect, limit=0, offset=5) == ("LIMIT :limit OFFSET :offset")
+
+
+def test_limit_and_offset_run(db: Database, tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "users/page.sql": (
+                "SELECT name FROM users ORDER BY tpl.order_by(:sort, id) "
+                "LIMIT tpl.limit(:limit) OFFSET tpl.offset(:offset)"
+            )
+        },
+    )
+    assert names(db, "users/page.sql") == ["Ann", "bob", "Cid", "dan_x"]
+    assert names(db, "users/page.sql", sort="id.desc", limit=2, offset=1) == [
+        "Cid",
+        "bob",
+    ]
+
+
+def test_limit_refuses_a_database_it_has_no_form_for() -> None:
+    from sqlalchemy.dialects import oracle
+
+    with pytest.raises(MacroArgumentError, match="has no form for oracle"):
+        render("LIMIT tpl.limit(:n)", oracle.dialect())
+
+
+@pytest.mark.parametrize(
+    ("source", "values", "postgres", "on_snowflake"),
+    [
+        (
+            "tpl.array(:g, 'text')",
+            ["a", "b"],
+            "ARRAY[:g__1, :g__2]::text[]",
+            "ARRAY_CONSTRUCT(:g__1, :g__2)",
+        ),
+        ("tpl.array(:g)", [1], "ARRAY[:g__1]", "ARRAY_CONSTRUCT(:g__1)"),
+        ("tpl.array(:g, 'text')", [], "ARRAY[]::text[]", "ARRAY_CONSTRUCT()"),
+        ("tpl.array(:g, 'varchar(20)')", None, "NULL::varchar(20)[]", "NULL"),
+    ],
+)
+def test_array_writes_a_list_as_an_array(
+    source: str, values: Any, postgres: str, on_snowflake: str
+) -> None:
+    assert render(source, postgresql.dialect(), g=values) == postgres
+    assert render(source, snowflake(), g=values) == on_snowflake
+
+
+@pytest.mark.parametrize(
+    ("source", "problem"),
+    [
+        ("tpl.array(:g)", "`:g` is empty, and PostgreSQL needs its type"),
+        ("tpl.array(:g, 'text; DROP')", "the type is a name such as 'text'"),
+    ],
+)
+def test_array_refuses_what_it_cannot_write(source: str, problem: str) -> None:
+    with pytest.raises(MacroArgumentError, match=re.escape(problem)):
+        render(source, postgresql.dialect(), g=[])
+
+
+def test_only_the_branch_taken_is_rendered() -> None:
+    ctx = Context("postgresql", postgresql.dialect().identifier_preparer, {"x": None})
+    template = sql_module.MacroTemplate(
+        "x.sql",
+        "SELECT tpl.if_set(:x, tpl.each(:x), 0), tpl.if_set(:x, tpl.icontains(a, :x))",
+        sql_module.registered([]),
+    )
+    assert template.render(ctx) == "SELECT 0, TRUE"
+    assert ctx.values == {"x": None}
+
+
+def test_only_if_takes_a_clause_with_commas() -> None:
+    source = "SELECT * FROM t tpl.only_if(:n, ORDER BY a DESC, b DESC LIMIT :n)"
+    assert render(source, postgresql.dialect(), n=3) == (
+        "SELECT * FROM t ORDER BY a DESC, b DESC LIMIT :n"
+    )
+    assert render(source, postgresql.dialect(), n=None) == "SELECT * FROM t"
+
+
+def test_order_by_falls_back_to_the_sort_the_template_names() -> None:
+    source = "ORDER BY tpl.order_by(:sort, id, name, 'name.desc', 'id', 'nulls_last')"
+    assert render(source, postgresql.dialect()) == (
+        "ORDER BY name DESC NULLS LAST, id ASC NULLS LAST"
+    )
+    assert render(source, postgresql.dialect(), sort="id.desc") == (
+        "ORDER BY id DESC NULLS LAST"
+    )
+
+
+@pytest.mark.parametrize(
+    ("values", "exclude", "sql"),
+    [
+        (["a"], None, "WHERE s IN :v"),
+        (["a"], True, "WHERE s NOT IN :v"),
+        ([], True, "WHERE TRUE"),
+        (None, None, "WHERE TRUE"),
+    ],
+)
+def test_in_list_matches_a_list_or_everything_but_it(
+    values: Any, exclude: Any, sql: str
+) -> None:
+    source = "WHERE tpl.in_list(s, :v, :x)"
+    assert render(source, postgresql.dialect(), v=values, x=exclude) == sql
+
+
+def test_in_list_runs(db: Database, tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "users/teams.sql": "SELECT name FROM users WHERE tpl.in_list(team, :t, :x) ORDER BY id"
+        },
+    )
+    assert names(db, "users/teams.sql", t=["red"], x=True) == ["bob"]
+    assert names(db, "users/teams.sql", t=["red"]) == ["Ann", "Cid", "dan_x"]
+
+
+@pytest.mark.parametrize(
+    ("source", "postgres", "on_snowflake"),
+    [
+        ("tpl.arrays_overlap(a, b)", "(a && b)", "ARRAYS_OVERLAP(a, b)"),
+        (
+            "tpl.array_contains_all(a, b)",
+            "(a @> b)",
+            "(ARRAY_SIZE(ARRAY_EXCEPT(b, a)) = 0)",
+        ),
+    ],
+)
+def test_array_comparisons_on_postgres_and_snowflake(
+    source: str, postgres: str, on_snowflake: str
+) -> None:
+    assert render(source, postgresql.dialect()) == postgres
+    assert render(source, snowflake()) == on_snowflake
+
+
+# macros written in SQL
+
+SQL_MACROS = """-- Macros of the application.
+
+-- tpl.for_tenant(t): rows of the tenant,
+-- and of one team when asked.
+t.tenant_id = :tenant_id AND tpl.if_set(:team_id, t.team_id = :team_id)
+
+-- tpl.labelled(t, label)
+('t' || t.name || :t) = label
+
+-- tpl.scoped(t): the tenant's rows, through another macro.
+(tpl.for_tenant(t) OR t.public)
+"""
+
+
+@pytest.fixture
+def macro_file(tmp_path: Path) -> Path:
+    path = tmp_path / "_macros.sql"
+    path.write_text(SQL_MACROS)
+    return path
+
+
+def test_sql_macros_are_read_from_their_headers(macro_file: Path) -> None:
+    macros = sql_module.sql_macros(macro_file)
+    assert [(one.name, one.params, one.doc, one.line) for one in macros] == [
+        (
+            "for_tenant",
+            ("t",),
+            "rows of the tenant, and of one team when asked.",
+            3,
+        ),
+        ("labelled", ("t", "label"), "", 7),
+        ("scoped", ("t",), "the tenant's rows, through another macro.", 10),
+    ]
+    assert sql_module.signature_of(macros[1]) == "tpl.labelled(t, label)"
+
+
+def test_an_sql_macro_writes_its_body_with_the_arguments(macro_file: Path) -> None:
+    template = sql_module.MacroTemplate(
+        "x.sql",
+        "SELECT * FROM orders AS o WHERE tpl.for_tenant(o) AND tpl.labelled(o, 'x')",
+        sql_module.registered([macro_file]),
+    )
+    ctx = Context(
+        "postgresql",
+        postgresql.dialect().identifier_preparer,
+        {"tenant_id": 1, "team_id": None, "t": 2},
+    )
+    assert " ".join(template.render(ctx).split()) == (
+        "SELECT * FROM orders AS o WHERE o.tenant_id = :tenant_id AND TRUE "
+        "AND ('t' || o.name || :t) = 'x'"
+    )
+
+
+def test_an_sql_macro_calls_another(macro_file: Path) -> None:
+    template = sql_module.MacroTemplate(
+        "x.sql", "WHERE tpl.scoped(o)", sql_module.registered([macro_file])
+    )
+    ctx = Context(
+        "postgresql",
+        postgresql.dialect().identifier_preparer,
+        {"tenant_id": 1, "team_id": 2},
+    )
+    assert " ".join(template.render(ctx).split()) == (
+        "WHERE (o.tenant_id = :tenant_id AND o.team_id = :team_id OR o.public)"
+    )
+
+
+def test_sql_macros_run(macro_file: Path, db: Database, tmp_path: Path) -> None:
+    db.templates = Templates(tmp_path, macros=[str(macro_file)])
+    write(
+        tmp_path,
+        {
+            "users/red.sql": (
+                "SELECT u.name FROM users AS u WHERE tpl.labelled(u, :label) "
+                "ORDER BY u.id"
+            )
+        },
+    )
+    with db.connect():
+        rows = db.sql("users/red.sql", t="", label="tAnn").scalars().all()
+    assert rows == ["Ann"]
+
+
+def test_an_sql_macro_that_expands_itself_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "loop.sql"
+    path.write_text("-- tpl.a(x)\ntpl.b(x)\n-- tpl.b(x)\ntpl.a(x)\n")
+    with pytest.raises(MacroArgumentError, match="expands itself: a -> b -> a"):
+        sql_module.MacroTemplate(
+            "x.sql", "SELECT tpl.a(1)", sql_module.registered([path])
+        )
+
+
+def test_an_error_in_an_sql_macro_says_where_it_is(tmp_path: Path) -> None:
+    path = tmp_path / "broken.sql"
+    path.write_text("-- tpl.ok(t)\nt.id = 1\n\n-- tpl.bad(t)\nt.id = tpl.nope(1)\n")
+    with pytest.raises(UnknownMacroError) as raised:
+        sql_module.MacroTemplate(
+            "x.sql", "SELECT\ntpl.bad(u)", sql_module.registered([path])
+        )
+    assert str(raised.value).startswith(
+        "Unknown macro tpl.nope in broken.sql:5 (included from x.sql:2)"
+    )
+
+
+def test_an_sql_macro_takes_as_many_arguments_as_its_header_names(
+    macro_file: Path,
+) -> None:
+    with pytest.raises(MacroArgumentError, match="takes 2 arguments, got 1"):
+        sql_module.MacroTemplate(
+            "x.sql", "SELECT tpl.labelled(o)", sql_module.registered([macro_file])
+        )
+
+
+@pytest.mark.parametrize(
+    ("source", "problem"),
+    [
+        ("-- tpl.empty(t)\n\n-- tpl.next\nTRUE\n", "its header in bad.sql has no SQL"),
+        ("-- tpl.twice(a, a)\nTRUE\n", "are not distinct names"),
+    ],
+)
+def test_a_header_without_a_body_or_with_one_name_twice_is_refused(
+    tmp_path: Path, source: str, problem: str
+) -> None:
+    path = tmp_path / "bad.sql"
+    path.write_text(source)
+    with pytest.raises(MacroDefinitionError, match=problem):
+        sql_module.sql_macros(path)
+
+
+def test_an_sql_macro_cannot_share_a_name(macro_file: Path, tmp_path: Path) -> None:
+    other = tmp_path / "other.sql"
+    other.write_text("-- tpl.for_tenant(t)\nTRUE\n")
+    with pytest.raises(MacroDefinitionError, match="another macro has that name"):
+        Templates(macros=[macro_file, other])
+
+
+def test_an_sql_macro_does_not_run_from_python(macro_file: Path) -> None:
+    [macro, *_] = sql_module.sql_macros(macro_file)
+    with pytest.raises(MacroArgumentError, match="is written in SQL"):
+        macro("o")
+
+
+def test_the_cli_lists_sql_macros(
+    macro_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from sqlakit._cli import main
+
+    assert main(["macros", str(macro_file)]) == 0
+    assert "tpl.for_tenant(t)\n    rows of the tenant, and of one team when asked." in (
+        capsys.readouterr().out
+    )

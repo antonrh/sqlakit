@@ -33,15 +33,22 @@
 
 ### Added
 
-- Built-in macros: `if_set`, `unless_set`, `between`, `order_by`,
-  `icontains`, `icollate`, `identifier`, `each`, `values`, `json_object`,
-  `array_agg`, `string_agg`, `array_contains`, `on_dialect` and `include`.
+- Built-in macros: `if_set`, `unless_set`, `only_if`, `between`, `order_by`,
+  `limit`, `offset`, `icontains`, `icollate`, `identifier`, `each`,
+  `in_list`, `array`, `arrays_overlap`, `array_contains_all`, `values`,
+  `json_object`, `array_agg`, `string_agg`, `array_contains`, `on_dialect` and
+  `include`.
 - `@sql_macro` for macros of your own, registered with
   `Templates(macros=[...])`, as objects or by import path, and `tpl` to call a
-  built-in one from them.
+  built-in one from them. A macro that is a piece of SQL is written in a `.sql`
+  file under a `-- tpl.name(args): description` header instead.
 - `sqlakit macros` lists the macros, `sqlakit check` checks every template a
   project's `pyproject.toml` names, and `sqlakit lsp` serves the same checks to
   an editor, with completion and hover. The server needs the `lsp` extra.
+
+- `sqlakit_models = app` in the pytest settings imports every `models` module
+  under the package before the plugin creates the tables, so a run of a few
+  tests has them all.
 
 ### Removed
 

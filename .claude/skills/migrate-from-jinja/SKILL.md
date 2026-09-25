@@ -181,7 +181,7 @@ Then run the application's tests for every caller, with the context each one
 builds, and for a query whose SQL changed shape, compare the rows it returns on
 the test database. Where the production database is not the one tests run on,
 parse the rendered production SQL with a linter for that dialect (`sqruff` with
-`templater = placeholder` and `param_style = colon`, or `sqlglot`).
+`templater = placeholder` and `param_style = colon`).
 
 ## Done when
 

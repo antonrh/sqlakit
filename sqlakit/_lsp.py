@@ -25,7 +25,14 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlparse
 
 from ._project import Project, load_project
-from ._sql import INCLUDE, Macro, Param, _required, signature_of
+from ._sql import (
+    INCLUDE,
+    Macro,
+    Param,
+    SqlMacro,
+    _required,
+    signature_of,
+)
 from .exceptions import (
     MacroArgumentError,
     MacroSyntaxError,
@@ -96,18 +103,34 @@ class _Assistant:
         )
 
     def applies_to(self, path: Path) -> bool:
-        """Whether a file is a macro template of this project."""
+        """Whether a file is a template of this project, or a file of its macros."""
         name = self.project.name_of(path)
-        return name is not None and name.endswith(".sql")
+        return (name is not None and name.endswith(".sql")) or self._reads_macros(path)
 
     def diagnose(self, path: Path, source: str) -> list[Diagnostic]:
         """Return what is wrong with the text: the first problem, where it is."""
+        if self._reads_macros(path):
+            return self._diagnose_macros(path, source)
         name = self.project.name_of(path) or path.name
         try:
             self.project.load(name, source)
         except (MacroSyntaxError, UnknownMacroError, MacroArgumentError) as error:
             return [self._placed(error, name, source)]
         return []
+
+    def _reads_macros(self, path: Path) -> bool:
+        resolved = path.resolve()
+        return any(
+            isinstance(macro, SqlMacro) and macro.path.resolve() == resolved
+            for macro in self.project.templates.macros.values()
+        )
+
+    def _diagnose_macros(self, path: Path, source: str) -> list[Diagnostic]:
+        """Return what is wrong with each macro of a file of SQL macros."""
+        return [
+            Diagnostic(*_line_span(source, line), message)
+            for line, message in self.project.macro_problems(path, source)
+        ]
 
     def complete(self, source: str, offset: int) -> list[Completion]:
         """Return what can be written at the offset, given what is typed before it."""
@@ -236,7 +259,9 @@ def _snippet(macro: Macro) -> str:
 
 
 def _source_of(macro: Macro) -> Target | None:
-    """Return where a macro's function is written, when Python can say."""
+    """Return where a macro is written: its header, or its function."""
+    if isinstance(macro, SqlMacro):
+        return Target(macro.path, macro.line - 1)
     try:
         path = inspect.getsourcefile(macro.func)
         _, line = inspect.getsourcelines(macro.func)

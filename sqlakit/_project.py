@@ -19,9 +19,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ._sql import MacroTemplate, Templates
+from ._sql import MacroTemplate, SqlMacro, Templates, sql_macros
 from .exceptions import (
     MacroArgumentError,
+    MacroDefinitionError,
     MacroSyntaxError,
     ProjectConfigError,
     UnknownMacroError,
@@ -107,6 +108,59 @@ class Project:
                     continue  # in a template this one includes, and said there
                 start, end = error.span or (0, 0)
                 yield Problem(path, start, end, str(error))
+        for path in self.macro_files():
+            source = path.read_text(encoding="utf-8")
+            for line, message in self.macro_problems(path, source):
+                start = _line_start(source, line)
+                yield Problem(path, start, start, message)
+
+    def macro_files(self) -> list[Path]:
+        """Return the files the project's SQL macros are written in."""
+        found = {
+            macro.path
+            for macro in self.templates.macros.values()
+            if isinstance(macro, SqlMacro)
+        }
+        return sorted(found)
+
+    def macro_problems(self, path: Path, source: str) -> list[tuple[int, str]]:
+        """Return the line and the problem of each broken macro in a file of them.
+
+        ``source`` is the file's text, which an editor may hold unsaved.
+        """
+        namespace = self.templates.namespace
+        try:
+            written = sql_macros(path, namespace, source)
+        except MacroDefinitionError as error:
+            return [(1, str(error))]
+        macros = {**self.templates.macros, **{one.name: one for one in written}}
+        found = []
+        for macro in written:
+            try:
+                MacroTemplate(
+                    macro.source_name,
+                    macro.expanded(list(macro.params)),
+                    macros,
+                    namespace=namespace,
+                    load=self.templates.engine._read,  # noqa: SLF001
+                    expanding=(macro.name,),
+                    first_line=macro.body_line,
+                )
+            except (MacroSyntaxError, UnknownMacroError, MacroArgumentError) as error:
+                line = error.chain[0][1] if error.chain else error.line
+                found.append((line, str(error)))
+        return found
+
+
+def _line_start(source: str, line: int) -> int:
+    """Return the offset a line starts at, counting lines from one."""
+    start = 0
+    for _ in range(line - 1):
+        newline = source.find("\n", start)
+        if newline < 0:
+            break
+        start = newline + 1
+    return start
 
 
 def load_project(start: Path | None = None) -> Project:
@@ -128,7 +182,10 @@ def load_project(start: Path | None = None) -> Project:
     paths = [root / path for path in config.get("paths", [])]
     templates = Templates(
         paths,
-        macros=config.get("macros", []),
+        macros=[
+            str(root / macro) if macro.endswith(".sql") else macro
+            for macro in config.get("macros", [])
+        ],
         namespace=config.get("namespace", "tpl"),
     )
     return Project(root, templates)

@@ -1289,3 +1289,60 @@ def test_a_report_needs_the_debug_server(monkeypatch: pytest.MonkeyPatch) -> Non
 
     with pytest.raises(pytest.UsageError, match="pip install sqlakit-debugserver"):
         pytest_plugin._report_path(config)
+
+
+def test_the_tables_of_models_nothing_imported_are_created(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.mkpydir("shop")
+    (pytester.path / "shop" / "base.py").write_text(
+        "import sqlalchemy as sa\n"
+        "from sqlalchemy.orm import DeclarativeBase\n"
+        "from sqlakit import Database, EngineArgs\n"
+        "from sqlakit.orm import ModelMixin\n\n\n"
+        "class Model(ModelMixin, DeclarativeBase):\n"
+        "    pass\n\n\n"
+        "Model.register_db(\n"
+        "    Database('sqlite://', engine_args=EngineArgs(poolclass=sa.StaticPool))\n"
+        ")\n"
+    )
+    pytester.mkpydir("shop/orders")
+    (pytester.path / "shop" / "orders" / "models.py").write_text(
+        "from sqlalchemy.orm import Mapped, mapped_column\n"
+        "from shop.base import Model\n\n\n"
+        "class Order(Model):\n"
+        "    __tablename__ = 'orders'\n\n"
+        "    id: Mapped[int] = mapped_column(primary_key=True)\n"
+    )
+    pytester.makeconftest(
+        """
+        import pytest
+
+        from shop.base import Model
+
+
+        @pytest.fixture(scope="session")
+        def sqlakit_base():
+            return Model
+        """
+    )
+    pytester.makepyfile(
+        test_orders="""
+        import pytest
+
+        from shop.base import Model
+
+
+        @pytest.mark.db
+        def test_the_table_is_there():
+            count = Model.db.sql.from_string("SELECT count(*) FROM orders")
+            assert count.scalars().one() == 0
+        """
+    )
+    (pytester.path / "pytest.ini").write_text(
+        "[pytest]\nsqlakit = true\nsqlakit_models = shop\n"
+    )
+    pytester.runpytest_subprocess().assert_outcomes(passed=1)
+
+    (pytester.path / "pytest.ini").write_text("[pytest]\nsqlakit = true\n")
+    pytester.runpytest_subprocess().assert_outcomes(failed=1)
