@@ -19,6 +19,7 @@ from sqlakit._lsp import (
     position_of,
 )
 from sqlakit._project import load_project
+from sqlakit._sql import signature_of
 
 PYPROJECT = """
 [project]
@@ -85,21 +86,115 @@ def test_a_project_reads_its_templates_from_pyproject(project: Path) -> None:
 @pytest.mark.parametrize(
     ("pyproject", "problem"),
     [
-        (None, "there is no `pyproject.toml`"),
-        ("[project]\nname = 'app'\n", "has no `[tool.sqlakit.templates]` table"),
+        (None, "no code under"),
+        ("[project]\nname = 'app'\n", "no code under"),
         (
             "[tool.sqlakit.templates]\npath = ['sql']\n",
             "has path, and takes dialect, macros, namespace, paths",
         ),
     ],
 )
-def test_a_project_without_a_say_about_templates_is_refused(
+def test_a_project_with_no_templates_to_find_is_refused(
     tmp_path: Path, pyproject: str | None, problem: str
 ) -> None:
     if pyproject is not None:
         (tmp_path / "pyproject.toml").write_text(pyproject)
     with pytest.raises(ProjectConfigError, match=re.escape(problem)):
         load_project(tmp_path)
+
+
+APP = {
+    "pyproject.toml": "[project]\nname = 'shop'\n",
+    "shop/__init__.py": "",
+    "shop/db.py": """
+from pathlib import Path
+
+from sqlakit import Database
+from sqlakit.sql import Templates
+
+BASE_DIR = Path(__file__).parent / "sql"
+
+db = Database(
+    "sqlite://",
+    templates=Templates(
+        BASE_DIR,
+        macros=["shop.macros", BASE_DIR / "_macros.sql"],
+        namespace="q",
+    ),
+)
+raise RuntimeError("imported")
+""",
+    "shop/macros.py": '''
+from typing import Literal
+
+from sqlakit.sql import Context, Param, Sql, sql_macro
+
+
+@sql_macro(optional=True)
+def owned(ctx: Context, team: Param, *columns: Sql) -> str:
+    """Rows of the team."""
+    raise RuntimeError("called")
+
+
+@sql_macro(name="sided")
+def side(which: Literal["'left'", "'right'"] = "'left'") -> str:
+    return which
+''',
+    "shop/sql/_macros.sql": "-- Rows of the team.\nSELECT t.team = :team AS for_team FROM t;\n",
+    "shop/sql/users.sql": "SELECT * FROM users AS u WHERE q.owned(:team, u.a) AND q.for_team(u)\n",
+    "tests/test_it.py": "from sqlakit.sql import Templates\nTemplates('elsewhere')\n",
+}
+
+
+@pytest.fixture
+def app(tmp_path: Path) -> Path:
+    for name, source in APP.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source)
+    return tmp_path
+
+
+def test_a_project_is_read_from_its_code_without_running_it(app: Path) -> None:
+    project = load_project(app / "shop")
+    templates = project.templates
+    assert (project.root, templates.paths, templates.namespace) == (
+        app,
+        (app / "shop" / "sql",),
+        "q",
+    )
+    assert [
+        signature_of(templates.macros[name], "q")
+        for name in ("owned", "sided", "for_team")
+    ] == [
+        "q.owned(:team, *columns)",
+        "q.sided([which])",
+        "q.for_team(t)",
+    ]
+    assert templates.macros["owned"].doc == "Rows of the team."
+    assert templates.macros["owned"].optional
+    assert templates.macros["sided"].slots[0].choices == ("'left'", "'right'")
+    assert "shop.macros" not in sys.modules
+    assert "shop.db" not in sys.modules
+
+
+def test_a_template_found_in_the_code_is_checked(app: Path) -> None:
+    helper = _Assistant(load_project(app))
+    path = app / "shop" / "sql" / "users.sql"
+    assert helper.diagnose(path, path.read_text()) == []
+    [found] = helper.diagnose(path, "SELECT q.sided('up')")
+    assert found.message == "q.sided: argument 1 is 'left' or 'right', got 'up'"
+    assert helper.definition("WHERE q.owned(:t)", 8) == Target(
+        app / "shop" / "macros.py", 6
+    )
+
+
+def test_the_sql_directories_stand_in_for_code_that_says_nothing(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app" / "sql").mkdir(parents=True)
+    (tmp_path / "tests" / "sql").mkdir(parents=True)
+    assert load_project(tmp_path).templates.paths == (tmp_path / "app" / "sql",)
 
 
 # sqlakit check

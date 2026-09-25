@@ -42,9 +42,10 @@
   `Templates(macros=[...])`, as objects or by import path, and `tpl` to call a
   built-in one from them. A macro that is a piece of SQL is written in a `.sql`
   file instead, as `SELECT <expression> AS <name> FROM <arguments>;`.
-- `sqlakit macros` lists the macros, `sqlakit check` checks every template a
-  project's `pyproject.toml` names, and `sqlakit lsp` serves the same checks to
-  an editor, with completion and hover. The server needs the `lsp` extra.
+- `sqlakit macros` lists the macros, `sqlakit check` checks every template of a
+  project, and `sqlakit lsp` serves the same checks to an editor, with
+  completion and hover. Both read where the templates and the macros are from
+  the project's code without running it. The server needs the `lsp` extra.
 - `sqlakit export sqruff` writes the `sqruff` settings that read the templates
   as SQL into `pyproject.toml`: the `placeholder` templater, and a value for
   each parameter named like a keyword, such as `:limit`.

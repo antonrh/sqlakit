@@ -547,18 +547,26 @@ macro raises `UnknownMacroError`, a call with the wrong arguments
 each with the file and the line. Without the call, a template is read the
 first time someone uses it, which is a late moment to find a typo in it.
 
-The command line checks them without an application to start. It reads where
-they are from `pyproject.toml`:
-
-```toml
-[tool.sqlakit.templates]
-paths = ["app/sql"]
-macros = ["app.sql.macros"]
-```
+The command line checks them without an application to start:
 
 ```console
 $ sqlakit check
 app/sql/users/search.sql:4:7: Unknown macro tpl.nope in users/search.sql:4; ...
+```
+
+It reads your code rather than running it. The `Templates(...)` you build says
+where the templates are, which files hold SQL macros and the namespace, and a
+function decorated `@sql_macro` is a macro wherever it lives. A path spelled
+with a string, `Path(__file__)`, `.parent` and `/`, or a name assigned one of
+those, is read. Nothing is imported, so settings that need the environment
+don't get in the way. When the code builds its paths some other way, from an
+environment variable, every directory named `sql` is taken, or you say where
+in `pyproject.toml`:
+
+```toml
+[tool.sqlakit.templates]
+paths = ["app/sql"]
+macros = ["app/sql/_macros.sql"]
 ```
 
 `sqlakit lsp` serves the same checks to an editor as you type, with completion

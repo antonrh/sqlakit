@@ -14,7 +14,6 @@ namespace = "tpl"
 from __future__ import annotations
 
 import re
-import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +25,7 @@ from sqlalchemy.dialects.postgresql.base import (
 from sqlalchemy.sql.compiler import RESERVED_WORDS
 
 from ._sql import MacroTemplate, SqlMacro, Templates, sql_macros
+from ._static import discover
 from .exceptions import (
     MacroArgumentError,
     MacroDefinitionError,
@@ -206,49 +206,60 @@ def _line_start(source: str, line: int) -> int:
 
 
 def load_project(start: Path | None = None) -> Project:
-    """Return the project `start` is in, from the nearest `pyproject.toml` up.
+    """Return the project `start` is in, read from its code without running it.
 
-    Its directory goes on `sys.path`, so that `macros` import the way the
-    application imports them.
+    The root is the directory of the nearest `pyproject.toml` up, or `start`.
+    The `Templates(...)` the code builds gives the template directories, the
+    files of SQL macros and the namespace, and the functions it decorates
+    `@sql_macro` give the Python macros: see `discover`.
+    `[tool.sqlakit.templates]` says where to look instead, for code that
+    builds the paths in a way the reading cannot follow.
 
     Raises:
-        ProjectConfigError: if there is no `pyproject.toml`, it has no
-            `[tool.sqlakit.templates]`, or that has keys it does not take.
+        ProjectConfigError: if no template directory is found, or the table has
+            keys it does not take.
 
     """
-    pyproject = _pyproject(start or Path.cwd())
-    config = _section(pyproject)
-    root = pyproject.parent
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
-    paths = [root / path for path in config.get("paths", [])]
+    start = (start or Path.cwd()).resolve()
+    pyproject = _pyproject(start)
+    root = pyproject.parent if pyproject is not None else start
+    config = _section(pyproject) if pyproject is not None else {}
+    found = discover(root)
+    paths = (
+        [root / path for path in config["paths"]] if "paths" in config else found.paths
+    )
+    if not paths:
+        problem = (
+            f"no code under {root} builds `Templates(...)` with a path it can read, "
+            f"and no directory there is named `sql`"
+        )
+        raise ProjectConfigError(problem)
+    sql_macros = (
+        [root / macro for macro in config["macros"] if macro.endswith(".sql")]
+        if "macros" in config
+        else [macro for macro in found.macros if isinstance(macro, Path)]
+    )
+    python_macros = [macro for macro in found.macros if not isinstance(macro, Path)]
     templates = Templates(
         paths,
-        macros=[
-            str(root / macro) if macro.endswith(".sql") else macro
-            for macro in config.get("macros", [])
-        ],
-        namespace=config.get("namespace", "tpl"),
+        macros=[*python_macros, *sql_macros],
+        namespace=config.get("namespace", found.namespace),
     )
     return Project(root, templates, config.get("dialect"))
 
 
-def _pyproject(start: Path) -> Path:
-    for directory in (start.resolve(), *start.resolve().parents):
+def _pyproject(start: Path) -> Path | None:
+    for directory in (start, *start.parents):
         candidate = directory / "pyproject.toml"
         if candidate.is_file():
             return candidate
-    problem = f"there is no `pyproject.toml` in {start} or above it"
-    raise ProjectConfigError(problem)
+    return None
 
 
 def _section(pyproject: Path) -> dict[str, Any]:
     with pyproject.open("rb") as file:
         data = tomllib.load(file)
-    config = data.get("tool", {}).get("sqlakit", {}).get("templates")
-    if config is None:
-        problem = f"`{pyproject}` has no `[tool.sqlakit.templates]` table"
-        raise ProjectConfigError(problem)
+    config = data.get("tool", {}).get("sqlakit", {}).get("templates", {})
     unknown = sorted(set(config) - _KEYS)
     if unknown:
         problem = (

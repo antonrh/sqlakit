@@ -260,8 +260,9 @@ def _snippet(macro: Macro) -> str:
 
 def _source_of(macro: Macro) -> Target | None:
     """Return where a macro is written: its header, or its function."""
-    if isinstance(macro, SqlMacro):
-        return Target(macro.path, macro.line - 1)
+    written = getattr(macro, "path", None)
+    if isinstance(written, Path):
+        return Target(written, getattr(macro, "line", 1) - 1)
     try:
         path = inspect.getsourcefile(macro.func)
         _, line = inspect.getsourcelines(macro.func)
