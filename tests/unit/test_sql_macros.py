@@ -1660,3 +1660,35 @@ def test_an_sql_macro_passes_its_argument_where_a_parameter_goes(
     assert template.render(ctx) == (
         "WHERE (u.country NOT IN (:countries)) AND ((u.dsp && ARRAY[:d__v__1]::text[]))"
     )
+
+
+ARRAY_MATCH = """-- Rows whose array holds any of the values, or none of them when negated.
+SELECT tpl.if_set(
+    negate,
+    NOT tpl.arrays_overlap(col, tpl.array(vals, 'text')),
+    tpl.arrays_overlap(col, tpl.array(vals, 'text'))
+) AS array_match
+FROM col, vals, negate;
+"""
+
+
+def test_a_file_of_macros_among_the_templates_is_not_one(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "_macros.sql": ARRAY_MATCH,
+            "fans.sql": "SELECT 1 WHERE tpl.array_match(f.dsp, :f.v, :f.x)",
+        },
+    )
+    templates = Templates(tmp_path, macros=[tmp_path / "_macros.sql"])
+    assert templates.names() == ["fans.sql"]
+    Database("sqlite://", templates=templates).sql.check()
+
+
+def test_check_reads_the_body_of_a_macro_nothing_calls(tmp_path: Path) -> None:
+    write(tmp_path, {"_macros.sql": "SELECT tpl.nope(x) AS unused FROM x;\n"})
+    db = Database(
+        "sqlite://", templates=Templates(tmp_path, macros=[tmp_path / "_macros.sql"])
+    )
+    with pytest.raises(UnknownMacroError, match=r"tpl\.nope in _macros\.sql:1"):
+        db.sql.check()

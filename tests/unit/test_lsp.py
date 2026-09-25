@@ -655,3 +655,16 @@ def test_a_file_of_sql_macros_passes_arguments_where_parameters_go(
         "FROM col, vals, negate;\n"
     )
     assert assistant.diagnose(project / "_macros.sql", source) == []
+
+
+def test_check_passes_a_file_of_macros_among_the_templates(
+    app: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (app / "shop" / "sql" / "_macros.sql").write_text(
+        "SELECT tpl.if_set(negate, NOT col, col) AS flipped FROM col, negate;\n"
+        "\n"
+        "-- Rows of the team.\n"
+        "SELECT t.team = :team AS for_team FROM t;\n"
+    )
+    assert main(["check", "--project", str(app)]) == 0
+    assert capsys.readouterr().out == "1 templates, 0 problems\n"

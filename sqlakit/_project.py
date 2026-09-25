@@ -170,7 +170,6 @@ class Project:
 
         ``source`` is the file's text, which an editor may hold unsaved.
         """
-        namespace = self.templates.namespace
         try:
             written = sql_macros(path, source)
         except MacroDefinitionError as error:
@@ -179,17 +178,7 @@ class Project:
         found = []
         for macro in written:
             try:
-                MacroTemplate(
-                    macro.source_name,
-                    # Each argument as a parameter the calling template passes,
-                    # which goes wherever a macro in the body takes one.
-                    macro.expanded([f":{param}" for param in macro.params]),
-                    macros,
-                    namespace=namespace,
-                    load=self.templates.engine._read,  # noqa: SLF001
-                    expanding=(macro.name,),
-                    first_line=macro.body_line,
-                )
+                self.templates.check_macro(macro, macros)
             except (MacroSyntaxError, UnknownMacroError, MacroArgumentError) as error:
                 line = error.chain[0][1] if error.chain else error.line
                 found.append((line, str(error)))

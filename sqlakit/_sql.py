@@ -2109,13 +2109,47 @@ class Templates:
         return self.engine.render_file(source, context, preparer)
 
     def names(self) -> list[str]:
-        """Return the name of every `.sql` file under the paths."""
+        """Return the name of every template: each `.sql` file under the paths.
+
+        A file of SQL macros is not one, wherever it lives.
+        """
+        macro_files = {
+            macro.path.resolve()
+            for macro in self.macros.values()
+            if isinstance(macro, SqlMacro)
+        }
         found = {
             path.relative_to(root).as_posix()
             for root in map(Path, self.paths)
             for path in root.rglob("*.sql")
+            if path.resolve() not in macro_files
         }
         return sorted(found)
+
+    def check_macro(
+        self, macro: SqlMacro, macros: Mapping[str, Macro] | None = None
+    ) -> None:
+        """Read an SQL macro's body the way a template calling it would.
+
+        Each argument stands as a parameter the calling template passes, which
+        goes wherever a macro in the body takes one. ``macros`` are the ones
+        the body may call, the registered ones unless an editor holds others.
+
+        Raises:
+            MacroSyntaxError: if the body cannot be read.
+            UnknownMacroError: if it calls a macro nobody registered.
+            MacroArgumentError: if a call has arguments its macro cannot take.
+
+        """
+        MacroTemplate(
+            macro.source_name,
+            macro.expanded([f":{param}" for param in macro.params]),
+            self.macros if macros is None else macros,
+            namespace=self.namespace,
+            load=self.engine._read,  # noqa: SLF001 - the engine reads includes
+            expanding=(macro.name,),
+            first_line=macro.body_line,
+        )
 
     def check(self) -> None:
         """Read every `.sql` template, so a broken one fails where deploys do.
@@ -2131,6 +2165,9 @@ class Templates:
         if not self.paths:
             raise SQLNotConfiguredError
         self.engine.check(self.names())
+        for macro in self.macros.values():
+            if isinstance(macro, SqlMacro):
+                self.check_macro(macro)
 
 
 class BaseSQLQuery(Generic[RowT, DatabaseT]):
