@@ -16,6 +16,7 @@ offers what an editor asks for while a template is written:
 
 from __future__ import annotations
 
+import ast
 import inspect
 import re
 from dataclasses import dataclass
@@ -33,6 +34,7 @@ from ._sql import (
     _required,
     signature_of,
 )
+from ._static import SKIPPED
 from .exceptions import (
     MacroArgumentError,
     MacroSyntaxError,
@@ -170,6 +172,64 @@ class _Assistant:
         macro = self.project.templates.macros.get(self._macro_at(source, offset) or "")
         return None if macro is None else _source_of(macro)
 
+    # Python files: the name of a template where the code reads one.
+
+    def reads_python(self, path: Path) -> bool:
+        """Whether a file is Python of this project, which names templates."""
+        if path.suffix != ".py":
+            return False
+        try:
+            relative = path.resolve().relative_to(self.project.root.resolve())
+        except ValueError:
+            return False
+        return not any(part in SKIPPED for part in relative.parts[:-1])
+
+    def python_diagnose(self, source: str) -> list[Diagnostic]:
+        """Return each template the code reads that no template directory holds."""
+        where = ", ".join(
+            _relative(Path(root), self.project.root)
+            for root in self.project.templates.paths
+        )
+        return [
+            Diagnostic(start, end, f"No SQL template named `{name}` in {where}.")
+            for start, end, name in _template_names(source)
+            if self.project.path_of(name) is None
+        ]
+
+    def python_complete(self, source: str, offset: int) -> list[Completion]:
+        """Return the template names that can go where the code reads one."""
+        typed = source[source.rfind("\n", 0, offset) + 1 : offset]
+        if match := _TEMPLATE_TYPED.search(typed):
+            return [
+                Completion(name, "template")
+                for name in self.project.templates.names()
+                if name.startswith(match.group(1))
+            ]
+        return []
+
+    def python_definition(self, source: str, offset: int) -> Target | None:
+        """Return the template the name under the offset reads."""
+        for start, end, name in _template_names(source):
+            if start <= offset <= end:
+                path = self.project.path_of(name)
+                return None if path is None else Target(path, 0)
+        return None
+
+    def links(self, path: Path, source: str) -> list[tuple[int, int, Path]]:
+        """Return each template the text names, where the name is, and its file."""
+        if self.reads_python(path):
+            named = _template_names(source)
+        else:
+            named = [
+                (found.start(1), found.end(1), found.group(1))
+                for found in self._include_path.finditer(source)
+            ]
+        return [
+            (start, end, target)
+            for start, end, name in named
+            if (target := self.project.path_of(name)) is not None
+        ]
+
     def _macro_at(self, source: str, offset: int) -> str | None:
         start = source.rfind("\n", 0, offset) + 1
         end = source.find("\n", offset)
@@ -235,6 +295,65 @@ class _Assistant:
         return Diagnostic(span[0], span[1], message)
 
 
+_TEMPLATE_CALLS = {"sql", "from_file", "from_sql"}
+"""The calls whose first argument names a template: `db.sql(...)` and its kin."""
+
+_TEMPLATE_TYPED = re.compile(r"\.(?:sql|from_file|from_sql)\(\s*[\"']([^\"']*)$")
+
+
+def _template_names(source: str) -> list[tuple[int, int, str]]:
+    """Return where the code names a template, the quotes left out, and the name.
+
+    A name is the first argument of `.sql(...)`, `.sql.from_file(...)` or
+    `.from_sql(...)`, written as a string that ends in `.sql`.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    starts = [0]
+    for line in source.splitlines(keepends=True):
+        starts.append(starts[-1] + len(line))
+    found = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _TEMPLATE_CALLS
+            and node.args
+        ):
+            continue
+        name = node.args[0]
+        if not (
+            isinstance(name, ast.Constant)
+            and isinstance(name.value, str)
+            and name.value.endswith(".sql")
+            and name.end_lineno is not None
+            and name.end_col_offset is not None
+        ):
+            continue
+        start = _char_offset(source, starts, name.lineno, name.col_offset)
+        end = _char_offset(source, starts, name.end_lineno, name.end_col_offset)
+        quote = source.find(name.value, start, end)
+        if quote >= 0:
+            found.append((quote, quote + len(name.value), name.value))
+    return found
+
+
+def _char_offset(source: str, starts: list[int], line: int, column: int) -> int:
+    """Return the offset of a position `ast` gives, its column in UTF-8 bytes."""
+    begin = starts[line - 1]
+    end = starts[line] if line < len(starts) else len(source)
+    return begin + len(source[begin:end].encode()[:column].decode(errors="ignore"))
+
+
+def _relative(path: Path, root: Path) -> str:
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def _line_span(source: str, line: int) -> tuple[int, int]:
     """Return the offsets of a line, counting lines from one."""
     start = 0
@@ -269,6 +388,16 @@ def _source_of(macro: Macro) -> Target | None:
     except (OSError, TypeError):
         return None
     return None if path is None else Target(Path(path), max(line - 1, 0))
+
+
+@dataclass(frozen=True, slots=True)
+class _At:
+    """The text a request is about, the offset in it, and whether it is Python."""
+
+    helper: _Assistant
+    source: str
+    offset: int
+    python: bool = False
 
 
 # UTF-16, which the protocol counts columns in.
@@ -313,7 +442,7 @@ def serve() -> None:  # pragma: no cover - run over stdio by an editor
     _server().start_io()
 
 
-def _server() -> Any:  # noqa: ANN401, C901 - the protocol's objects, and its handlers
+def _server() -> Any:  # noqa: ANN401, C901, PLR0915 - a handler for each request
     language_server = _required(
         LanguageServer, "pygls", "`sqlakit lsp`", "sqlakit[lsp]"
     )
@@ -338,9 +467,10 @@ def _server() -> Any:  # noqa: ANN401, C901 - the protocol's objects, and its ha
         document = ls.workspace.get_text_document(uri)
         path = _path(uri)
         helper = assistant()
-        if helper is None or not helper.applies_to(path):
-            found: list[Diagnostic] = []
-        else:
+        found: list[Diagnostic] = []
+        if helper is not None and helper.reads_python(path):
+            found = helper.python_diagnose(document.source)
+        elif helper is not None and helper.applies_to(path):
             found = helper.diagnose(path, document.source)
         ls.text_document_publish_diagnostics(
             types.PublishDiagnosticsParams(
@@ -362,14 +492,18 @@ def _server() -> Any:  # noqa: ANN401, C901 - the protocol's objects, and its ha
     def did_save(ls: LanguageServer, params: Any) -> None:  # noqa: ANN401
         publish(ls, params.text_document.uri)
 
-    def at(ls: LanguageServer, params: Any) -> tuple[_Assistant, str, int] | None:  # noqa: ANN401
+    def at(ls: LanguageServer, params: Any) -> _At | None:  # noqa: ANN401
         helper = assistant()
         path = _path(params.text_document.uri)
-        if helper is None or not helper.applies_to(path):
+        if helper is None:
+            return None
+        python = helper.reads_python(path)
+        if not (python or helper.applies_to(path)):
             return None
         source = ls.workspace.get_text_document(params.text_document.uri).source
         position = params.position
-        return helper, source, offset_of(source, position.line, position.character)
+        offset = offset_of(source, position.line, position.character)
+        return _At(helper, source, offset, python=python)
 
     kinds = {
         "macro": types.CompletionItemKind.Function,
@@ -379,13 +513,18 @@ def _server() -> Any:  # noqa: ANN401, C901 - the protocol's objects, and its ha
 
     @server.feature(
         types.TEXT_DOCUMENT_COMPLETION,
-        types.CompletionOptions(trigger_characters=[".", "'", ":"]),
+        types.CompletionOptions(trigger_characters=[".", "'", '"', ":"]),
     )
     def completion(ls: LanguageServer, params: Any) -> Any:  # noqa: ANN401
         found = at(ls, params)
         if found is None:
             return None
-        helper, source, offset = found
+        helper, source, offset = found.helper, found.source, found.offset
+        written = (
+            helper.python_complete(source, offset)
+            if found.python
+            else helper.complete(source, offset)
+        )
         return types.CompletionList(
             is_incomplete=False,
             items=[
@@ -403,14 +542,18 @@ def _server() -> Any:  # noqa: ANN401, C901 - the protocol's objects, and its ha
                     if one.snippet
                     else None,
                 )
-                for one in helper.complete(source, offset)
+                for one in written
             ],
         )
 
     @server.feature(types.TEXT_DOCUMENT_HOVER)
     def hover(ls: LanguageServer, params: Any) -> Any:  # noqa: ANN401
         found = at(ls, params)
-        text = None if found is None else found[0].hover(found[1], found[2])
+        text = (
+            None
+            if found is None or found.python
+            else found.helper.hover(found.source, found.offset)
+        )
         if text is None:
             return None
         return types.Hover(types.MarkupContent(types.MarkupKind.Markdown, text))
@@ -418,11 +561,35 @@ def _server() -> Any:  # noqa: ANN401, C901 - the protocol's objects, and its ha
     @server.feature(types.TEXT_DOCUMENT_DEFINITION)
     def definition(ls: LanguageServer, params: Any) -> Any:  # noqa: ANN401
         found = at(ls, params)
-        target = None if found is None else found[0].definition(found[1], found[2])
+        if found is None:
+            return None
+        target = (
+            found.helper.python_definition(found.source, found.offset)
+            if found.python
+            else found.helper.definition(found.source, found.offset)
+        )
         if target is None:
             return None
         start = types.Position(target.line, 0)
         return types.Location(target.path.resolve().as_uri(), types.Range(start, start))
+
+    @server.feature(types.TEXT_DOCUMENT_DOCUMENT_LINK)
+    def document_link(ls: LanguageServer, params: Any) -> Any:  # noqa: ANN401
+        helper = assistant()
+        path = _path(params.text_document.uri)
+        if helper is None or not (helper.reads_python(path) or helper.applies_to(path)):
+            return []
+        source = ls.workspace.get_text_document(params.text_document.uri).source
+        return [
+            types.DocumentLink(
+                range=types.Range(
+                    types.Position(*position_of(source, start)),
+                    types.Position(*position_of(source, end)),
+                ),
+                target=target.resolve().as_uri(),
+            )
+            for start, end, target in helper.links(path, source)
+        ]
 
     return server
 

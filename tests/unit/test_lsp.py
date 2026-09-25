@@ -439,6 +439,21 @@ async def test_the_server_answers_an_editor(project: Path) -> None:
     assert isinstance(completion, types.CompletionList)
     assert "mine" in [item.label for item in completion.items]
 
+    outer = (project / "sql" / "outer.tpl.sql").as_uri()
+    client.text_document_did_open(
+        types.DidOpenTextDocumentParams(
+            types.TextDocumentItem(
+                outer, "sql", 1, (project / "sql" / "outer.tpl.sql").read_text()
+            )
+        )
+    )
+    links = await client.text_document_document_link_async(
+        types.DocumentLinkParams(types.TextDocumentIdentifier(outer))
+    )
+    assert [link.target for link in links or []] == [
+        (project / "sql" / "inner.tpl.sql").resolve().as_uri()
+    ]
+
     await client.shutdown_async(None)
     client.exit(None)
     await client.stop()
@@ -568,3 +583,65 @@ def test_sqruff_reads_a_template_with_what_export_wrote(project: Path) -> None:
         check=False,
     )
     assert "Unparsable" not in ran.stdout + ran.stderr
+
+
+# Python that names templates
+
+CODE = """from app import User, db, other
+
+print("имя"); db.sql("good.tpl.sql", teams=[])
+db.sql.from_file("missing.sql")
+User.query.from_sql("inner.tpl.sql")
+db.sql.from_string("SELECT 1 -- not a file.sql")
+other.sql("not_a_template")
+"""
+
+
+def test_the_code_is_checked_for_templates_that_are_not_there(
+    assistant: _Assistant,
+) -> None:
+    [found] = assistant.python_diagnose(CODE)
+    assert CODE[found.start : found.end] == "missing.sql"
+    assert found.message == "No SQL template named `missing.sql` in sql."
+
+
+def test_a_template_name_in_the_code_goes_to_its_file(
+    assistant: _Assistant, project: Path
+) -> None:
+    offset = CODE.index("good.tpl.sql") + 3
+    assert assistant.python_definition(CODE, offset) == Target(
+        project / "sql" / "good.tpl.sql", 0
+    )
+    assert assistant.python_definition(CODE, CODE.index("print")) is None
+
+
+def test_a_template_name_completes_in_the_code(assistant: _Assistant) -> None:
+    source = 'rows = db.sql("go'
+    assert assistant.python_complete(source, len(source)) == [
+        Completion("good.tpl.sql", "template")
+    ]
+    assert assistant.python_complete("print('go", 9) == []
+
+
+def test_template_names_are_links(assistant: _Assistant, project: Path) -> None:
+    code = project / "code.py"
+    assert [
+        (CODE[start:end], target.name)
+        for start, end, target in assistant.links(code, CODE)
+    ] == [("good.tpl.sql", "good.tpl.sql"), ("inner.tpl.sql", "inner.tpl.sql")]
+    outer = project / "sql" / "outer.tpl.sql"
+    source = outer.read_text()
+    [(start, end, target)] = assistant.links(outer, source)
+    assert (source[start:end], target) == (
+        "inner.tpl.sql",
+        project / "sql" / "inner.tpl.sql",
+    )
+
+
+def test_the_server_reads_the_python_of_the_project(
+    assistant: _Assistant, project: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    assert assistant.reads_python(project / "code.py")
+    assert not assistant.reads_python(project / "tests" / "test_code.py")
+    assert not assistant.reads_python(tmp_path_factory.mktemp("elsewhere") / "x.py")
+    assert not assistant.reads_python(project / "sql" / "good.tpl.sql")

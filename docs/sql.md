@@ -570,7 +570,12 @@ macros = ["app/sql/_macros.sql"]
 ```
 
 `sqlakit lsp` serves the same checks to an editor as you type, with completion
-of macros and hover documentation. It needs `pip install "sqlakit[lsp]"`.
+of macros and hover documentation. Go to definition opens a macro where it's
+written, and an included template. In your Python, the name in
+`db.sql("users/search.sql")`, `from_file` or `from_sql` completes, links to the
+file, and is marked when no template directory holds it. Register the server
+for `.sql` and `.py` files, next to the language servers you run for them. It
+needs `pip install "sqlakit[lsp]"`.
 
 ## Async templates
 
