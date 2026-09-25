@@ -1,19 +1,22 @@
 """`.tpl.sql` templates: SQL with `tpl.` macros, next to the Jinja ones."""
 
 import os
+import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects import mysql, postgresql
 
 from sqlakit import (
     Database,
     MacroArgumentError,
     MacroDefinitionError,
     MacroSyntaxError,
+    StrayParameterError,
     UnknownMacroError,
     UnknownOrderFieldError,
 )
@@ -26,7 +29,7 @@ TEMPLATES = {
         WHERE
             team IN :teams
             AND tpl.if_set(:search, tpl.ci_contains(name, :search))
-        ORDER BY tpl.sort_by(:order_by, id, name, team) NULLS LAST
+        ORDER BY tpl.sort_by(:order_by, id, name, team, 'nulls_last')
         LIMIT :limit
     """,
     "users/for_teams.tpl.sql": """
@@ -131,23 +134,46 @@ def test_sort_by_refuses_a_field_it_was_not_given(db: Database) -> None:
         names(db, "users/list.tpl.sql", **LIST | {"order_by": "password"})
 
 
-def test_sort_by_refuses_sql_in_place_of_a_name() -> None:
-    dialect = postgresql.dialect()
+def test_sort_by_refuses_what_is_not_a_sort_string() -> None:
     with pytest.raises(UnknownOrderFieldError):
-        render("ORDER BY tpl.sort_by(:o)", dialect, o="id; DROP TABLE users")
-    with pytest.raises(UnknownOrderFieldError):
-        render("ORDER BY tpl.sort_by(:o)", dialect, o="id.sideways")
+        render("ORDER BY tpl.sort_by(:o, id)", postgresql.dialect(), o="id.sideways")
 
 
-def test_sort_by_quotes_a_name_when_no_columns_are_listed() -> None:
-    sql = render(
-        "ORDER BY tpl.sort_by(:o)", postgresql.dialect(), o=["Name.desc.nulls_last"]
+def test_sort_by_needs_the_columns_it_may_sort_by() -> None:
+    with pytest.raises(MacroArgumentError, match="takes at least 2 arguments"):
+        render("ORDER BY tpl.sort_by(:o)", postgresql.dialect(), o="id")
+
+
+def test_sort_by_sorts_by_an_expression_under_a_name() -> None:
+    source = "ORDER BY tpl.sort_by(:o, u.id, name = name COLLATE 'und-ci-ai')"
+    assert render(source, postgresql.dialect(), o=["name.desc", "id"]) == (
+        "ORDER BY name COLLATE 'und-ci-ai' DESC, u.id ASC"
     )
-    assert sql == 'ORDER BY "Name" DESC NULLS LAST'
+
+
+def test_sort_by_places_nulls_where_the_template_says_unless_asked() -> None:
+    source = "ORDER BY tpl.sort_by(:o, id, name, 'nulls_last')"
+    assert render(source, postgresql.dialect(), o=["name.asc.nulls_first", "id"]) == (
+        "ORDER BY name ASC NULLS FIRST, id ASC NULLS LAST"
+    )
+
+
+def test_sort_by_places_nulls_on_mysql_without_nulls_last() -> None:
+    source = "ORDER BY tpl.sort_by(:o, id, 'nulls_last')"
+    assert render(source, mysql.dialect(), o="id.desc") == (
+        "ORDER BY id IS NULL ASC, id DESC"
+    )
+
+
+def test_sort_by_refuses_nulls_after_the_call() -> None:
+    with pytest.raises(MacroArgumentError, match="Pass the default as an argument"):
+        render(
+            "ORDER BY tpl.sort_by(:o, id)\n  nulls last", postgresql.dialect(), o=None
+        )
 
 
 def test_sort_by_orders_by_nothing_when_nothing_is_asked() -> None:
-    assert render("ORDER BY tpl.sort_by(:o)", postgresql.dialect(), o=[]) == (
+    assert render("ORDER BY tpl.sort_by(:o, id)", postgresql.dialect(), o=[]) == (
         "ORDER BY (SELECT NULL)"
     )
 
@@ -184,7 +210,7 @@ def test_the_layout_of_a_template_survives_rendering(db: Database) -> None:
         "        WHERE\n"
         "            team IN (__[POSTCOMPILE_teams])\n"
         "            AND TRUE\n"
-        "        ORDER BY (SELECT NULL) NULLS LAST\n"
+        "        ORDER BY (SELECT NULL)\n"
         "        LIMIT :limit\n"
         "    "
     )
@@ -234,8 +260,51 @@ def test_a_call_with_too_few_arguments_is_refused() -> None:
 
 
 def test_a_parameter_the_call_did_not_pass_is_refused() -> None:
-    with pytest.raises(MacroArgumentError, match="`:a` was not passed"):
-        render("WHERE tpl.if_set(:a, TRUE)", postgresql.dialect())
+    with pytest.raises(MacroArgumentError, match="`:q` was not passed"):
+        render("WHERE tpl.ci_contains(name, :q)", postgresql.dialect())
+
+
+def test_if_set_reads_a_parameter_the_call_did_not_pass_as_unset() -> None:
+    source = "WHERE tpl.if_set(:q, tpl.ci_contains(name, :q)) AND x = :q"
+    assert render(source, postgresql.dialect()) == "WHERE TRUE AND x = :q"
+
+
+def test_a_parameter_nobody_passed_is_still_refused_outside_if_set() -> None:
+    db = Database("sqlite://", templates=Templates(engine="tpl"))
+    with pytest.raises(StrayParameterError, match="`:q`"), db.connect():
+        db.sql.from_string("SELECT tpl.if_set(:q, 1) WHERE 1 = :q").all()
+
+
+def test_a_comma_inside_brackets_or_braces_stays_in_the_argument() -> None:
+    source = "WHERE tpl.if_set(:x, ARRAY[1, 2] && tags, {'a': 1, 'b': 2})"
+    dialect = postgresql.dialect()
+    assert render(source, dialect, x=1) == "WHERE ARRAY[1, 2] && tags"
+    assert render(source, dialect, x=None) == "WHERE {'a': 1, 'b': 2}"
+
+
+def test_a_dollar_quoted_string_is_text() -> None:
+    source = "SELECT $$ tpl.nope( $$, $fn$ ) tpl.nope( $fn$, a$b$c, tpl.if_set(:a, 1)"
+    assert render(source, postgresql.dialect(), a=1) == (
+        "SELECT $$ tpl.nope( $$, $fn$ ) tpl.nope( $fn$, a$b$c, 1"
+    )
+
+
+def test_ci_contains_takes_the_collation_snowflake_compares_under() -> None:
+    from sqlalchemy.engine import default
+
+    snowflake = default.DefaultDialect()
+    snowflake.name = "snowflake"
+    assert render("WHERE tpl.ci_contains(name, :q, 'en-ci-ai')", snowflake, q="é") == (
+        "WHERE CONTAINS(COLLATE(name, 'en-ci-ai'), :q)"
+    )
+
+
+def test_a_coroutine_function_is_not_a_macro() -> None:
+    async def later(value: Param) -> str:
+        return str(value)
+
+    with pytest.raises(MacroDefinitionError, match="coroutine function"):
+        sql_macro(later)  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize(
@@ -297,8 +366,8 @@ def test_signature_says_how_a_template_calls_a_macro() -> None:
         for macro in sql_module.registered([json_object]).values()
     ] == [
         "tpl.if_set(:value, expr[, otherwise])",
-        "tpl.sort_by(:order_by, *allowed)",
-        "tpl.ci_contains(column, :text)",
+        "tpl.sort_by(:order_by, column, *columns)",
+        "tpl.ci_contains(column, :text[, collation])",
         "tpl.json_object(*pairs)",
     ]
 
@@ -314,15 +383,23 @@ def test_the_tpl_engine_renders_every_sql_file_and_string(tmp_path: Path) -> Non
     db.sql.check()
 
 
-def test_the_tpl_engine_never_imports_jinja(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(sql_module, "Jinja2SQL", None)
-    write(tmp_path, {"plain.sql": "SELECT 1"})
-    db = Database("sqlite://", templates=Templates(tmp_path, engine="tpl"))
-    with db.connect():
-        assert db.sql("plain.sql").scalars().one() == 1
-    db.sql.check()
+def test_the_tpl_engine_works_without_the_jinja_extra(tmp_path: Path) -> None:
+    write(tmp_path, {"plain.sql": "SELECT tpl.if_set(:x, 1, 2)"})
+    script = f"""
+import sys
+for name in ("jinja2", "jinja2sql", "markupsafe"):
+    sys.modules[name] = None
+from sqlakit import Database
+from sqlakit.sql import Templates
+db = Database("sqlite://", templates=Templates({str(tmp_path)!r}, engine="tpl"))
+db.sql.check()
+with db.connect():
+    print(db.sql("plain.sql").scalars().one())
+"""
+    ran = subprocess.run(  # noqa: S603 - our own interpreter, our own script
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+    assert (ran.returncode, ran.stdout, ran.stderr) == (0, "2\n", "")
 
 
 def test_a_macro_template_needs_no_jinja(
@@ -347,3 +424,19 @@ def test_the_cli_lists_the_macros_of_a_module(
         "### `tpl.json_object(*pairs)`\n\n"
         "JSON_BUILD_OBJECT on PostgreSQL, OBJECT_CONSTRUCT on Snowflake.\n\n"
     )
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"  # aiosqlite runs on asyncio
+
+
+@pytest.mark.anyio
+async def test_the_async_api_renders_the_same_macros(tmp_path: Path) -> None:
+    from sqlakit.asyncio import Database as AsyncDatabase
+
+    write(tmp_path, {"one.tpl.sql": "SELECT tpl.if_set(:x, 1, 2)"})
+    db = AsyncDatabase("sqlite+aiosqlite://", templates=tmp_path)
+    async with db.connect():
+        assert await db.sql("one.tpl.sql", x=None).scalars().one() == 2
+    await db.dispose()

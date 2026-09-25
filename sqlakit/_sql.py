@@ -21,7 +21,6 @@ from typing import (
 )
 
 import sqlalchemy as sa
-from markupsafe import Markup
 
 from ._query import _field_named, _parse_sort_field
 from .exceptions import (
@@ -42,6 +41,7 @@ if TYPE_CHECKING:
 
     import jinja2
     from jinja2sql import Jinja2SQL
+    from markupsafe import Markup
     from sqlalchemy.sql import Executable
 
     from ._base import BaseDatabase
@@ -49,8 +49,9 @@ else:
     try:
         import jinja2
         from jinja2sql import Jinja2SQL
+        from markupsafe import Markup
     except ImportError:  # pragma: no cover - the extra is installed in CI
-        jinja2 = Jinja2SQL = None
+        jinja2 = Jinja2SQL = Markup = None
 
 if TYPE_CHECKING:
     from pydantic import BaseModel, TypeAdapter
@@ -102,7 +103,9 @@ SUFFIX = ".tpl.sql"
 
 _CALL = re.compile(r"tpl\.([A-Za-z_]\w*)\s*\(", re.IGNORECASE)
 _PARAMETER = re.compile(r"\s*:([A-Za-z_]\w*)\s*")
-_IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+_DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$")
+_COLUMN_AS = re.compile(r"\s*([A-Za-z_]\w*)\s*=(?!=)\s*(.+?)\s*", re.DOTALL)
+_NULLS_AFTER = re.compile(r"\s*NULLS\b", re.IGNORECASE)
 _SORT_FIELD = re.compile(r"[^.]+(\.(asc|desc)(\.nulls_(first|last))?)?", re.IGNORECASE)
 
 
@@ -184,10 +187,24 @@ class Macro:
     It stays callable as the function it wraps.
     """
 
-    def __init__(self, func: Callable[..., str], name: str | None = None) -> None:
+    def __init__(
+        self,
+        func: Callable[..., str],
+        name: str | None = None,
+        *,
+        optional: bool = False,
+    ) -> None:
         self.func = func
         self.name = (name or getattr(func, "__name__", "")).lower()
         self.doc = inspect.getdoc(func) or ""
+        self.optional = optional
+        if iscoroutinefunction(func):
+            raise MacroDefinitionError(
+                self.name,
+                "it is a coroutine function, and templates render synchronously, "
+                "in the async API as well. Await the value first, and pass it in "
+                "the context",
+            )
         self.context, self.slots, self.variadic = _slots_of(func, self.name)
 
     def __repr__(self) -> str:
@@ -212,7 +229,11 @@ class Macro:
 
 
 def sql_macro(
-    func: Callable[..., str] | None = None, /, *, name: str | None = None
+    func: Callable[..., str] | None = None,
+    /,
+    *,
+    name: str | None = None,
+    optional: bool = False,
 ) -> Any:  # noqa: ANN401
     """Make a function a macro that `.tpl.sql` templates call as `tpl.<name>(...)`.
 
@@ -226,13 +247,16 @@ def sql_macro(
     brings its value, a `Sql` is the argument's text, and a `Context` first
     brings the dialect and a way to bind values of the macro's own.
 
+    A `:name` the call did not pass is an error, unless ``optional`` is set: then
+    it reads as `None`, for a macro whose point is that it may be missing.
+
     Raises:
         MacroDefinitionError: if a parameter is annotated as none of them.
 
     """
     if func is None:
-        return lambda func: Macro(func, name)
-    return Macro(func, name)
+        return lambda func: Macro(func, name, optional=optional)
+    return Macro(func, name, optional=optional)
 
 
 def _slots_of(
@@ -323,17 +347,8 @@ class _Scanner:
         depth = 0
         while index < len(source):
             char = source[index]
-            if char in "'\"":
-                index = self._past_quoted(index, char)
-            elif source.startswith("--", index):
-                newline = source.find("\n", index)
-                index = len(source) if newline < 0 else newline
-            elif source.startswith("/*", index):
-                end = source.find("*/", index + 2)
-                if end < 0:
-                    problem = "a comment is never closed"
-                    raise self._error(problem, index)
-                index = end + 2
+            if (skipped := self._past_literal(index)) != index:
+                index = skipped
             elif (call := _CALL.match(source, index)) and not self._inside_name(index):
                 parts.append(source[text_from:index])
                 args, index = self._args(call.end())
@@ -341,10 +356,10 @@ class _Scanner:
                     _Call(call.group(1).lower(), args, self._line(call.start()))
                 )
                 text_from = index
-            elif in_args and char == "(":
+            elif in_args and char in "([{":
                 depth += 1
                 index += 1
-            elif in_args and char == ")" and depth:
+            elif in_args and char in ")]}" and depth:
                 depth -= 1
                 index += 1
             elif in_args and (char == ")" or (char == "," and not depth)):
@@ -371,6 +386,32 @@ class _Scanner:
         if len(args) == 1 and args[0].parts == ():
             args = []
         return tuple(args), index
+
+    def _past_literal(self, index: int) -> int:
+        """Return where a string, a quoted name or a comment starting here ends.
+
+        Where none starts, that is where it was asked about.
+        """
+        source = self.source
+        if source[index] in "'\"":
+            return self._past_quoted(index, source[index])
+        dollar = _DOLLAR_QUOTE.match(source, index)
+        if dollar and not self._inside_name(index):
+            return self._past(dollar.group(), dollar.end(), "a dollar-quoted string")
+        if source.startswith("--", index):
+            newline = source.find("\n", index)
+            return len(source) if newline < 0 else newline
+        if source.startswith("/*", index):
+            return self._past("*/", index + 2, "a comment")
+        return index
+
+    def _past(self, closer: str, start: int, what: str) -> int:
+        """Return where ``closer`` ends, or say that ``what`` is never closed."""
+        end = self.source.find(closer, start)
+        if end < 0:
+            problem = f"{what} is never closed"
+            raise self._error(problem, start)
+        return end + len(closer)
 
     def _past_quoted(self, start: int, quote: str) -> int:
         """Return where a string or a quoted name ends; a doubled quote is inside it."""
@@ -443,9 +484,22 @@ class MacroTemplate:
             MacroArgumentError: if a call has the wrong arguments.
 
         """
-        for part in parts:
+        for index, part in enumerate(parts):
             if isinstance(part, str):
                 continue
+            after = parts[index + 1] if index + 1 < len(parts) else ""
+            if (
+                part.name == "sort_by"
+                and isinstance(after, str)
+                and _NULLS_AFTER.match(after)
+            ):
+                raise MacroArgumentError(
+                    part.name,
+                    "a NULLS after the call would follow a NULLS of a sort string. "
+                    "Pass the default as an argument: 'nulls_last' or 'nulls_first'",
+                    self.name,
+                    part.line,
+                )
             macro = self.macros.get(part.name)
             if macro is None:
                 raise UnknownMacroError(part.name, self.name, part.line, self.macros)
@@ -457,12 +511,12 @@ class MacroTemplate:
                     self.name,
                     part.line,
                 )
-            for index, arg in enumerate(part.args):
-                if macro.kind_at(index) is Param and arg.param is None:
+            for position, arg in enumerate(part.args):
+                if macro.kind_at(position) is Param and arg.param is None:
                     written = _written(arg.parts)
                     raise MacroArgumentError(
                         macro.name,
-                        f"argument {index + 1} must be a :parameter, got {written!r}",
+                        f"argument {position + 1} must be a :parameter, got {written!r}",
                         self.name,
                         part.line,
                     )
@@ -475,21 +529,35 @@ class MacroTemplate:
 
     def _expand(self, call: _Call, ctx: Context) -> str:
         macro = self.macros[call.name]
-        args: list[Any] = [ctx] if macro.context else []
-        for index, arg in enumerate(call.args):
-            if macro.kind_at(index) is Param:
-                assert arg.param is not None  # noqa: S101 - checked on load
-                if arg.param not in ctx.values:
-                    raise MacroArgumentError(
-                        macro.name,
-                        f"`:{arg.param}` was not passed",
-                        self.name,
-                        call.line,
-                    )
-                args.append(Param(arg.param, ctx.values[arg.param]))
-            else:
-                args.append(Sql(self._render(arg.parts, ctx)))
-        return macro(*args)
+        missing = {
+            arg.param
+            for index, arg in enumerate(call.args)
+            if macro.kind_at(index) is Param
+            and arg.param is not None
+            and arg.param not in ctx.values
+        }
+        if missing and not macro.optional:
+            raise MacroArgumentError(
+                macro.name,
+                f"`:{min(missing)}` was not passed",
+                self.name,
+                call.line,
+            )
+        # An optional macro reads what was not passed as None, and so do the
+        # calls inside its arguments: `if_set(:q, ci_contains(name, :q))`.
+        ctx.values.update(dict.fromkeys(missing))
+        try:
+            args: list[Any] = [ctx] if macro.context else []
+            for index, arg in enumerate(call.args):
+                if macro.kind_at(index) is Param:
+                    assert arg.param is not None  # noqa: S101 - checked on load
+                    args.append(Param(arg.param, ctx.values[arg.param]))
+                else:
+                    args.append(Sql(self._render(arg.parts, ctx)))
+            return macro(*args)
+        finally:
+            for name in missing:
+                del ctx.values[name]
 
 
 def _arity(macro: Macro) -> str:
@@ -610,11 +678,12 @@ def registered(macros: Iterable[Macro]) -> dict[str, Macro]:
 # The built-in macros.
 
 
-@sql_macro
+@sql_macro(optional=True)
 def if_set(value: Param, expr: Sql, otherwise: Sql = Sql("TRUE")) -> str:  # noqa: B008
     """`expr` when the parameter holds a value, `otherwise` when it does not.
 
-    `None`, an empty string, an empty list and `False` hold none. `otherwise` is
+    `None`, an empty string, an empty list and `False` hold none, and so does a
+    parameter the call did not pass. `otherwise` is
     `TRUE`, which leaves a `WHERE` or an `AND` as though the condition were not
     there.
     """
@@ -629,38 +698,63 @@ def _is_set(value: Any) -> bool:  # noqa: ANN401
 
 
 @sql_macro
-def sort_by(ctx: Context, order_by: Param, *allowed: Sql) -> str:
+def sort_by(ctx: Context, order_by: Param, column: Sql, *columns: Sql) -> str:
     """`ORDER BY` terms from sort strings: `name`, `name.desc`, `name.desc.nulls_last`.
 
-    One string or a list of them. With the columns it may sort by listed after
-    the parameter, a name that is not one of them is refused; without them, any
-    plain name is quoted as an identifier. `(SELECT NULL)`, which orders by
-    nothing, when there is nothing to sort by: PostgreSQL refuses a bare `NULL`.
+    One string or a list of them, sorting only by the columns listed after the
+    parameter: the names come from a request, and nothing else reaches the SQL.
+    A sort string names a column by its last part, `u.name` as `name`, and
+    `name = <expression>` sorts by something else under that name:
+
+    ```sql
+    ORDER BY tpl.sort_by(:order_by, id, name = name COLLATE 'und-ci-ai', 'nulls_last')
+    ```
+
+    `'nulls_last'` or `'nulls_first'` places the nulls of every term whose sort
+    string does not say. MySQL has no `NULLS LAST`, and sorts by `IS NULL` first. `(SELECT NULL)`, which orders by nothing, when there is
+    nothing to sort by: PostgreSQL refuses a bare `NULL`.
     """
+    offered: dict[str, str] = {}
+    default_nulls = None
+    for written in (column, *columns):
+        option = written.strip().strip("'").lower()
+        if written.strip().startswith("'") and option in ("nulls_first", "nulls_last"):
+            default_nulls = option
+        elif named := _COLUMN_AS.fullmatch(written):
+            offered[named.group(1)] = named.group(2)
+        else:
+            offered[_last_name(written)] = written.strip()
     requested = order_by.value
     if not requested:
         return _NO_ORDER
     fields = [requested] if isinstance(requested, str) else list(requested)
-    columns = {_last_name(column): column for column in allowed}
     terms = []
     for field in fields:
         if not _SORT_FIELD.fullmatch(str(field)):
-            raise UnknownOrderFieldError(str(field), columns)
+            raise UnknownOrderFieldError(str(field), offered)
         name, descending, nulls = _parse_sort_field(str(field))
-        if columns:
-            column = columns[_field_named(name, columns)]
-        elif _IDENTIFIER.fullmatch(name):
-            column = ctx.quote(name)
-        else:
-            raise UnknownOrderFieldError(name)
-        term = f"{column} {'DESC' if descending else 'ASC'}"
-        if nulls:
-            term += " NULLS FIRST" if nulls == "nulls_first" else " NULLS LAST"
-        terms.append(term)
+        expression = offered[_field_named(name, offered)]
+        nulls = nulls or default_nulls
+        terms.append(
+            _sort_term(ctx.dialect, expression, descending=descending, nulls=nulls)
+        )
     return ", ".join(terms) or _NO_ORDER
 
 
 _NO_ORDER = "(SELECT NULL)"
+
+
+def _sort_term(
+    dialect: str, expression: str, *, descending: bool, nulls: str | None
+) -> str:
+    """Return one `ORDER BY` term, with its nulls placed the way the dialect can."""
+    term = f"{expression} {'DESC' if descending else 'ASC'}"
+    if nulls is None:
+        return term
+    last = nulls == "nulls_last"
+    if dialect in ("mysql", "mariadb"):
+        return f"{expression} IS NULL {'ASC' if last else 'DESC'}, {term}"
+    return f"{term} NULLS {'LAST' if last else 'FIRST'}"
 
 
 def _last_name(column: str) -> str:
@@ -669,15 +763,21 @@ def _last_name(column: str) -> str:
 
 
 @sql_macro
-def ci_contains(ctx: Context, column: Sql, text: Param) -> str:
+def ci_contains(
+    ctx: Context,
+    column: Sql,
+    text: Param,
+    collation: Sql = Sql("'en-ci'"),  # noqa: B008
+) -> str:
     """Whether a column holds the text anywhere, regardless of case.
 
     `ILIKE` on PostgreSQL, `CONTAINS(COLLATE(...))` on Snowflake, and `lower()`
     on both sides with `LIKE` elsewhere. `%` and `_` in the text match only
-    themselves.
+    themselves. ``collation`` is the one Snowflake compares under, `'en-ci-ai'`
+    to ignore accents as well; the other databases ignore it.
     """
     if ctx.dialect == "snowflake":
-        return f"CONTAINS(COLLATE({column}, 'en-ci'), {text})"
+        return f"CONTAINS(COLLATE({column}, {collation}), {text})"
     escaped = str(text.value).replace("!", "!!").replace("%", "!%").replace("_", "!_")
     pattern = ctx.bind(f"%{escaped}%")
     if ctx.dialect == "postgresql":
@@ -1054,7 +1154,7 @@ def _identifier(value: Any) -> Markup:  # noqa: ANN401
     parts = (value,) if isinstance(value, str) else value
     preparer = _preparer.get()
     # The preparer escapes what it quotes; nothing here reaches the SQL raw.
-    return Markup(".".join(preparer.quote(str(part)) for part in parts))  # noqa: S704
+    return Markup(".".join(preparer.quote(str(part)) for part in parts))
 
 
 def _placeholder(name: str, index: int) -> str:  # noqa: ARG001 - the style's shape
