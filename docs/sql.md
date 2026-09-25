@@ -375,7 +375,10 @@ by the same expression.
 
 `if_set`, `unless_set` and `when` expand only the branch they write. A macro
 in the other one never runs, so it can't fail on a value that wasn't meant for
-it.
+it. A branch of `if_set` or `unless_set` that joins conditions with `AND` or
+`OR` goes in brackets, so `tpl.if_set(:x, a OR b, FALSE) AND c` stays
+`(a OR b) AND c`. Any other branch goes in as written, a column or a sort term
+included.
 
 Where the SQL differs between databases, a macro that names the difference
 writes the right form for each: `icontains` is `ILIKE` on PostgreSQL and

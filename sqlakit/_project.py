@@ -181,7 +181,9 @@ class Project:
             try:
                 MacroTemplate(
                     macro.source_name,
-                    macro.expanded(list(macro.params)),
+                    # Each argument as a parameter the calling template passes,
+                    # which goes wherever a macro in the body takes one.
+                    macro.expanded([f":{param}" for param in macro.params]),
                     macros,
                     namespace=namespace,
                     load=self.templates.engine._read,  # noqa: SLF001

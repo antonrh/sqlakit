@@ -645,3 +645,13 @@ def test_the_server_reads_the_python_of_the_project(
     assert not assistant.reads_python(project / "tests" / "test_code.py")
     assert not assistant.reads_python(tmp_path_factory.mktemp("elsewhere") / "x.py")
     assert not assistant.reads_python(project / "sql" / "good.tpl.sql")
+
+
+def test_a_file_of_sql_macros_passes_arguments_where_parameters_go(
+    assistant: _Assistant, project: Path
+) -> None:
+    source = (
+        "SELECT tpl.if_set(negate, col NOT IN (vals), col IN (vals)) AS picked\n"
+        "FROM col, vals, negate;\n"
+    )
+    assert assistant.diagnose(project / "_macros.sql", source) == []

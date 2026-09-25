@@ -1394,8 +1394,13 @@ def if_set(value: Param, expr: Sql, otherwise: Sql = Sql("TRUE")) -> str:  # noq
     `None`, an empty string, an empty list and `False` hold none, and so does a
     parameter the call did not pass. `otherwise` is `TRUE`, which leaves a
     `WHERE` or an `AND` as though the condition were not there.
+
+    A branch that joins conditions with `AND` or `OR` goes in brackets, so it
+    stays one condition next to another: `x AND tpl.if_set(:y, a OR b)` writes
+    `x AND (a OR b)`. Any other branch goes in as written, a column or a sort
+    term included.
     """
-    return expr if _is_set(value.value) else otherwise
+    return _grouped(str(expr if _is_set(value.value) else otherwise))
 
 
 @sql_macro(optional=True, lazy=True)
@@ -1403,9 +1408,10 @@ def unless_set(value: Param, expr: Sql, otherwise: Sql = Sql("TRUE")) -> str:  #
     """`expr` when the parameter holds no value, `otherwise` when it does.
 
     The other way round from `if_set`, for what applies only when a filter is
-    not given: `AND tpl.unless_set(:status, status <> 'archived')`.
+    not given: `AND tpl.unless_set(:status, status <> 'archived')`. A branch
+    with `AND` or `OR` goes in brackets, as in `if_set`.
     """
-    return otherwise if _is_set(value.value) else expr
+    return _grouped(str(otherwise if _is_set(value.value) else expr))
 
 
 @sql_macro(optional=True, lazy=True)
@@ -1464,6 +1470,33 @@ def array(ctx: Context, values: Param, type_name: Sql = Sql("")) -> str:  # noqa
         problem = f"`:{values.name}` is empty, and PostgreSQL needs its type: pass one"
         raise MacroArgumentError(array.name, problem)
     return f"ARRAY[{', '.join(bound)}]{cast}"
+
+
+_JOINS_CONDITIONS = re.compile(r"\b(AND|OR)\b", re.IGNORECASE)
+
+
+def _grouped(sql: str) -> str:
+    """Return a condition in brackets when it joins others with `AND` or `OR`.
+
+    Only a join outside brackets and strings counts: `(a OR b)` and `'a or b'`
+    stay as they are.
+    """
+    scanner = _Scanner(sql, "", NAMESPACE)
+    depth = index = 0
+    while index < len(sql):
+        skipped = scanner.past_literal(index)
+        if skipped != index:
+            index = skipped
+            continue
+        char = sql[index]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif depth == 0 and _JOINS_CONDITIONS.match(sql, index):
+            return f"({sql})"
+        index += 1
+    return sql
 
 
 def _is_set(value: Any) -> bool:  # noqa: ANN401

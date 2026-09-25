@@ -1607,3 +1607,56 @@ def test_an_include_in_brackets_of_its_own_adds_none(tmp_path: Path) -> None:
     )
     with db.connect():
         assert db.sql("outer.sql").scalars().one() == 1
+
+
+@pytest.mark.parametrize(
+    ("source", "values", "sql"),
+    [
+        (
+            "WHERE tpl.if_set(:x, a IN (:x) OR b, FALSE) AND c",
+            {"x": [1]},
+            "WHERE (a IN (:x) OR b) AND c",
+        ),
+        ("WHERE NOT tpl.if_set(:x, a AND b)", {"x": 1}, "WHERE NOT (a AND b)"),
+        ("WHERE tpl.unless_set(:x, a OR b) AND c", {}, "WHERE (a OR b) AND c"),
+        ("WHERE tpl.if_set(:x, a IN (:x) OR b, FALSE)", {}, "WHERE FALSE"),
+        ("WHERE tpl.if_set(:x, (a OR b))", {"x": 1}, "WHERE (a OR b)"),
+        (
+            "WHERE tpl.if_set(:x, a = 'this or that')",
+            {"x": 1},
+            "WHERE a = 'this or that'",
+        ),
+        ("WHERE tpl.if_set(:x, a_order = 1)", {"x": 1}, "WHERE a_order = 1"),
+        ("ORDER BY tpl.if_set(:x, a DESC, b)", {"x": 1}, "ORDER BY a DESC"),
+        ("FROM tpl.if_set(:x, orders, archive)", {}, "FROM archive"),
+    ],
+)
+def test_a_branch_that_joins_conditions_stays_one(
+    source: str, values: dict[str, Any], sql: str
+) -> None:
+    assert render(source, postgresql.dialect(), **values) == sql
+
+
+def test_an_sql_macro_passes_its_argument_where_a_parameter_goes(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "filters.sql"
+    path.write_text(
+        "SELECT tpl.if_set(negate, col NOT IN (vals), col IN (vals)) AS picked\n"
+        "FROM col, vals, negate;\n"
+        "\n"
+        "SELECT tpl.arrays_overlap(col, tpl.array(vals, 'text')) AS overlaps\n"
+        "FROM col, vals;\n"
+    )
+    source = "WHERE tpl.picked(u.country, :countries, :exclude) AND tpl.overlaps(u.dsp, :d.v)"
+    template = sql_module.MacroTemplate(
+        source=source, name="x.sql", macros=sql_module.registered([path])
+    )
+    ctx = Context(
+        "postgresql",
+        postgresql.dialect().identifier_preparer,
+        {"countries": ["de"], "exclude": True, "d": {"v": ["a"]}},
+    )
+    assert template.render(ctx) == (
+        "WHERE (u.country NOT IN (:countries)) AND ((u.dsp && ARRAY[:d__v__1]::text[]))"
+    )
