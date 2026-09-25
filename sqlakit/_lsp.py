@@ -177,8 +177,6 @@ class _Assistant:
         macro = self.project.templates.macros.get(self._macro_at(source, offset) or "")
         return None if macro is None else _source_of(macro)
 
-    # Python files: the name of a template where the code reads one.
-
     def reads_python(self, path: Path) -> bool:
         """Whether a file is Python of this project, which names templates."""
         if path.suffix != ".py":
@@ -414,9 +412,6 @@ class _At:
     python: bool = False
 
 
-# UTF-16, which the protocol counts columns in.
-
-
 def offset_of(source: str, line: int, character: int) -> int:
     """Return the offset of a position the protocol gives, in UTF-16 units."""
     start = 0
@@ -441,9 +436,6 @@ def position_of(source: str, offset: int) -> tuple[int, int]:
     start = source.rfind("\n", 0, offset) + 1
     column = len(source[start:offset].encode("utf-16-le")) // 2
     return line, column
-
-
-# The server.
 
 
 def serve() -> None:  # pragma: no cover - run over stdio by an editor
@@ -587,8 +579,7 @@ def _server() -> Any:  # noqa: ANN401, C901, PLR0915 - a handler for each reques
         start = types.Position(target.line, _utf16_column(target))
         return types.Location(target.path.resolve().as_uri(), types.Range(start, start))
 
-    # An editor goes to where a macro is written on any of these: a macro has no
-    # declaration or implementation apart from its definition.
+    # A macro has one place, so the three requests get one answer.
     for method in (
         types.TEXT_DOCUMENT_DEFINITION,
         types.TEXT_DOCUMENT_IMPLEMENTATION,

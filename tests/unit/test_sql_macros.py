@@ -885,7 +885,7 @@ def test_between_refuses_other_bounds_when_the_file_is_read() -> None:
     )
 
 
-# values
+# tpl.values
 
 
 def test_values_writes_a_table_one_parameter_per_value() -> None:
@@ -1232,7 +1232,7 @@ def test_on_dialect_takes_only_named_branches() -> None:
         render("FROM tpl.on_dialect(a)", postgresql.dialect())
 
 
-# the second list
+# optional values, clauses and arrays
 
 
 def test_a_path_through_none_reads_as_none() -> None:

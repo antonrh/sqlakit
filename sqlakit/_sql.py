@@ -94,13 +94,6 @@ PathLike = str | Path
 """The directories templates are looked for in: one, or several."""
 
 
-# Templates that stay SQL.
-#
-# A `.tpl.sql` file is SQL in the production dialect, with `:name` parameters.
-# Each part that changes per call is a `tpl.<macro>(...)` call, which every SQL tool reads
-# as a function of a schema named `tpl`. A file is cut into text and calls once,
-# when it is first read; rendering joins the pieces and calls the macros.
-
 MACRO_FILE = "macros.sql"
 """How a file of SQL macros ends its name, which is how it is found."""
 
@@ -760,9 +753,6 @@ def signature_of(macro: Macro, namespace: str = NAMESPACE) -> str:
     return f"{namespace}.{macro.name}({written})"
 
 
-# The template, cut into text and calls.
-
-
 @dataclass(frozen=True, slots=True)
 class _Arg:
     parts: tuple[str | _Call, ...]
@@ -955,9 +945,6 @@ def _argument(parts: tuple[str | _Call, ...], span: tuple[int, int]) -> _Arg:
     return _Arg(trimmed_parts, param, span)
 
 
-# Loading and rendering.
-
-
 INCLUDE = "include"
 """The call that puts a whole query from another template in place, as `(...)`."""
 
@@ -1031,7 +1018,7 @@ class MacroTemplate:
             if isinstance(part, str):
                 compiled.append(_DOTTED.sub(self._flattened, part))
             elif part.name == INCLUDE:
-                # On a line of its own: the query may end in a `--` comment.
+                # `)` on a line of its own: the query may end in a `--` comment.
                 if _bracketed(parts, index):
                     compiled.extend((*self._include(part), "\n"))
                 else:
@@ -1278,15 +1265,13 @@ class MacroTemplate:
         if missing and not macro.optional:
             problem = f"`:{missing[0]}` was not passed"
             raise call.refuse(problem, self.namespace)
-        # An optional macro reads what was not passed as None, and so do the
-        # calls inside its arguments: `if_set(:q, icontains(name, :q))`.
+        # Missing values read as None inside the arguments too, for the calls there.
         values.update(dict.fromkeys(missing))
         try:
             return macro.func(*self._arguments(call, ctx))
         except MacroArgumentError as error:
             if error.template:
                 raise
-            # A macro's own refusal, said where the call is.
             raise call.refuse(error.problem, self.namespace) from None
         finally:
             for name in missing:
@@ -1478,7 +1463,6 @@ class MacroEngine:
         self.auto_reload = auto_reload
         self.namespace = namespace
         self._loaded: dict[str, MacroTemplate] = {}
-        # A string is read once too: the same few are written out again and again.
         self._from_string = lru_cache(maxsize=256)(
             lambda source: MacroTemplate(
                 "<string>", source, self.macros, namespace=namespace, load=self._read
@@ -1695,7 +1679,7 @@ def registered(macros: Iterable[Macro | str | Path]) -> dict[str, Macro]:
         ):
             resolved = Path(given).resolve()
             if resolved in files:
-                continue  # found in a template directory, and named as well
+                continue  # both listed in `macros=` and found in a directory
             files.add(resolved)
         unique.append(given)
     everything = [found for given in unique for found in _macros_given(given)]
@@ -1709,7 +1693,7 @@ def registered(macros: Iterable[Macro | str | Path]) -> dict[str, Macro]:
             isinstance(macro, SqlMacro)
             and (macro.name, macro.path.resolve()) in claimed
         ):
-            continue  # a function gives its values, and is the macro
+            continue  # claimed by a `FileMacro`
         if not isinstance(macro, Macro):
             raise MacroDefinitionError(
                 getattr(macro, "__name__", repr(macro)),
@@ -1743,9 +1727,6 @@ def _is_module(path: str) -> bool:
         return importlib.util.find_spec(path) is not None
     except ModuleNotFoundError:  # a parent that is a module, not a package
         return False
-
-
-# The built-in macros.
 
 
 @sql_macro(optional=True, lazy=True)
@@ -1968,7 +1949,7 @@ def icontains(
         return f"CONTAINS(COLLATE({column}, {collation}), {text})"
     param = _PARAMETER.fullmatch(text)
     if param and param.group(1) in ctx.values:
-        # A parameter alone is escaped here, and its pattern bound in its place.
+        # A plain parameter: escape its value here, and bind the pattern.
         value = str(ctx.values[param.group(1)])
         escaped = value.replace("!", "!!").replace("%", "!%").replace("_", "!_")
         pattern = ctx.bind(f"%{escaped}%", f"{param.group(1)}__like")
@@ -2700,7 +2681,7 @@ def _statement(
     stray = named - set(params)
     if stray:
         raise StrayParameterError(sorted(stray), label)
-    # A macro template hands over its whole context, and binds what the SQL names.
+    # The context holds more than the SQL reads: bind only what it names.
     return clause.bindparams(
         *(_bound(name, value) for name, value in params.items() if name in named)
     )

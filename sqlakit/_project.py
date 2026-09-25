@@ -142,7 +142,7 @@ class Project:
                 self.load(name, path.read_text(encoding="utf-8"))
             except (MacroSyntaxError, UnknownMacroError, MacroArgumentError) as error:
                 if error.chain:
-                    continue  # in a template this one includes, and said there
+                    continue  # reported for the included template itself
                 start, end = error.span or (0, 0)
                 yield Problem(path, start, end, str(error))
         for path in self.macro_files():
@@ -214,7 +214,7 @@ def placeholders_of(text: str, values: dict[str, str]) -> dict[str, str]:
         elif SAMPLE_AFTER.search(before):
             values[param] = "10"
         elif param.lower() in _RESERVED:
-            # A name where a name goes, `COPY INTO :table`; a value elsewhere.
+            # `COPY INTO :table` needs a name, and other positions a value.
             named = dotted or inline_position(before)
             values.setdefault(param, f"{param}_" if named else "1")
     return values

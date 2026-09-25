@@ -267,7 +267,7 @@ def _macro_of(node: ast.FunctionDef, path: Path, source: str) -> StaticMacro | N
             )
         }
         if isinstance(decorator, ast.Call) and decorator.args:
-            options[None] = decorator.args[0]  # the file its SQL is in
+            options[None] = decorator.args[0]  # `@sql_macro("file.sql")`
         return _read_macro(node, path, options, source)
     return None
 
