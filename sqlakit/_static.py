@@ -15,6 +15,9 @@ is parsed, never imported.
 - When no call says where the templates are, every directory named `sql` is.
 - A database URL written as a string, `Database("postgresql://...")` or the
   default of `os.environ.get(...)`, gives the dialect.
+- The namespace is a string, or a name assigned or imported from a module of
+  the project. When the code passes it some other way, the templates' calls of
+  the built-in macros tell it.
 
 Each finding keeps the file and the line it came from, so a check can say
 what it read and where.
@@ -24,11 +27,13 @@ from __future__ import annotations
 
 import ast
 import inspect
+import re
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ._sql import NAMESPACE, Context, Macro, Param, Sql, _Slot
+from ._sql import INCLUDE, NAMESPACE, Context, Macro, Param, Sql, _Slot, registered
 from .exceptions import MacroArgumentError
 
 if TYPE_CHECKING:
@@ -104,6 +109,8 @@ class Discovered:
     paths: list[Path] = field(default_factory=list)
     macros: list[Macro | Path] = field(default_factory=list)
     namespace: str = NAMESPACE
+    unread_namespace: str | None = None
+    """Where the code passes a namespace in a way the reading cannot follow."""
     dialect: str | None = None
     origins: dict[Path | str, str] = field(default_factory=dict)
     """Where each path, `namespace` and `dialect` was read: `shop/db.py:8`."""
@@ -126,6 +133,8 @@ def discover(root: Path) -> Discovered:
                 found.macros.append(macro)
             elif isinstance(node, ast.Call):
                 _read_call(node, names, path, root, found)
+    if found.unread_namespace is not None and "namespace" not in found.origins:
+        _guess_namespace(found)
     if not found.paths:
         found.paths = sorted(
             directory
@@ -181,10 +190,13 @@ def _read_call(
         for macro in _values(keywords.get("macros"), names, path, root):
             if isinstance(macro, Path) and macro.suffix == ".sql":
                 found.macros.append(macro)
-        namespace = keywords.get("namespace")
-        if isinstance(namespace, ast.Constant) and isinstance(namespace.value, str):
-            found.namespace = namespace.value
-            found.origins["namespace"] = at
+        if (namespace := keywords.get("namespace")) is not None:
+            text = _text_of(namespace, names, path, root)
+            if text is None:
+                found.unread_namespace = at
+            else:
+                found.namespace = text
+                found.origins["namespace"] = at
         return
     if called == "Database" and found.dialect is None:
         url = node.args[0] if node.args else keywords.get("url")
@@ -193,6 +205,109 @@ def _read_call(
             found.origins["dialect"] = at
     if "templates" in keywords and not isinstance(keywords["templates"], ast.Call):
         _add_paths(keywords["templates"], names, path, root, found, at=at)
+
+
+def _text_of(
+    node: ast.expr | None,
+    names: dict[str, ast.expr],
+    path: Path,
+    root: Path,
+    depth: int = 0,
+) -> str | None:
+    """Return the string an expression spells, as far as the reading follows it.
+
+    A literal, a name the module assigns one to, or a name it imports from a
+    module of the project: `from .settings import NAMESPACE`, or
+    `settings.NAMESPACE` after `from . import settings`.
+    """
+    if node is None or depth > 10:  # noqa: PLR2004 - a name assigned to itself
+        return None
+    if isinstance(node, ast.Constant):
+        return node.value if isinstance(node.value, str) else None
+    if isinstance(node, ast.Name) and node.id in names:
+        return _text_of(names[node.id], names, path, root, depth + 1)
+    if isinstance(node, ast.Name):
+        module, name = _imported(path, root).get(node.id, (None, None))
+        if module is not None and name is not None:
+            return _text_of(ast.Name(name), _names_in(module), module, root, depth + 1)
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        module, name = _imported(path, root).get(node.value.id, (None, None))
+        if module is not None and name is None:
+            return _text_of(
+                ast.Name(node.attr), _names_in(module), module, root, depth + 1
+            )
+    return None
+
+
+def _names_in(path: Path) -> dict[str, ast.expr]:
+    """Return what a module of the project assigns at its top level."""
+    try:
+        return _assigned(ast.parse(path.read_text(encoding="utf-8")))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return {}
+
+
+def _imported(path: Path, root: Path) -> dict[str, tuple[Path, str | None]]:
+    """Return what the module imports from the project: a name, or a module.
+
+    `from .settings import NAMESPACE` maps `NAMESPACE` to the file and the name
+    in it, and `from . import settings` maps `settings` to the file alone.
+    """
+    try:
+        module = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return {}
+    found: dict[str, tuple[Path, str | None]] = {}
+    for node in module.body:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        base = path.parent
+        for _ in range(max(node.level - 1, 0)):
+            base = base.parent
+        if node.level == 0:
+            base = root
+        parts = node.module.split(".") if node.module else []
+        for alias in node.names:
+            local = alias.asname or alias.name
+            if (file := _module_file(base.joinpath(*parts, alias.name))) is not None:
+                found[local] = (file, None)
+            elif (file := _module_file(base.joinpath(*parts))) is not None:
+                found[local] = (file, alias.name)
+    return found
+
+
+def _module_file(stem: Path) -> Path | None:
+    for candidate in (stem.with_suffix(".py"), stem / "__init__.py"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _guess_namespace(found: Discovered) -> None:
+    """Take the namespace from the templates, when the code passes it unreadably.
+
+    The prefix the templates call the built-in macros under is the namespace:
+    `t.if_set(` and `t.include(` say `t`.
+    """
+    builtins = "|".join(sorted([*registered([]), INCLUDE], key=len, reverse=True))
+    calls = re.compile(rf"(?<![\w.])([A-Za-z_]\w*)\.(?:{builtins})\s*\(", re.IGNORECASE)
+    prefixes: Counter[str] = Counter()
+    for directory in found.paths:
+        for template in directory.rglob("*.sql"):
+            text = template.read_text(encoding="utf-8", errors="replace")
+            prefixes.update(match.group(1) for match in calls.finditer(text))
+    unread = found.unread_namespace
+    if prefixes:
+        found.namespace = prefixes.most_common(1)[0][0]
+        found.origins["namespace"] = (
+            f"the templates' calls, as {unread} passes it in a way the reading "
+            f"cannot follow"
+        )
+    else:
+        found.origins["namespace"] = (
+            f"the default, as {unread} passes it in a way the reading cannot "
+            f"follow: set it in [tool.sqlakit.templates]"
+        )
 
 
 def _dialect_of(node: ast.expr | None, names: dict[str, ast.expr]) -> str | None:

@@ -10,9 +10,9 @@ from pathlib import Path
 
 from ._project import Problem, load_project
 from ._pycharm import DIALECTS, ddl, dialects
-from ._sql import registered, signature_of
+from ._sql import NAMESPACE, registered, signature_of
 from ._sqruff import settings, stale
-from .exceptions import ProjectConfigError
+from .exceptions import MacroDefinitionError, ProjectConfigError
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -21,19 +21,25 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
 
     macros = commands.add_parser(
-        "macros", help="list the `tpl.` macros templates can call"
+        "macros", help="list the macros the project's templates can call"
     )
     macros.add_argument(
         "modules",
         nargs="*",
         metavar="MODULE",
-        help="a module whose macros to list too, or `module:name` for one of them",
+        help="list the built-in macros and this module's, or `module:name` for one",
     )
     macros.add_argument(
         "--markdown", action="store_true", help="write Markdown, for documentation"
     )
     macros.add_argument(
-        "--namespace", default="tpl", help="the schema name calls are written under"
+        "--namespace",
+        help="the schema name calls are written under, if not the project's",
+    )
+    macros.add_argument(
+        "--project",
+        default=".",
+        help="a directory in the project, the current one by default",
     )
 
     check = commands.add_parser(
@@ -75,15 +81,34 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.command == "macros":
         return _macros(
             arguments.modules,
+            Path(arguments.project),
             markdown=arguments.markdown,
             namespace=arguments.namespace,
         )
     return 1
 
 
-def _macros(modules: list[str], *, markdown: bool, namespace: str) -> int:
-    """Print every macro: the built-in ones, and those the modules define."""
-    for macro in registered(modules).values():
+def _macros(
+    modules: list[str], directory: Path, *, markdown: bool, namespace: str | None
+) -> int:
+    """Print every macro the project's templates can call, under its namespace.
+
+    Given modules, print the built-in macros and theirs. Outside a project, the
+    built-in ones under `tpl`.
+    """
+    project = None
+    if not modules or namespace is None:
+        try:
+            project = load_project(directory)
+        except (ProjectConfigError, MacroDefinitionError):
+            project = None
+    if modules or project is None:
+        found = registered(modules)
+    else:
+        found = project.templates.macros
+    if namespace is None:
+        namespace = NAMESPACE if project is None else project.templates.namespace
+    for macro in found.values():
         signature = signature_of(macro, namespace)
         if markdown:
             _say(f"### `{signature}`\n\n{macro.doc}\n")

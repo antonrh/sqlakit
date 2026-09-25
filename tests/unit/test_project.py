@@ -146,6 +146,66 @@ def test_pyproject_overrides_what_the_code_says(project: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("db", "namespace", "origin"),
+    [
+        (
+            'NAMESPACE = "t"\nTemplates("sql", namespace=NAMESPACE)\n',
+            "t",
+            "app/db.py:2",
+        ),
+        (
+            'from .settings import NAMESPACE\nTemplates("sql", namespace=NAMESPACE)\n',
+            "t",
+            "app/db.py:2",
+        ),
+        (
+            'from . import settings\nTemplates("sql", namespace=settings.NAMESPACE)\n',
+            "t",
+            "app/db.py:2",
+        ),
+        (
+            'import os\nTemplates("sql", namespace=os.environ["NAMESPACE"])\n',
+            "t",
+            (
+                "the templates' calls, as app/db.py:2 passes it in a way the "
+                "reading cannot follow"
+            ),
+        ),
+    ],
+)
+def test_the_namespace_is_followed_wherever_the_code_keeps_it(
+    tmp_path: Path, db: str, namespace: str, origin: str
+) -> None:
+    (tmp_path / "sql").mkdir()
+    (tmp_path / "sql" / "q.sql").write_text("SELECT 1 WHERE t.if_set(:a, TRUE)\n")
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "__init__.py").write_text("")
+    (tmp_path / "app" / "settings.py").write_text('NAMESPACE = "t"\n')
+    (tmp_path / "app" / "db.py").write_text(db)
+    loaded = load_project(tmp_path)
+
+    assert loaded.templates.namespace == namespace
+    assert (
+        loaded.found[1]
+        == f"namespace: {namespace} ({origin.replace('db.py', 'app/db.py', 1) if origin.startswith('db.py') else origin})"
+    )
+
+
+def test_the_macros_command_lists_the_project_under_its_namespace(
+    app: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["macros", "--project", str(app)]) == 0
+    listed = [line for line in capsys.readouterr().out.splitlines() if line[:1] != " "]
+
+    assert listed[0] == "q.if_set(:value, expr[, otherwise])"
+    assert listed[-3:] == [
+        "q.owned(:team, *columns)",
+        "q.sided([which])",
+        "q.for_team(t)",
+    ]
+
+
+@pytest.mark.parametrize(
     ("url", "dialect"),
     [
         ('"postgresql+psycopg://localhost/app"', "postgresql"),
