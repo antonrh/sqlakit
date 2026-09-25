@@ -1225,10 +1225,22 @@ def _column_identity(entry: Any) -> tuple[str | None, str | None]:  # noqa: ANN4
 
 
 def _parse_sort_field(field: str) -> tuple[str, bool, str | None]:
-    """Split `name[.direction[.nulls]]` into what an ORDER BY needs."""
+    """Split `name[.direction[.nulls]]` into what an ORDER BY needs.
+
+    The nulls read whichever case convention the request uses: `nullsFirst`,
+    `NULLS_FIRST` and `nulls_first` are one placement.
+    """
     name, _, rest = field.partition(".")
     direction, _, nulls = rest.partition(".")
-    return name, direction.lower() == "desc", nulls.lower() or None
+    return (
+        name,
+        direction.lower() == "desc",
+        _NULLS.get(_fold_name(nulls), nulls.lower() or None),
+    )
+
+
+_NULLS = {"nullsfirst": "nulls_first", "nullslast": "nulls_last"}
+"""The placements a sort string can ask for, by their folded spelling."""
 
 
 def _sort_clause(column: Any, *, descending: bool, nulls: str | None) -> Any:  # noqa: ANN401

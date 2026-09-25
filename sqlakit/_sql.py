@@ -30,10 +30,12 @@ from ._discovery import import_string
 from ._query import _field_named, _parse_sort_field
 from .exceptions import (
     AsyncFilterError,
+    InvalidSortStringError,
     MacroArgumentError,
     MacroDefinitionError,
     MacroSyntaxError,
     MissingDependencyError,
+    ParameterPathError,
     SQLNotConfiguredError,
     StrayParameterError,
     TemplateNotFoundError,
@@ -114,11 +116,16 @@ SUFFIX = ".tpl.sql"
 NAMESPACE = "tpl"
 """The schema name macros are called under unless `Templates` says otherwise."""
 _IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
-_PARAMETER = re.compile(r"\s*:([A-Za-z_]\w*)\s*")
+_PARAMETER = re.compile(r"\s*:([A-Za-z_]\w*(?:\.\w+)*)\s*")
+_DOTTED = re.compile(
+    r"""'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|/\*.*?\*/|\$(\w*)\$.*?\$\1\$"""
+    r"|(?<![:\w\\]):([A-Za-z_]\w*(?:\.\w+)+)",
+    re.DOTALL,
+)
+"""A `:parameter.with.a.path`, past the strings and comments that may hold one."""
 _DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$")
 _COLUMN_AS = re.compile(r"\s*([A-Za-z_]\w*)\s*=(?!=)\s*(.+?)\s*", re.DOTALL)
 _NULLS_AFTER = re.compile(r"\s*NULLS\b", re.IGNORECASE)
-_SORT_FIELD = re.compile(r"[^.]+(\.(asc|desc)(\.nulls_(first|last))?)?", re.IGNORECASE)
 
 
 class Param:
@@ -203,6 +210,13 @@ class Context:
         self.preparer = preparer
         self.values: dict[str, Any] = dict(values)
         self._bound = 0
+
+    no_order = "(SELECT NULL)"
+    """What orders by nothing, for a macro that may have nothing to sort by.
+
+    Every database takes it after `ORDER BY`, and a direction after it: `NULL`
+    and `NULL DESC` are refused by PostgreSQL, and `0` is a column's position.
+    """
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.dialect!r})"
@@ -468,7 +482,7 @@ class _Scanner:
         while found := self.decide.search(source, index):
             index = found.start()
             char = source[index]
-            if (skipped := self._past_literal(index)) != index:
+            if (skipped := self.past_literal(index)) != index:
                 index = skipped
             elif (call := self.call.match(source, index)) and not self._inside_name(
                 index
@@ -510,7 +524,7 @@ class _Scanner:
             args = []
         return tuple(args), index
 
-    def _past_literal(self, index: int) -> int:
+    def past_literal(self, index: int) -> int:
         """Return where a string, a quoted name or a comment starting here ends.
 
         Where none starts, that is where it was asked about.
@@ -627,12 +641,17 @@ class MacroTemplate:
         self.included_from = _included_from(chain)
         self.includes: dict[str, float] = {}
         """Every template this one includes, however deep, and when it changed."""
+        self.paths: dict[str, tuple[str, ...]] = {}
+        """Every `:a.b` read here, by the name it binds as, `a__b`, and its path."""
         self.parts = _Scanner(source, name, namespace, self.included_from).parts()
         self._check(self.parts)
         self._compiled = self._compile(self.parts)
 
     def render(self, ctx: Context) -> str:
         """Return the SQL for this call, the values it bound going to ``ctx``."""
+        for key, (root, *path) in self.paths.items():
+            if root in ctx.values and key not in ctx.values:
+                ctx.values[key] = _followed(ctx.values[root], root, path)
         token = _context.set(ctx)
         try:
             return self._render(self._compiled, ctx)
@@ -647,9 +666,10 @@ class MacroTemplate:
         compiled: list[str | _Expansion] = []
         for part in parts:
             if isinstance(part, str):
-                compiled.append(part)
+                compiled.append(_DOTTED.sub(self._flattened, part))
             elif part.name == INCLUDE:
-                compiled.extend(("(", *self._include(part), ")"))
+                # On a line of its own: the query may end in a `--` comment.
+                compiled.extend(("(", *self._include(part), "\n)"))
             else:
                 compiled.append(self._expansion(part))
         return tuple(compiled)
@@ -671,7 +691,10 @@ class MacroTemplate:
             raise self._refuse(INCLUDE, error.problem, call.line) from None
         included = MacroTemplate(
             name,
-            _without_semicolon(source),
+            _without_semicolon(
+                source,
+                _Scanner(source, name, self.namespace, _included_from(chain)),
+            ),
             self.macros,
             mtime,
             self.namespace,
@@ -679,13 +702,28 @@ class MacroTemplate:
             chain=chain,
         )
         self.includes.update({name: mtime, **included.includes})
+        self.paths.update(included.paths)
         return included._compiled
+
+    def _flattened(self, match: re.Match[str]) -> str:
+        """Write `:a.b` as the parameter it binds as, and leave the rest alone."""
+        path = match.group(2)
+        return match.group() if path is None else f":{self._key(path)}"
+
+    def _key(self, param: str) -> str:
+        """Return the name a parameter binds as: `a.b` as `a__b`, `a` as itself."""
+        if "." not in param:
+            return param
+        path = tuple(param.split("."))
+        key = "__".join(path)
+        self.paths[key] = path
+        return key
 
     def _expansion(self, call: _Call) -> _Expansion:
         macro = self.macros[call.name]
         args = tuple(
-            (arg.param, None)
-            if macro.kind_at(index) is Param
+            (self._key(arg.param), None)
+            if macro.kind_at(index) is Param and arg.param is not None
             else (None, self._compile(arg.parts))
             for index, arg in enumerate(call.args)
         )
@@ -832,6 +870,23 @@ class _Expansion:
         )
 
 
+def _followed(value: Any, root: str, path: Sequence[str]) -> Any:  # noqa: ANN401
+    """Return what `:root.path` reads: a key of a mapping, an attribute otherwise.
+
+    Raises:
+        ParameterPathError: if a step names nothing there.
+
+    """
+    read = [root]
+    for step in path:
+        read.append(step)
+        try:
+            value = value[step] if isinstance(value, Mapping) else getattr(value, step)
+        except (KeyError, AttributeError):
+            raise ParameterPathError(".".join(read), step) from None
+    return value
+
+
 def _included_from(chain: Sequence[tuple[str, int]]) -> str:
     """Return where a template was included from, as an error says it."""
     if not chain:
@@ -840,10 +895,26 @@ def _included_from(chain: Sequence[tuple[str, int]]) -> str:
     return f" (included from {calls})"
 
 
-def _without_semicolon(source: str) -> str:
-    """Return a query without the `;` that ends it, which a subquery cannot hold."""
-    stripped = source.rstrip()
-    return stripped[:-1] if stripped.endswith(";") else source
+def _without_semicolon(source: str, scanner: _Scanner) -> str:
+    """Return a query without the `;` that ends it, which a subquery cannot hold.
+
+    The `;` is the last thing in the query that is not space or a comment:
+    `SELECT 1; -- done` loses it too.
+    """
+    index, last = 0, -1
+    while index < len(source):
+        skipped = scanner.past_literal(index)
+        if skipped == index:
+            if not source[index].isspace():
+                last = index
+            index += 1
+            continue
+        if source[index] not in "-/":  # a string or a quoted name, not a comment
+            last = skipped - 1
+        index = skipped
+    if last >= 0 and source[last] == ";":
+        source = source[:last] + source[last + 1 :]
+    return source.rstrip()
 
 
 def _arity(macro: Macro) -> str:
@@ -1077,22 +1148,22 @@ def order_by(ctx: Context, sort: Param, column: Sql, *columns: Sql) -> str:
     offered = _offered(one for one in written if one.lower() not in nulls_options)
     requested = sort.value
     if not requested:
-        return _NO_ORDER
+        return ctx.no_order
     fields = [requested] if isinstance(requested, str) else list(requested)
     terms = []
     for field in fields:
-        if not _SORT_FIELD.fullmatch(str(field)):
-            raise UnknownOrderFieldError(str(field), offered)
         name, descending, nulls = _parse_sort_field(str(field))
+        direction = str(field).split(".")[1:2]
+        if [one.lower() for one in direction] not in ([], ["asc"], ["desc"]) or (
+            nulls not in (None, "nulls_first", "nulls_last")
+        ):
+            raise InvalidSortStringError(str(field))
         expression = offered[_field_named(name, offered)]
         nulls = nulls or default_nulls
         terms.append(
             _sort_term(ctx.dialect, expression, descending=descending, nulls=nulls)
         )
-    return ", ".join(terms) or _NO_ORDER
-
-
-_NO_ORDER = "(SELECT NULL)"
+    return ", ".join(terms) or ctx.no_order
 
 
 def _sort_term(
@@ -1132,23 +1203,38 @@ def _last_name(column: str) -> str:
 def icontains(
     ctx: Context,
     column: Sql,
-    text: Param,
+    text: Sql,
     collation: Sql = Sql("'en-ci'"),  # noqa: B008
 ) -> str:
     """Whether a column holds the text anywhere, regardless of case.
 
+    The text is a parameter or any expression: `icontains(city, spaced(:name))`.
     `ILIKE` on PostgreSQL, `CONTAINS(COLLATE(...))` on Snowflake, and `lower()`
     on both sides with `LIKE` elsewhere. `%` and `_` in the text match only
-    themselves. ``collation`` is the one Snowflake compares under, `'en-ci-ai'`
-    to ignore accents as well; the other databases ignore it.
+    themselves: the database escapes them before it compares. ``collation`` is
+    the one Snowflake compares under, `'en-ci-ai'` to ignore accents as well;
+    the other databases ignore it.
     """
     if ctx.dialect == "snowflake":
         return f"CONTAINS(COLLATE({column}, {collation}), {text})"
-    escaped = str(text.value).replace("!", "!!").replace("%", "!%").replace("_", "!_")
-    pattern = ctx.bind(f"%{escaped}%", _named(text, "like"))
+    param = _PARAMETER.fullmatch(text)
+    if param and param.group(1) in ctx.values:
+        # A parameter alone is escaped here, and its pattern bound in its place.
+        value = str(ctx.values[param.group(1)])
+        escaped = value.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+        pattern = ctx.bind(f"%{escaped}%", f"{param.group(1)}__like")
+    elif ctx.dialect in ("mysql", "mariadb"):
+        pattern = f"CONCAT('%', {_escaped_like(text)}, '%')"
+    else:
+        pattern = f"'%' || {_escaped_like(text)} || '%'"
     if ctx.dialect == "postgresql":
         return f"{column} ILIKE {pattern} ESCAPE '!'"
     return f"lower({column}) LIKE lower({pattern}) ESCAPE '!'"
+
+
+def _escaped_like(text: str) -> str:
+    """Return SQL that escapes `!`, `%` and `_` in the text, for `LIKE ... ESCAPE '!'`."""
+    return f"replace(replace(replace({text}, '!', '!!'), '%', '!%'), '_', '!_')"
 
 
 @sql_macro
@@ -1264,6 +1350,153 @@ def values_table(ctx: Context, rows: Param) -> str:
 
 
 @sql_macro
+def json_object(ctx: Context, *pairs: Sql) -> str:
+    """Build a JSON object of keys and values: `json_object('id', id, 'name', name)`.
+
+    `JSON_BUILD_OBJECT` on PostgreSQL, `OBJECT_CONSTRUCT` on Snowflake, and
+    `JSON_OBJECT` on MySQL, MariaDB and SQLite.
+
+    Raises:
+        MacroArgumentError: on another database.
+
+    """
+    name = _for_dialect(
+        ctx,
+        json_object.name,
+        postgresql="JSON_BUILD_OBJECT",
+        snowflake="OBJECT_CONSTRUCT",
+        mysql="JSON_OBJECT",
+        mariadb="JSON_OBJECT",
+        sqlite="json_object",
+    )
+    return f"{name}({', '.join(pairs)})"
+
+
+@sql_macro
+def array_agg(ctx: Context, value: Sql, *order_by: Sql) -> str:
+    """Gather the values of a group into an array, in the order the rest name.
+
+    `ARRAY_AGG(value ORDER BY ...)` on PostgreSQL, and `ARRAY_AGG(value)
+    WITHIN GROUP (ORDER BY ...)` on Snowflake.
+
+    Raises:
+        MacroArgumentError: on another database, which has no arrays.
+
+    """
+    _for_dialect(ctx, array_agg.name, postgresql=True, snowflake=True)
+    return _aggregate(ctx, "ARRAY_AGG", [value], order_by)
+
+
+@sql_macro
+def string_agg(ctx: Context, value: Sql, separator: Sql, *order_by: Sql) -> str:
+    """Join the values of a group with the separator, in the order the rest name.
+
+    `STRING_AGG` on PostgreSQL, `LISTAGG ... WITHIN GROUP` on Snowflake,
+    `GROUP_CONCAT ... SEPARATOR` on MySQL and MariaDB, and `group_concat` on
+    SQLite, which takes an order from 3.44 on.
+
+    Raises:
+        MacroArgumentError: on another database.
+
+    """
+    _for_dialect(
+        ctx,
+        string_agg.name,
+        postgresql=True,
+        snowflake=True,
+        mysql=True,
+        mariadb=True,
+        sqlite=True,
+    )
+    order = f" ORDER BY {', '.join(order_by)}" if order_by else ""
+    if ctx.dialect in ("mysql", "mariadb"):
+        return f"GROUP_CONCAT({value}{order} SEPARATOR {separator})"
+    if ctx.dialect == "snowflake":
+        return _aggregate(ctx, "LISTAGG", [value, separator], order_by)
+    name = "group_concat" if ctx.dialect == "sqlite" else "STRING_AGG"
+    return f"{name}({value}, {separator}{order})"
+
+
+def _aggregate(
+    ctx: Context, name: str, args: Sequence[str], order_by: Sequence[str]
+) -> str:
+    """Write an ordered aggregate: the order inside it, or `WITHIN GROUP` after."""
+    written = ", ".join(args)
+    if not order_by:
+        return f"{name}({written})"
+    order = f"ORDER BY {', '.join(order_by)}"
+    if ctx.dialect == "snowflake":
+        return f"{name}({written}) WITHIN GROUP ({order})"
+    return f"{name}({written} {order})"
+
+
+@sql_macro
+def array_contains(ctx: Context, array: Sql, value: Sql) -> str:
+    """Whether an array holds the value.
+
+    `value = ANY(array)` on PostgreSQL, and `ARRAY_CONTAINS(value::variant,
+    array)` on Snowflake.
+
+    Raises:
+        MacroArgumentError: on another database, which has no arrays.
+
+    """
+    _for_dialect(ctx, array_contains.name, postgresql=True, snowflake=True)
+    if ctx.dialect == "snowflake":
+        return f"ARRAY_CONTAINS({value}::variant, {array})"
+    return f"{value} = ANY({array})"
+
+
+@sql_macro
+def on_dialect(ctx: Context, branch: Sql, *branches: Sql) -> str:
+    """Write the SQL of the database in hand: `postgresql = a, snowflake = b`.
+
+    ```sql
+    FROM tpl.on_dialect(postgresql = dim_country, snowflake = facts.prod.dim_country)
+    ```
+
+    `default = ...` is for every database not named. A way out rather than a
+    first choice: a macro that names the difference, as `icontains` does, says
+    more, and this is for what nothing names, such as a table that lives
+    elsewhere.
+
+    Raises:
+        MacroArgumentError: if a branch is not `name = sql`, or none is for the
+            database in hand.
+
+    """
+    written: dict[str, str] = {}
+    for one in (branch, *branches):
+        named = _COLUMN_AS.fullmatch(one)
+        if named is None:
+            problem = f"takes `dialect = sql` branches, got {one.strip()!r}"
+            raise MacroArgumentError(on_dialect.name, problem)
+        written[named.group(1)] = named.group(2)
+    if ctx.dialect in written:
+        return written[ctx.dialect]
+    if "default" in written:
+        return written["default"]
+    problem = (
+        f"has no branch for {ctx.dialect}, and no `default = ...`: "
+        f"it has {', '.join(written)}"
+    )
+    raise MacroArgumentError(on_dialect.name, problem)
+
+
+def _for_dialect(ctx: Context, macro: str, **forms: Any) -> Any:  # noqa: ANN401
+    """Return what the database in hand writes, or say the macro has no form for it.
+
+    Raises:
+        MacroArgumentError: if the dialect is none of them.
+
+    """
+    if ctx.dialect not in forms:
+        problem = f"has no form for {ctx.dialect}: it writes {', '.join(forms)}"
+        raise MacroArgumentError(macro, problem)
+    return forms[ctx.dialect]
+
+
+@sql_macro
 def identifier(ctx: Context, name: Param, *allowed: Sql) -> str:
     """Write a name from a parameter, quoted the way this database quotes one.
 
@@ -1324,6 +1557,11 @@ BUILTIN_MACROS: Mapping[str, Macro] = {
         order_by,
         icontains,
         icollate,
+        json_object,
+        array_agg,
+        string_agg,
+        array_contains,
+        on_dialect,
         between,
         identifier,
         each,
@@ -1827,6 +2065,12 @@ def _statement(
     )
 
 
+_POSIX_CLASS = re.compile(
+    r"\[:(alnum|alpha|blank|cntrl|digit|graph|lower|print|punct|space|upper|word|xdigit):\]"
+)
+"""A class in a regular expression, `[:punct:]`, which `text()` reads as `:punct`."""
+
+
 @lru_cache(maxsize=1024)
 def _text(sql: str) -> tuple[sa.TextClause, frozenset[str]]:
     """Return the SQL as `text()`, and the names of the parameters it holds.
@@ -1835,7 +2079,7 @@ def _text(sql: str) -> tuple[sa.TextClause, frozenset[str]]:
     costs, and a template renders the same SQL whenever its values have the same
     shape. Sharing the clause is safe: `bindparams` returns a copy.
     """
-    clause = sa.text(sql)
+    clause = sa.text(_POSIX_CLASS.sub(r"[\\:\1\\:]", sql))
     named = frozenset(
         element.key
         for element in clause.get_children()

@@ -1395,6 +1395,18 @@ def test_order_by_reads_direction_and_nulls(reports: Database) -> None:
         ]
 
 
+@pytest.mark.parametrize("nulls", ["nulls_first", "nullsFirst", "NULLS_FIRST"])
+def test_order_by_reads_nulls_in_any_case_convention(
+    reports: Database, nulls: str
+) -> None:
+    with reports.connect():
+        assert [r.id for r in Report.query.order_by(f"score.asc.{nulls}").all()] == [
+            2,
+            1,
+            3,
+        ]
+
+
 def test_a_page_breaks_ties_with_the_key(reports: Database) -> None:
     with reports.connect():
         query = Report.query.order_by("score.desc")

@@ -19,6 +19,7 @@ __all__ = [
     "InvalidDatabaseConfigError",
     "InvalidNullsError",
     "InvalidOrderFieldError",
+    "InvalidSortStringError",
     "MacroArgumentError",
     "MacroDefinitionError",
     "MacroSyntaxError",
@@ -30,6 +31,7 @@ __all__ = [
     "MissingSessionError",
     "MultipleInstancesFoundError",
     "NullCursorValueError",
+    "ParameterPathError",
     "RawStatementError",
     "RetryNotSupportedError",
     "SQLAKitError",
@@ -474,6 +476,29 @@ class PageItemsMismatchError(SQLAKitError, TypeError):
             f"The page holds {expected} items and the transform returned {got}. "
             f"Totals and cursors belong to the page's rows, so a transform has "
             f"to return one item per row."
+        )
+
+
+class InvalidSortStringError(SQLAKitError, ValueError):
+    """Raised when a sort string asks for a direction or nulls there are not."""
+
+    def __init__(self, field: str = "") -> None:
+        self.field = field
+        super().__init__(
+            f"`{field}` is not a sort string: after the field comes `asc` or "
+            f"`desc`, and after that `nulls_first` or `nulls_last`, in any case "
+            f"convention."
+        )
+
+
+class ParameterPathError(SQLAKitError, ValueError):
+    """Raised when a `:parameter.path` reads something its value does not have."""
+
+    def __init__(self, path: str = "", step: str = "") -> None:
+        self.path = path
+        super().__init__(
+            f"`:{path}` reads `{step}`, and the value before it has no key or "
+            f"attribute of that name."
         )
 
 

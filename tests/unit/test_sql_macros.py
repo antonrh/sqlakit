@@ -1,9 +1,11 @@
 """`.tpl.sql` templates: SQL with `tpl.` macros, next to the Jinja ones."""
 
+import enum
 import os
 import subprocess
 import sys
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -14,9 +16,11 @@ from sqlalchemy.engine import default
 
 from sqlakit import (
     Database,
+    InvalidSortStringError,
     MacroArgumentError,
     MacroDefinitionError,
     MacroSyntaxError,
+    ParameterPathError,
     StrayParameterError,
     UnknownIdentifierError,
     UnknownImportPathError,
@@ -50,6 +54,9 @@ TEMPLATES = {
     "users/blue_or.tpl.sql": """
         SELECT name FROM users WHERE tpl.blue_or(:teams) ORDER BY id
     """,
+    "users/bluish.tpl.sql": """
+        SELECT name FROM users WHERE tpl.bluish() ORDER BY id
+    """,
     "users/jinja.sql": """
         SELECT name FROM users WHERE team = {{ team }} ORDER BY id
     """,
@@ -63,13 +70,6 @@ def for_teams(teams: Param) -> str:
 
 
 @sql_macro
-def json_object(ctx: Context, *pairs: Sql) -> str:
-    """JSON_BUILD_OBJECT on PostgreSQL, OBJECT_CONSTRUCT on Snowflake."""
-    name = "JSON_BUILD_OBJECT" if ctx.dialect == "postgresql" else "OBJECT_CONSTRUCT"
-    return f"{name}({', '.join(pairs)})"
-
-
-@sql_macro
 def search(q: Param, *columns: Sql) -> str:
     """Rows where any of the columns holds the text, regardless of case."""
     if not q.value:
@@ -78,9 +78,15 @@ def search(q: Param, *columns: Sql) -> str:
 
 
 @sql_macro
-def blue_or(teams: Param) -> str:
+def blue_or(ctx: Context, teams: Param) -> str:
     """Rows of the blue team, or of any of the teams."""
-    return f"team IN ({tpl.each(['blue'])}) OR team IN ({tpl.each(teams)})"
+    return f"team IN {ctx.bind(['blue'])} OR team IN {teams}"
+
+
+@sql_macro
+def bluish() -> str:
+    """Rows of the blue team, from a table of one row written out in the query."""
+    return f"team IN (SELECT column1 FROM {tpl.values(['blue'])} AS v)"  # noqa: S608
 
 
 def write(root: Path, templates: dict[str, str]) -> Path:
@@ -94,7 +100,8 @@ def write(root: Path, templates: dict[str, str]) -> Path:
 @pytest.fixture
 def db(tmp_path: Path) -> Iterator[Database]:
     templates = Templates(
-        write(tmp_path, TEMPLATES), macros=[for_teams, json_object, search, blue_or]
+        write(tmp_path, TEMPLATES),
+        macros=[for_teams, search, blue_or, bluish],
     )
     db = Database(
         "sqlite://", engine_args={"poolclass": sa.StaticPool}, templates=templates
@@ -122,7 +129,7 @@ def render(source: str, dialect: sa.Dialect, **values: object) -> str:
     template = sql_module.MacroTemplate(
         "inline.tpl.sql",
         source,
-        sql_module.registered([for_teams, json_object, search, blue_or]),
+        sql_module.registered([for_teams, search, blue_or, bluish]),
     )
     ctx = Context(dialect.name, dialect.identifier_preparer, values)
     return " ".join(template.render(ctx).split())
@@ -167,9 +174,26 @@ def test_order_by_refuses_a_field_it_was_not_given(db: Database) -> None:
         names(db, "users/list.tpl.sql", **LIST | {"order_by": "password"})
 
 
-def test_order_by_refuses_what_is_not_a_sort_string() -> None:
-    with pytest.raises(UnknownOrderFieldError):
-        render("ORDER BY tpl.order_by(:o, id)", postgresql.dialect(), o="id.sideways")
+@pytest.mark.parametrize("sort", ["id.sideways", "id.asc.nulls_middle", "id.asc.x.y"])
+def test_order_by_refuses_what_is_not_a_sort_string(sort: str) -> None:
+    with pytest.raises(InvalidSortStringError) as raised:
+        render("ORDER BY tpl.order_by(:o, id)", postgresql.dialect(), o=sort)
+    assert str(raised.value).startswith(f"`{sort}` is not a sort string")
+
+
+@pytest.mark.parametrize(
+    "sort",
+    [
+        "vendorId.asc.nulls_first",
+        "vendorId.ASC.nullsFirst",
+        "vendor_id.asc.NULLS_FIRST",
+    ],
+)
+def test_order_by_reads_a_sort_string_in_any_case_convention(sort: str) -> None:
+    source = "ORDER BY tpl.order_by(:o, name, vendor_id)"
+    assert render(source, postgresql.dialect(), o=[sort]) == (
+        "ORDER BY vendor_id ASC NULLS FIRST"
+    )
 
 
 def test_order_by_needs_the_columns_it_may_sort_by() -> None:
@@ -273,10 +297,10 @@ def test_an_unknown_macro_is_refused_when_the_file_is_read() -> None:
     with pytest.raises(UnknownMacroError) as raised:
         render("SELECT 1\nWHERE tpl.foo(:x)", postgresql.dialect(), x=1)
     assert str(raised.value) == (
-        "Unknown macro tpl.foo in inline.tpl.sql:2; available: between, blue_or, "
-        "each, for_teams, icollate, icontains, identifier, if_set, include, "
-        "json_object, order_by, search, unless_set, values. "
-        "Register one with "
+        "Unknown macro tpl.foo in inline.tpl.sql:2; available: array_agg, "
+        "array_contains, between, blue_or, bluish, each, for_teams, icollate, "
+        "icontains, identifier, if_set, include, json_object, on_dialect, "
+        "order_by, search, string_agg, unless_set, values. Register one with "
         "`Templates(..., macros=[...])`."
     )
 
@@ -296,7 +320,7 @@ def test_a_call_with_too_few_arguments_is_refused() -> None:
 
 def test_a_parameter_the_call_did_not_pass_is_refused() -> None:
     with pytest.raises(MacroArgumentError, match="`:q` was not passed"):
-        render("WHERE tpl.icontains(name, :q)", postgresql.dialect())
+        render("WHERE x IN (tpl.each(:q))", postgresql.dialect())
 
 
 def test_if_set_reads_a_parameter_the_call_did_not_pass_as_unset() -> None:
@@ -397,19 +421,22 @@ def test_auto_reload_reads_a_changed_file(tmp_path: Path) -> None:
 
 def test_signature_says_how_a_template_calls_a_macro() -> None:
     assert [
-        sql_module.signature_of(macro)
-        for macro in sql_module.registered([json_object]).values()
+        sql_module.signature_of(macro) for macro in sql_module.registered([]).values()
     ] == [
         "tpl.if_set(:value, expr[, otherwise])",
         "tpl.unless_set(:value, expr[, otherwise])",
         "tpl.order_by(:sort, column, *columns)",
-        "tpl.icontains(column, :text[, collation])",
+        "tpl.icontains(column, text[, collation])",
         "tpl.icollate(column[, collation])",
+        "tpl.json_object(*pairs)",
+        "tpl.array_agg(value, *order_by)",
+        "tpl.string_agg(value, separator, *order_by)",
+        "tpl.array_contains(array, value)",
+        "tpl.on_dialect(branch, *branches)",
         "tpl.between(column, :start, :end[, bounds])",
         "tpl.identifier(:name, *allowed)",
         "tpl.each(:values)",
         "tpl.values(:rows)",
-        "tpl.json_object(*pairs)",
     ]
 
 
@@ -460,13 +487,10 @@ def test_the_cli_lists_the_macros_of_a_module(
 ) -> None:
     from sqlakit._cli import main
 
-    assert (
-        main(["macros", f"{__name__}:json_object", "--markdown", "--namespace", "q"])
-        == 0
-    )
+    assert main(["macros", f"{__name__}:search", "--markdown", "--namespace", "q"]) == 0
     assert capsys.readouterr().out.endswith(
-        "### `q.json_object(*pairs)`\n\n"
-        "JSON_BUILD_OBJECT on PostgreSQL, OBJECT_CONSTRUCT on Snowflake.\n\n"
+        "### `q.search(:q, *columns)`\n\n"
+        "Rows where any of the columns holds the text, regardless of case.\n\n"
     )
 
 
@@ -591,7 +615,7 @@ def test_a_macro_calls_a_builtin_one_as_a_template_would(db: Database) -> None:
     )
 
 
-def test_a_value_where_a_parameter_goes_is_bound(db: Database) -> None:
+def test_a_macro_binds_a_list_of_its_own_for_in(db: Database) -> None:
     assert names(db, "users/blue_or.tpl.sql", teams=["red"]) == [
         "Ann",
         "bob",
@@ -599,7 +623,14 @@ def test_a_value_where_a_parameter_goes_is_bound(db: Database) -> None:
         "dan_x",
     ]
     assert render("WHERE tpl.blue_or(:teams)", postgresql.dialect(), teams=["red"]) == (
-        "WHERE team IN (:__p1) OR team IN (:teams__2)"
+        "WHERE team IN :__p1 OR team IN :teams"
+    )
+
+
+def test_a_value_where_a_parameter_goes_is_bound(db: Database) -> None:
+    assert names(db, "users/bluish.tpl.sql") == ["bob"]
+    assert render("WHERE tpl.bluish()", postgresql.dialect()) == (
+        "WHERE team IN (SELECT column1 FROM (VALUES (:__p1)) AS v)"
     )
 
 
@@ -662,7 +693,7 @@ ORDER BY u.id""",
     "loop/a.tpl.sql": "SELECT * FROM tpl.include('loop/b.tpl.sql') AS b",
     "loop/b.tpl.sql": "SELECT * FROM tpl.include('loop/a.tpl.sql') AS a",
     "broken/outer.tpl.sql": "SELECT 1\nFROM tpl.include('broken/inner.tpl.sql') AS i",
-    "broken/inner.tpl.sql": "SELECT 1\nWHERE tpl.icontains(name, :missing)",
+    "broken/inner.tpl.sql": "SELECT 1\nWHERE x IN (tpl.each(:missing))",
     "jinja/plain.sql": "SELECT {{ 1 }}",
     "jinja/includes_tpl.sql": "{% include 'fans/ids.tpl.sql' %}",
 }
@@ -693,7 +724,7 @@ def test_include_writes_the_query_in_parentheses_labelled_once(
         "/* fans/count.tpl.sql */\n"
         "SELECT count(*) FROM (SELECT id FROM users\n"
         "WHERE team IN (__[POSTCOMPILE_teams]) AND lower(name) LIKE "
-        "lower(:q__like__1) ESCAPE '!') AS f\n"
+        "lower(:q__like__1) ESCAPE '!'\n) AS f\n"
         "WHERE lower('x') LIKE lower(:q__like__2) ESCAPE '!' OR TRUE"
     )
 
@@ -718,7 +749,7 @@ def test_an_error_in_an_included_template_says_where_it_was_included(
     with pytest.raises(MacroArgumentError) as raised, included.connect():
         included.sql("broken/outer.tpl.sql").all()
     assert str(raised.value) == (
-        "tpl.icontains: `:missing` was not passed in broken/inner.tpl.sql:2 "
+        "tpl.each: `:missing` was not passed in broken/inner.tpl.sql:2 "
         "(included from broken/outer.tpl.sql:2)."
     )
 
@@ -960,8 +991,8 @@ def test_macros_are_imported_from_a_path() -> None:
         sql_module.BUILTIN_MACROS
     ) == {
         "blue_or",
+        "bluish",
         "for_teams",
-        "json_object",
         "search",
     }
     for path in (f"{__name__}:search", f"{__name__}.search"):
@@ -976,3 +1007,273 @@ def test_a_path_to_something_else_is_not_a_macro() -> None:
 def test_a_path_that_names_nothing_is_refused() -> None:
     with pytest.raises(UnknownImportPathError):
         Templates(macros=[f"{__name__}:nope"])
+
+
+@pytest.mark.parametrize(
+    ("inner", "included"),
+    [
+        ("SELECT 1 AS n -- the one", "(SELECT 1 AS n -- the one\n)"),
+        ("SELECT 1 AS n; -- done\n", "(SELECT 1 AS n -- done\n)"),
+        ("SELECT 1 AS n /* done */ ;\n\n", "(SELECT 1 AS n /* done */\n)"),
+        ("SELECT ';' AS n", "(SELECT ';' AS n\n)"),
+        ("SELECT $$;$$ AS n;", "(SELECT $$;$$ AS n\n)"),
+    ],
+)
+def test_an_included_query_ends_where_its_sql_ends(
+    tmp_path: Path, inner: str, included: str
+) -> None:
+    write(
+        tmp_path,
+        {
+            "inner.tpl.sql": inner,
+            "outer.tpl.sql": "SELECT n FROM tpl.include('inner.tpl.sql') AS i",
+        },
+    )
+    db = Database("sqlite://", templates=tmp_path)
+    statement = str(db.sql("outer.tpl.sql").statement)
+    expected = "SELECT n FROM " + included + " AS i"  # noqa: S608 - the test's own SQL
+    assert statement.split("\n", 1)[1] == expected
+    if "$$" not in inner:
+        with db.connect():
+            assert db.sql("outer.tpl.sql").scalars().one() in (1, ";")
+
+
+@pytest.mark.parametrize("engine", ["jinja", "tpl"])
+def test_a_posix_class_is_not_a_parameter(engine: Any) -> None:
+    db = Database("sqlite://", templates=Templates(engine=engine))
+    with db.connect():
+        query = db.sql.from_string("SELECT '[[:punct:]][[:alpha:]]'")
+        assert query.scalars().one() == "[[:punct:]][[:alpha:]]"
+
+
+# parameters with a path
+
+
+class Rotation(enum.Enum):
+    IN = "in"
+    OUT = "out"
+
+
+@dataclass
+class Criteria:
+    teams: list[str]
+    search: str | None = None
+
+    @property
+    def upper_teams(self) -> list[str]:
+        return [team.upper() for team in self.teams]
+
+
+def test_a_parameter_reads_an_attribute_or_a_key(db: Database, tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "users/criteria.tpl.sql": """
+                SELECT name FROM users
+                WHERE team IN :criteria.teams
+                  AND tpl.if_set(:criteria.search, tpl.icontains(name, :criteria.search))
+                  AND :filters.kind = 'people'
+                ORDER BY id
+            """
+        },
+    )
+    criteria = Criteria(teams=["red"], search="n")
+    assert names(
+        db, "users/criteria.tpl.sql", criteria=criteria, filters={"kind": "people"}
+    ) == [
+        "Ann",
+        "dan_x",
+    ]
+
+
+def test_a_path_reads_a_property_and_an_enum_value() -> None:
+    source = "WHERE team IN :c.upper_teams AND way = :rotation.IN.value"
+    ctx = Context(
+        "postgresql",
+        postgresql.dialect().identifier_preparer,
+        {"c": Criteria(teams=["red"]), "rotation": Rotation},
+    )
+    template = sql_module.MacroTemplate("x.tpl.sql", source, sql_module.registered([]))
+    assert template.render(ctx) == (
+        "WHERE team IN :c__upper_teams AND way = :rotation__IN__value"
+    )
+    assert ctx.values["c__upper_teams"] == ["RED"]
+    assert ctx.values["rotation__IN__value"] == "in"
+
+
+def test_a_path_inside_a_string_or_a_comment_stays_text() -> None:
+    source = "SELECT ':a.b', \"x:a.b\" -- :a.b\n/* :a.b */ FROM t WHERE 1::a.b"
+    assert render(source, postgresql.dialect(), a={"b": 1}) == source.replace("\n", " ")
+
+
+def test_a_path_that_reads_nothing_is_refused() -> None:
+    with pytest.raises(ParameterPathError) as raised:
+        render("WHERE x = :c.serch", postgresql.dialect(), c=Criteria(teams=[]))
+    assert str(raised.value) == (
+        "`:c.serch` reads `serch`, and the value before it has no key or attribute "
+        "of that name."
+    )
+
+
+def test_if_set_reads_a_path_whose_root_was_not_passed_as_unset() -> None:
+    assert (
+        render("WHERE tpl.if_set(:c.search, x)", postgresql.dialect()) == "WHERE TRUE"
+    )
+
+
+def test_an_included_template_reads_paths_too(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "inner.tpl.sql": "SELECT :c.search AS s",
+            "outer.tpl.sql": "SELECT s FROM tpl.include('inner.tpl.sql') AS i",
+        },
+    )
+    db = Database("sqlite://", templates=tmp_path)
+    with db.connect():
+        query = db.sql("outer.tpl.sql", c=Criteria(teams=[], search="x"))
+        assert query.scalars().one() == "x"
+
+
+def test_icontains_takes_an_expression_and_escapes_it_in_the_database() -> None:
+    source = "WHERE tpl.icontains(city, trim(:name))"
+    assert render(source, postgresql.dialect(), name="a") == (
+        "WHERE city ILIKE '%' || replace(replace(replace(trim(:name), '!', '!!'), "
+        "'%', '!%'), '_', '!_') || '%' ESCAPE '!'"
+    )
+    assert render(source, mysql.dialect(), name="a") == (
+        "WHERE lower(city) LIKE lower(CONCAT('%', replace(replace(replace("
+        "trim(:name), '!', '!!'), '%', '!%'), '_', '!_'), '%')) ESCAPE '!'"
+    )
+
+
+def test_icontains_matches_an_expression_only_as_itself(
+    db: Database, tmp_path: Path
+) -> None:
+    write(
+        tmp_path,
+        {
+            "users/like.tpl.sql": (
+                "SELECT name FROM users WHERE tpl.icontains(name, lower(:q)) ORDER BY id"
+            )
+        },
+    )
+    assert names(db, "users/like.tpl.sql", q="_") == ["dan_x"]
+    assert names(db, "users/like.tpl.sql", q="N") == ["Ann", "dan_x"]
+
+
+# dialect macros
+
+
+@pytest.mark.parametrize(
+    ("dialect", "sql"),
+    [
+        (postgresql.dialect(), "JSON_BUILD_OBJECT('id', id)"),
+        (snowflake(), "OBJECT_CONSTRUCT('id', id)"),
+        (mysql.dialect(), "JSON_OBJECT('id', id)"),
+        (mariadb(), "JSON_OBJECT('id', id)"),
+        (sqlite.dialect(), "json_object('id', id)"),
+    ],
+)
+def test_json_object_builds_an_object_on_each_dialect(
+    dialect: sa.Dialect, sql: str
+) -> None:
+    assert render("tpl.json_object('id', id)", dialect) == sql
+
+
+@pytest.mark.parametrize(
+    ("source", "postgres", "on_snowflake"),
+    [
+        ("tpl.array_agg(v)", "ARRAY_AGG(v)", "ARRAY_AGG(v)"),
+        (
+            "tpl.array_agg(v, a, b DESC)",
+            "ARRAY_AGG(v ORDER BY a, b DESC)",
+            "ARRAY_AGG(v) WITHIN GROUP (ORDER BY a, b DESC)",
+        ),
+        ("tpl.string_agg(v, ', ')", "STRING_AGG(v, ', ')", "LISTAGG(v, ', ')"),
+        (
+            "tpl.string_agg(v, ', ', a)",
+            "STRING_AGG(v, ', ' ORDER BY a)",
+            "LISTAGG(v, ', ') WITHIN GROUP (ORDER BY a)",
+        ),
+        (
+            "tpl.array_contains(tags, :t)",
+            ":t = ANY(tags)",
+            "ARRAY_CONTAINS(:t::variant, tags)",
+        ),
+    ],
+)
+def test_aggregates_and_arrays_on_postgres_and_snowflake(
+    source: str, postgres: str, on_snowflake: str
+) -> None:
+    assert render(source, postgresql.dialect(), t=1) == postgres
+    assert render(source, snowflake(), t=1) == on_snowflake
+
+
+@pytest.mark.parametrize(
+    ("dialect", "sql"),
+    [
+        (mysql.dialect(), "GROUP_CONCAT(v ORDER BY a SEPARATOR ', ')"),
+        (mariadb(), "GROUP_CONCAT(v ORDER BY a SEPARATOR ', ')"),
+        (sqlite.dialect(), "group_concat(v, ', ' ORDER BY a)"),
+    ],
+)
+def test_string_agg_on_the_other_databases(dialect: sa.Dialect, sql: str) -> None:
+    assert render("tpl.string_agg(v, ', ', a)", dialect) == sql
+
+
+@pytest.mark.parametrize("macro", ["array_agg(v)", "array_contains(a, 1)"])
+def test_an_array_macro_refuses_a_database_without_arrays(macro: str) -> None:
+    with pytest.raises(MacroArgumentError) as raised:
+        render(f"SELECT tpl.{macro}", mysql.dialect())
+    assert "has no form for mysql: it writes postgresql, snowflake" in str(raised.value)
+
+
+def test_json_object_and_string_agg_run(db: Database, tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "users/summary.tpl.sql": """
+                SELECT team, tpl.string_agg(name, '/'), tpl.json_object('n', count(*))
+                FROM (SELECT * FROM users ORDER BY id)
+                GROUP BY team ORDER BY team
+            """
+        },
+    )
+    with db.connect():
+        rows = [tuple(row) for row in db.sql("users/summary.tpl.sql").all()]
+    assert rows == [("blue", "bob", '{"n":1}'), ("red", "Ann/Cid/dan_x", '{"n":3}')]
+
+
+@pytest.mark.parametrize(
+    ("dialect", "sql"),
+    [
+        (postgresql.dialect(), "FROM dim_country"),
+        (snowflake(), "FROM facts.prod.dim_country"),
+        (sqlite.dialect(), "FROM (SELECT 1)"),
+    ],
+)
+def test_on_dialect_writes_the_branch_of_the_database(
+    dialect: sa.Dialect, sql: str
+) -> None:
+    source = (
+        "FROM tpl.on_dialect(postgresql = dim_country, "
+        "snowflake = facts.prod.dim_country, default = (SELECT 1))"
+    )
+    assert render(source, dialect) == sql
+
+
+def test_on_dialect_refuses_a_database_it_has_no_branch_for() -> None:
+    with pytest.raises(MacroArgumentError) as raised:
+        render("FROM tpl.on_dialect(postgresql = a)\n", mysql.dialect())
+    assert str(raised.value) == (
+        "tpl.on_dialect: has no branch for mysql, and no `default = ...`: "
+        "it has postgresql in inline.tpl.sql:1."
+    )
+
+
+def test_on_dialect_takes_only_named_branches() -> None:
+    with pytest.raises(
+        MacroArgumentError, match="takes `dialect = sql` branches, got 'a'"
+    ):
+        render("FROM tpl.on_dialect(a)", postgresql.dialect())
