@@ -713,6 +713,10 @@ In a `.sql` template it gives:
   from anywhere in the template
 - rename a macro of the project, its definition and every call, or a template,
   its file and every name that reads it
+- the macros' calls and the parameters coloured, where the editor takes colours
+  from the server: in Zed, `"semantic_tokens": "combined"` in the settings
+- a parameter no call of the project passes, marked, and a warning with a
+  quick fix when a call passes a name close to it
 
 In your Python, the name in `db.sql("users/search.sql")`, `from_file` or
 `from_sql` completes, links to the file, and is marked when no template
