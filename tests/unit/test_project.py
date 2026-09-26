@@ -380,8 +380,6 @@ def test_export_writes_what_sqruff_needs_into_pyproject(
         'exclude_rules = "RF01,RF02,RF03,AL05,ST03"\n'
         "\n"
         "[tool.sqruff.templater.placeholder]\n"
-        "# `sqlakit export sqruff` writes what the templates need, and keeps\n"
-        "# what you add.\n"
         'param_style = "colon"\n'
         'limit = "1"\n'
     )
