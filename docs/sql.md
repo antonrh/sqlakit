@@ -23,9 +23,9 @@ Values are bound, so they never reach the SQL text itself.
 
 ### Why this syntax?
 
-A template is valid SQL, and the syntax exists for that. `tpl.if_set(...)` is
-a call of a function in a schema named `tpl`, and `:teams` is a parameter, the
-way SQL writes both. So every tool that reads SQL reads a template as it is,
+The syntax keeps a template valid SQL. `tpl.if_set(...)` is a call of a
+function in a schema named `tpl`, and `:teams` is a parameter, both written the
+way SQL writes them. So every tool that reads SQL reads a template as it is,
 with no context and no plugin:
 
 - a formatter or a linter, such as `sqruff` or `sqlfluff`
@@ -33,9 +33,8 @@ with no context and no plugin:
 - a database console, once the parameters have values
 
 A template language such as `Jinja` puts `{% if %}` and `{{ x }}` between the
-SQL, so a tool that reads SQL sees a file it can't parse. The price of staying
-SQL is that the logic lives in macros, each a function you call, and not in
-statements between the lines.
+SQL, so a tool that reads SQL sees a file it can't parse. Here the logic goes
+into macros, functions you call, instead of statements between the lines.
 
 ## Template directories
 
@@ -72,7 +71,7 @@ the second.
 You address a template by its path from that root, extension included:
 `db.sql("reports/by_team.sql")` reads `BASE_DIR/reports/by_team.sql`. You can
 keep templates next to the code that uses them, or collect them all in one
-directory. The root only decides where the lookup starts.
+directory.
 
 Three calls take SQL, one per source of it, and all three read rows the same
 way:
@@ -109,9 +108,8 @@ A file of macros is read once, so restart the server after changing one.
 rows = db.sql("reports/by_team.sql", since=since).all()
 ```
 
-Keyword arguments go into the template context. Values a caller was handed
-rather than wrote go in as a mapping, and a keyword beside it replaces one of
-them:
+Keyword arguments are the template's values. You can also pass them as a
+dict, and a keyword argument next to it overrides the value of the same name:
 
 ```python
 rows = db.sql("reports/by_team.sql", filters).all()
@@ -119,9 +117,9 @@ rows = db.sql("reports/by_team.sql", filters, since=since).all()
 rows = db.sql("reports/by_team.sql", context=filters).all()
 ```
 
-The mapping is read, never changed, and a value named `context` is one of its
-own. Rows arrive as `SQLAlchemy` `Row` objects, which you can read by name or
-by position.
+`SQLAKit` doesn't change the dict, and a key named `context` is a value like
+any other. Rows come back as `SQLAlchemy` `Row` objects, which you can read by
+name or by position.
 
 If you'd rather get rows as a type of your own, call `typed`:
 
@@ -142,7 +140,7 @@ validated by `pydantic`, which means a `pydantic` model, a dataclass, a
 
 Keyword arguments go to `validate_python`, so a validator that reads a
 `context` gets one, and `strict`, `by_alias` and the rest of pydantic's
-arguments arrive as well:
+arguments work too:
 
 ```python
 teams = (
@@ -155,21 +153,20 @@ teams = (
 The same arguments reach every row the query reads, a batch of `chunks`
 included.
 
-Reading a template takes three calls because each one speaks a different
-language, and a shorter call would have to mix them:
+Reading a template takes three calls, each with its own arguments:
 
-| call | whose words it takes |
+| call | its arguments |
 | --- | --- |
-| `db.sql(name, values)` | the template's: where the SQL is, and the values it renders with |
-| `.typed(Type, ...)` | pydantic's: what a row becomes, and how it is validated |
-| `.all()`, `.one()`, `.first()`, `.chunks(n)` | its own: how many rows you want |
+| `db.sql(name, values)` | the template, and the values it renders with |
+| `.typed(Type, ...)` | pydantic's: the type of a row, and how to validate it |
+| `.all()`, `.one()`, `.first()`, `.chunks(n)` | how many rows you want |
 
-The split keeps the two meanings of `context` apart: the template's values in
-the first call, pydantic's validation context in the second. A query on a
-model needs no second call, since a model has nothing to validate:
-`db.query(User).all()` says where the rows are, what they are, and how many.
+Keeping them apart means `context` can't mean two things: the template's
+values go in the first call, pydantic's validation context in the second. A
+query on a model skips the second call, since there's nothing to validate:
+`db.query(User).all()`.
 
-A one-column row arrives as the value of that column:
+With `typed(int)`, a one-column row comes back as the value of that column:
 
 ```python
 total = db.sql("reports/total.sql").typed(int).one()
@@ -183,8 +180,7 @@ total = db.sql("reports/total.sql").scalars().one()
 names = db.sql("users/names.sql").scalars().all()
 ```
 
-You call `typed` or `scalars` once. They aren't chained with each other, so
-there's no call order to remember.
+Call `typed` or `scalars`, not both.
 
 The methods that run the query are the same ones a query has: `all`, `first`,
 `one`, `one_or_none`. They raise `SQLAlchemy`'s own `NoResultFound` and
@@ -205,10 +201,10 @@ Both lines do the same thing. The second one works without the
 [model layer](models.md). The examples below use the shorter `User.query`
 form.
 
-Rows arrive as instances and land in the session. You can't narrow such a
-query from code, because the file already decides what is selected and under
-which conditions. A `where` on top of it raises `RawStatementError`, and the
-message suggests moving the condition into the statement itself.
+The rows come back as instances, in the session. You can't add conditions to
+such a query in Python, since the SQL already sets what it selects. A `where`
+on top of it raises `RawStatementError`, and the message suggests moving the
+condition into the SQL.
 
 `from_sql` works with a file, which is the common case. For everything else
 there's `from_statement`, which accepts both what the calls above return and
@@ -236,9 +232,9 @@ log.info("archived %d users", archived)
 ```
 
 `execute()` runs a writing template and returns the number of affected rows.
-Use it for `INSERT`, `UPDATE` and `DELETE`. Inside a transaction the write is
-part of it and the block decides. In a block with no transaction the call
-commits for itself, as ORM writes do.
+Use it for `INSERT`, `UPDATE` and `DELETE`. Inside a transaction the write
+commits or rolls back with the rest of it. In a block with no transaction the
+call commits on its own, as ORM writes do.
 
 ## Table iteration
 
@@ -293,9 +289,9 @@ anywhere.
 SELECT * FROM users WHERE team = :team AND joined_at > :since
 ```
 
-A list reaches the database as a list. Write it in brackets, as SQL reads a
-list, and `SQLAKit` binds it as one parameter whatever its length. An empty
-list matches nothing and doesn't break the query:
+Put a list in brackets, as SQL writes one, and `SQLAKit` binds it as one
+parameter, whatever its length. An empty list matches nothing and doesn't
+break the query:
 
 ```sql
 SELECT * FROM users WHERE id IN (:ids)
@@ -308,8 +304,8 @@ none, on every database:
 SELECT * FROM users ORDER BY id LIMIT :limit OFFSET :offset
 ```
 
-A dotted name reads an attribute of the value, or a key of a mapping, so a
-caller passes the object it has rather than taking it apart:
+A dotted name reads an attribute of the value, or a key of a dict, so you can
+pass the object you have instead of taking it apart:
 
 ```python
 rows = db.sql("users/search.sql", criteria=criteria, status=Status).all()
@@ -402,8 +398,8 @@ docstrings. `sqlakit macros app.sql.macros` adds the macros of a module, and
 
 A value is missing when it is `None`, `False` or empty. `0` is a value.
 `if_set`, `unless_set`, `array`, `order_by`, `between` and `in_list` also
-take a parameter the call did not pass, as a missing value. Another macro
-refuses it. That covers the optional parts of a query:
+treat a parameter the call didn't pass as missing. Any other macro raises
+`MacroArgumentError` for it. That covers the optional parts of a query:
 
 ```sql
 SELECT * FROM users
@@ -414,10 +410,14 @@ WHERE tpl.if_set(:teams, team IN (:teams))
 
 A sort string is `name`, `name.desc` or `name.desc.nulls_last`, in any case
 convention, and a request can send a list of them. `order_by` sorts only by the
-columns listed after the parameter, so a name from a request never reaches the
-SQL on its own. `name = <expression>` sorts by an expression under a name, and
-`'nulls_last'` places the nulls of every term that doesn't say. Any other
-string in quotes is the sort when the call passes none:
+columns listed after the parameter, so a name from a request never goes into
+the SQL as it is. After the columns:
+
+- `name = <expression>` sorts by an expression under that name
+- `'nulls_last'` puts the nulls last for every term that doesn't say otherwise
+- any other string in quotes is the sort when the call passes none
+
+
 
 ```sql
 SELECT * FROM users
@@ -435,13 +435,14 @@ it. A branch of `if_set` or `unless_set` that joins conditions with `AND` or
 `(a OR b) AND c`. Any other branch goes in as written, a column or a sort term
 included.
 
-Where the SQL differs between databases, a macro that names the difference
-writes the right form for each: `icontains` is `ILIKE` on PostgreSQL and
-`CONTAINS(COLLATE(...))` on Snowflake. `on_dialect` is the way out for what
-has no name, such as a table that lives elsewhere on one database.
+Where databases spell something differently, a macro writes the right form
+for each: `icontains` is `ILIKE` on PostgreSQL and `CONTAINS(COLLATE(...))` on
+Snowflake. `on_dialect` covers what no macro does, such as a table that lives
+elsewhere on one database.
 
-`tpl.include` puts a whole query from another file where a table goes, in
-brackets of its own or in the ones around it. The two share their parameters:
+`tpl.include` puts the query of another file where a table goes, and adds
+brackets unless the call already stands in some. Both templates use the same
+parameters:
 
 ```sql
 WITH found AS (SELECT * FROM tpl.include('users/search.sql') AS s)
@@ -549,8 +550,8 @@ template's own, and the macros in the expression expand as they would in the
 template.
 
 Name the file so that it ends in `macros.sql`, such as `_macros.sql` or
-`tenant.macros.sql`, and put it in a template directory: the templates find it,
-and nothing registers it. It isn't a template itself, so `db.sql(...)` won't
+`tenant.macros.sql`, and put it in a template directory. `SQLAKit` finds it
+there, so you don't register it. It isn't a template, so `db.sql(...)` won't
 read it. A file elsewhere goes in `macros=` by its path, next to the rest:
 
 ```python
@@ -586,13 +587,13 @@ SELECT t.tenant_id = :tenant_id AND tpl.if_set(:teams, t.team IN (:teams))
 FROM t;
 ```
 
-The file holds the statement a file of SQL macros does, and the function's
-name picks it. An argument after `FROM` is the function's argument of that
-name. Each `:name` in the file is the macro's own: the function returns its
-value, which is bound, and the parameter takes a name of its own in the
-statement, so two calls, or a parameter of the calling template, never meet it.
-A value the SQL reads and the function doesn't return, or one it returns and
-the SQL doesn't read, raises `MacroArgumentError` where the call is.
+The file is written like a file of SQL macros, and the function's name picks
+the statement in it. Each table after `FROM` is the function's argument of the
+same name. Each `:name` in the file belongs to the macro: the function returns
+its value, and `SQLAKit` binds it under a name of its own, so it never clashes
+with another call or with the template's parameters. If the SQL reads a value
+the function doesn't return, or the function returns one the SQL doesn't read,
+the call raises `MacroArgumentError`.
 
 The path is from the module's directory. The macro is registered as any Python
 macro is, and the file isn't a template.
@@ -632,9 +633,9 @@ wrote pyproject.toml
 $ sqruff lint app/sql
 ```
 
-Which words a dialect keeps is asked of `sqruff` itself when it's installed,
-since its dialects keep words SQLAlchemy doesn't: `exclude` and `row` on
-SQLite. Run it again when a template gains a parameter named like a keyword.
+`export` asks the installed `sqruff` which words its dialect reserves, because
+they differ from SQLAlchemy's: `exclude` and `row` are reserved in SQLite. Run
+it again when a template gains a parameter named like a keyword.
 `sqlakit export sqruff --check` fails in CI when it's out of date. It writes
 `[tool.sqruff.core]` only when the table is missing, so the rules you set there
 stay yours.
@@ -663,7 +664,7 @@ It reads every `.sql` template under the roots you configured. An unknown
 macro raises `UnknownMacroError`, a call with the wrong arguments
 `MacroArgumentError`, and a string or a call never closed `MacroSyntaxError`,
 each with the file and the line. Without the call, a template is read the
-first time someone uses it, which is a late moment to find a typo in it.
+first time something uses it, and a typo shows up only then.
 
 The command line checks them without an application to start:
 
@@ -683,7 +684,7 @@ It exits with `1` when it finds a problem, so it fits CI and a pre-commit hook.
 tool to read, and `--project app` checks the project around another directory.
 
 There's nothing to configure. `sqlakit check` and `sqlakit export` read your
-code without running it, and find what the application already says:
+code without running it, and find:
 
 - the template directories, the files of SQL macros and the namespace, from the
   `Templates(...)` you build
@@ -699,8 +700,8 @@ settings that need the environment don't get in the way.
 ### Paths the code builds in another way
 
 A path taken from a settings object or an environment variable can't be read
-without running the code. Then every directory named `sql` is taken, or
-you say where in `pyproject.toml`:
+without running the code. In that case `SQLAKit` uses every directory named
+`sql`, or you name the directories in `pyproject.toml`:
 
 ```toml
 [tool.sqlakit.templates]
@@ -713,11 +714,11 @@ dialect = "postgresql"
 | `paths` | the template directories, from the file's directory |
 | `macros` | the files of [SQL macros](#macros-written-in-sql) outside those directories |
 | `namespace` | the schema name the calls are written under |
-| `dialect` | the dialect `sqlakit export` writes for, unless `--dialect` says another |
+| `dialect` | the dialect `sqlakit export` writes for, unless `--dialect` names another |
 
-Each key replaces what the reading found, and a key left out keeps it. Python
-macros are always found by their decorator. The application never reads this
-table.
+A key here overrides what `SQLAKit` found in the code, and a key you leave out
+keeps it. Python macros are always found by their decorator. Only the command
+line and the editor read this table, the application doesn't.
 
 ## Editor support
 
@@ -762,9 +763,9 @@ reading `statement` all stay synchronous, so you can pass a rendered template
 to `from_statement` in either API.
 
 Templates render synchronously, and a macro is a plain function. `sql_macro`
-refuses an `async def` with `MacroDefinitionError`, rather than putting a
-coroutine into your query in place of SQL. If a template needs data from the
-network or from the database, fetch it with `await` beforehand and pass the
+raises `MacroDefinitionError` for an `async def`, so a coroutine can't take
+the place of SQL in your query. If a template needs data from the network or
+from the database, fetch it with `await` beforehand and pass the
 finished value in.
 
 ## Limits
