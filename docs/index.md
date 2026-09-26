@@ -79,8 +79,9 @@ GROUP BY team
 from pydantic import BaseModel
 
 from sqlakit import Database
+from sqlakit.sql import Templates
 
-db = Database(DATABASE_URL, templates=BASE_DIR / "sql")
+db = Database(DATABASE_URL, templates=Templates(BASE_DIR / "sql", engine="tpl"))
 
 
 class TeamReport(BaseModel):
@@ -92,8 +93,9 @@ db.sql("reports/by_team.sql", since=since).typed(TeamReport).all()
 # [TeamReport(team='red', members=2)]
 ```
 
-`templates=` sets the directory to load templates from, and `typed()` sets the
-type each row is returned as.
+`templates=` sets the directory to load templates from, `engine="tpl"` reads
+them as SQL, and `typed()` sets the type each row is returned as. Without
+`engine="tpl"`, templates are `Jinja`, as before 0.21.
 
 `SQLAKit` adds the template name to the SQL as a comment, so a slow query log
 shows the source file of each query right away.

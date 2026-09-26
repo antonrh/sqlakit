@@ -13,6 +13,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlakit import CASE_INSENSITIVE_COLLATIONS, Database
 from sqlakit.asyncio.orm import ModelMixin as AsyncModelMixin
 from sqlakit.orm import ModelMixin, SoftDeletes
+from sqlakit.sql import Templates
 
 
 class Base(ModelMixin, DeclarativeBase):
@@ -157,7 +158,7 @@ def templated(events: Database, tmp_path: Path) -> Database:
     (tmp_path / "events" / "payload.sql").write_text(
         "UPDATE events SET payload = :payload WHERE id = :id"
     )
-    events.templates = tmp_path
+    events.templates = Templates(tmp_path, engine="tpl")
     return events
 
 

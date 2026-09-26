@@ -239,7 +239,7 @@ def items(db: Database, tmp_path: Path) -> Iterator[Database]:
     (tmp_path / "inner.sql").write_text(
         "SELECT id FROM macro_items WHERE tpl.if_set(:n, name = :n)"
     )
-    db.templates = Templates(tmp_path)
+    db.templates = Templates(tmp_path, engine="tpl")
     yield db
     with db.transaction() as conn:
         metadata.drop_all(conn)

@@ -15,6 +15,7 @@ from sqlakit import (
 )
 from sqlakit.asyncio import Database
 from sqlakit.asyncio.orm import ModelMixin
+from sqlakit.sql import Templates
 
 TEMPLATES = {
     "notes/all.sql": """
@@ -64,7 +65,7 @@ async def db(templates: Path) -> AsyncIterator[Database]:
     db = Database(
         "sqlite+aiosqlite://",
         engine_args={"poolclass": sa.StaticPool},
-        templates=templates,
+        templates=Templates(templates, engine="tpl"),
     )
     Base.set_db(db)
     async with db.transaction() as conn:
@@ -196,7 +197,7 @@ async def test_sql_written_out_here_needs_no_templates() -> None:
     db = Database("sqlite+aiosqlite://", engine_args={"poolclass": sa.StaticPool})
 
     async with db.connect():
-        assert await db.sql.from_string("SELECT :n", n=7).scalars().one() == 7
+        assert await db.sql.from_string("SELECT {{ n }}", n=7).scalars().one() == 7
 
         with pytest.raises(SQLNotConfiguredError):
             await db.sql("notes/all.sql").all()

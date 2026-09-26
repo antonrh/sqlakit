@@ -4,12 +4,37 @@
 
 ### Added
 
-- Built-in macros: `if_set`, `unless_set`, `when`, `between`, `order_by`,
+- A second template engine, `tpl`, whose templates are SQL: `:name`
+  parameters and `tpl.` macro calls, so a formatter and a linter read a
+  template without a context. `Templates(path, engine="tpl")` turns it on.
+  Without it, templates are `Jinja` and render as they did, with `sqlakit[sql]`.
+
+  ```sql
+  -- Jinja, the default engine
+  SELECT * FROM users
+  WHERE team IN {{ teams }}
+  {% if search %} AND name ILIKE {{ '%' ~ search ~ '%' }} {% endif %}
+  ORDER BY {{ column | identifier }}
+
+  -- tpl
+  SELECT * FROM users
+  WHERE team IN (:teams)
+    AND tpl.if_set(:search, tpl.icontains(name, :search))
+  ORDER BY tpl.identifier(:column, id, name)
+  ```
+
+  `{{ x.y }}` is `:x.y`, `| inclause` is `IN (:x)` or `tpl.each(:x)`, a
+  `{% include %}` of a whole query is `tpl.include('q.sql')`, and a filter or a
+  global is an `@sql_macro` function. The
+  [`migrate-from-jinja`](https://github.com/sqlakit/sqlakit/tree/main/.claude/skills/migrate-from-jinja)
+  skill has the whole mapping. A `tpl` template binds a parameter under the
+  name it is written with, `:since`, where `Jinja` binds `:since__1`.
+- Built-in macros of `tpl`: `if_set`, `unless_set`, `when`, `between`, `order_by`,
   `icontains`, `icollate`, `identifier`, `each`, `in_list`, `array`,
   `arrays_overlap`, `array_contains_all`, `values`, `json_object`,
   `array_agg`, `string_agg`, `array_contains`, `on_dialect` and `include`.
 - `@sql_macro` for macros of your own, registered with
-  `Templates(macros=[...])`, as objects or by import path. `Param`, `Sql`,
+  `Templates(engine="tpl", macros=[...])`, as objects or by import path. `Param`, `Sql`,
   `Context` and `tpl`, which calls a built-in macro from them, are public in
   `sqlakit.sql`. A macro that is a piece of SQL is written in a `.sql` file
   instead, as `SELECT <expression> AS <name> FROM <arguments>;`, and a file
@@ -19,7 +44,8 @@
 - The `sqlakit` command is back, with three subcommands. `sqlakit macros` lists
   the macros, and `sqlakit check` checks every template of a project and exits
   1 for a problem and 2 for a project it can't read. Both read where the
-  templates and the macros are from the project's code without running it.
+  `tpl` templates and the macros are from the project's code without running
+  it, and leave `Jinja` templates alone.
 - `sqlakit export sqruff` writes the `sqruff` settings that read the templates
   as SQL into `pyproject.toml`: the `placeholder` templater, and a value for
   each parameter named like a keyword, such as `:limit`.
@@ -41,9 +67,11 @@
   `TypeError`: `MacroSyntaxError`, `UnknownMacroError`, `MacroArgumentError`,
   `MacroDefinitionError`, `ParameterPathError`, `InlineValueError`,
   `UnknownIdentifierError`, `InvalidSortStringError` and `ProjectConfigError`.
-  `db.sql.check()` raises them in place of Jinja's `TemplateSyntaxError`.
-- `Templates(namespace="q")` names the schema macro calls are written under,
-  for a database with a real schema named `tpl`.
+  `db.sql.check()` raises them for a `tpl` template. `Templates(...)`
+  registers its macros when it is built, so a macro that can't be registered
+  raises there and not on the first query.
+- `Templates(engine="tpl", namespace="q")` names the schema macro calls are
+  written under, for a database with a real schema named `tpl`.
 - `sqlakit_models = app` in the pytest settings imports every `models` module
   under the package before the plugin creates the tables, so a run of a few
   tests has them all.
@@ -52,47 +80,6 @@
 
 ### Changed
 
-- SQL templates are SQL: `:name` parameters and `tpl.` macro calls in place of
-  `Jinja`, so a formatter and a linter read a template without a context.
-  Every `.sql` file under `templates=` and every `db.sql.from_string(...)`
-  reads this syntax, unless `Templates(engine="jinja")` says otherwise.
-
-  ```sql
-  -- before
-  SELECT * FROM users
-  WHERE team IN {{ teams }}
-  {% if search %} AND name ILIKE {{ '%' ~ search ~ '%' }} {% endif %}
-  ORDER BY {{ column | identifier }}
-
-  -- after
-  SELECT * FROM users
-  WHERE team IN (:teams)
-    AND tpl.if_set(:search, tpl.icontains(name, :search))
-  ORDER BY tpl.identifier(:column, id, name)
-  ```
-
-  `{{ x.y }}` is `:x.y`, `| inclause` is `IN (:x)` or `tpl.each(:x)`, a
-  `{% include %}` of a whole query is `tpl.include('q.sql')`, and a filter or a
-  global is an `@sql_macro` function. The
-  [`migrate-from-jinja`](https://github.com/sqlakit/sqlakit/tree/main/.claude/skills/migrate-from-jinja)
-  skill has the whole mapping.
-- `Jinja` templates are deprecated, and read for one more release with
-  `Templates(path, engine="jinja")` and `sqlakit[sql]`. `filters=`,
-  `globals=` and `Filter` work as they did there, and a `DeprecationWarning`
-  says the mode goes in 0.22. Upgrade with it first, then move the templates:
-
-  ```python
-  # 0.20
-  Templates("app/sql", filters={"money": money})
-
-  # 0.21, until the templates move
-  Templates("app/sql", engine="jinja", filters={"money": money})
-  ```
-- A parameter binds under the name the template gives it: `:since` in place of
-  `:since__1`. Code that reads the bound names, such as a test of the compiled
-  SQL, sees the new ones.
-- `Templates(...)` registers its macros when it is built, so a macro that
-  can't be registered raises there and not on the first query.
 - `StrayParameterError` asks for the value by keyword, `name=...`.
 
 ### Fixed

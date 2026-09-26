@@ -7,10 +7,11 @@ The code is parsed, never imported.
 - A function decorated `@sql_macro` is a macro. Its name, arguments,
   docstring and line come from the parse, which is all a check or an editor
   needs of it.
-- A call to `Templates(...)`, or a `templates=` given to a database, names the
-  directories, the files of SQL macros and the namespace. Paths are worked
-  out as far as the code spells them plainly: a string, `Path(__file__)`,
-  `.parent`, `/`, and a name the module assigned one of those to.
+- A call to `Templates(..., engine="tpl")` names the directories, the files
+  of SQL macros and the namespace. Paths are worked out as far as the code
+  spells them plainly: a string, `Path(__file__)`, `.parent`, `/`, and a name
+  the module assigned one of those to. A `Templates(...)` of the default
+  engine, or a path given as `templates=`, reads Jinja and is left alone.
 - When no call says where the templates are, every directory named `sql` is.
 - A database URL written as a string, `Database("postgresql://...")` or the
   default of `os.environ.get(...)`, gives the dialect.
@@ -119,8 +120,8 @@ class Discovered:
     origins: dict[Path | str, str] = field(default_factory=dict)
     """Where each path, `namespace` and `dialect` was read: `shop/db.py:8`."""
     jinja: list[str] = field(default_factory=list)
-    """Where the code builds `Templates(engine="jinja")`, whose templates are
-    Jinja and are not read here."""
+    """Where the code builds templates of the default engine, Jinja, which are
+    not read here: a `Templates(...)` without `engine="tpl"`, or a path."""
 
 
 def discover(root: Path) -> Discovered:
@@ -207,8 +208,9 @@ def _read_call(
     at = f"{path.relative_to(root).as_posix()}:{node.lineno}"
     if (
         called == "Templates"
-        and _text_of(keywords.get("engine"), names, path, root) == "jinja"
+        and _text_of(keywords.get("engine"), names, path, root) != "tpl"
     ):
+        # The default engine reads Jinja, which nothing here reads.
         found.jinja.append(at)
         return
     if called == "Templates":
@@ -239,7 +241,8 @@ def _read_call(
             found.dialect_templated = templated
             found.origins["dialect"] = at
     if "templates" in keywords and not isinstance(keywords["templates"], ast.Call):
-        _add_paths(keywords["templates"], names, path, root, found, at=at)
+        # A path alone is read by the default engine, as Jinja.
+        found.jinja.append(at)
 
 
 def _text_of(

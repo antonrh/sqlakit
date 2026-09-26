@@ -1,6 +1,6 @@
 ---
 name: migrate-from-jinja
-description: "Move an application's SQL templates from Jinja (jinja2sql, `Templates(engine='jinja')`) to SQLAKit's `tpl` templates: `:name` parameters and `tpl.` macros. Use when asked to migrate, convert or port a Jinja `.sql` template, a Jinja macro library or a custom filter to `tpl.` macros or `@sql_macro`, in SQLAKit or in a project that uses it. Covers the order of work, the Jinja to `tpl` mapping, the behaviour that changes quietly, and how to prove the new template returns what the old one did."
+description: "Move an application's SQL templates from Jinja (jinja2sql, the default engine of `Templates`) to SQLAKit's `tpl` templates: `:name` parameters and `tpl.` macros. Use when asked to migrate, convert or port a Jinja `.sql` template, a Jinja macro library or a custom filter to `tpl.` macros or `@sql_macro`, in SQLAKit or in a project that uses it. Covers the order of work, the Jinja to `tpl` mapping, the behaviour that changes quietly, and how to prove the new template returns what the old one did."
 ---
 
 # Migrating templates from Jinja to `tpl`
@@ -11,11 +11,10 @@ reads as a function of a schema named `tpl`. The goal of a migration is a file
 that a linter parses without a context, and that renders the same SQL, or SQL
 that returns the same rows, as the Jinja file it replaces.
 
-`SQLAKit` 0.21 reads `tpl` by default and Jinja with
-`Templates(path, engine="jinja")`, which goes in 0.22. Upgrade first, with
-`engine="jinja"` on the existing directory, so nothing changes. Then write the
-`tpl` templates in a directory of their own, next to the old one, and point the
-database at it once every template has moved. One `Templates` reads one
+`Templates(path)` reads Jinja, the default engine, and
+`Templates(path, engine="tpl")` reads `tpl`. Write the `tpl` templates in a
+directory of their own, next to the old one, and point the database at it
+once every template has moved. One `Templates` reads one
 engine, so a directory moves as a whole. Never transpile a template from one
 dialect to another. Write it in the production dialect, and keep dialect
 differences inside macros.
@@ -34,7 +33,7 @@ $ grep -rln "{% include\|{% from\|{% import" app/sql
 Every Jinja macro library (`{% from 'x.sql' import ... %}`), custom filter and
 global needs a counterpart before the templates that use it can move. Write
 those first, as `@sql_macro` functions in one module, and register the module
-by path: `Templates("app/sql", macros=["app.sql.macros"])`.
+by path: `Templates("app/sql_tpl", engine="tpl", macros=["app.sql.macros"])`.
 
 ## Migrate one template
 
@@ -53,7 +52,7 @@ by path: `Templates("app/sql", macros=["app.sql.macros"])`.
 5. **Compare it** with the old template, as below, on every dialect the
    application renders for.
 6. **Switch the database** to the new directory once every template is there,
-   `Templates(new, macros=[...])` in place of `engine="jinja"`. Delete the old
+   `Templates(new, engine="tpl", macros=[...])` in place of the old path. Delete the old
    directory, and any filter or global nothing uses any more, and drop
    `filters=`, `globals=` and the `sql` extra from the application.
 
@@ -156,8 +155,8 @@ from sqlalchemy.dialects import postgresql
 
 from sqlakit.sql import Templates
 
-old = Templates("app/sql", engine="jinja")
-new = Templates("app/sql_tpl", macros=["app.sql.macros"])
+old = Templates("app/sql")
+new = Templates("app/sql_tpl", engine="tpl", macros=["app.sql.macros"])
 context = {"dialect": "postgresql", "teams": ["red"], "q": None}
 preparer = postgresql.dialect().identifier_preparer
 old_sql, old_params = old.render("users/list.sql", context, preparer=preparer)
