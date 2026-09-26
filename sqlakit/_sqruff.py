@@ -2,13 +2,18 @@
 
 The `placeholder` templater writes each `:name` as `name`. Where that reads as
 something else, `settings` gives the parameter a value; see
-`Project.placeholder_values`.
+`Project.placeholder_values`. Which names a dialect keeps for itself is asked
+of `sqruff`, when it is installed, since its dialects keep words SQLAlchemy's
+do not: `exclude` and `row` on SQLite.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
+import tempfile
 import tomllib
 from typing import TYPE_CHECKING
 
@@ -33,7 +38,7 @@ def stale(project: Project, pyproject: str) -> list[str]:
     """Return the tables of `pyproject.toml` that no longer read the templates."""
     sqruff = tomllib.loads(pyproject).get("tool", {}).get("sqruff", {})
     written = sqruff.get("templater", {}).get("placeholder", {})
-    values = project.placeholder_values()
+    values = project.placeholder_values(_kept(project, _dialect(sqruff, None, project)))
     checked = (
         ("[tool.sqruff.core]", "core" in sqruff),
         (
@@ -59,9 +64,8 @@ def settings(project: Project, pyproject: str, dialect: str | None) -> str:
     written = dict(sqruff.get("templater", {}).get("placeholder", {}))
     written.pop("param_style", None)
     text = pyproject
+    chosen = _dialect(sqruff, dialect, project)
     if "core" not in sqruff:
-        chosen = dialect or project.dialect
-        chosen = _DIALECTS.get(chosen or "", chosen)
         core = [
             "[tool.sqruff.core]",
             *([f'dialect = "{chosen}"'] if chosen else []),
@@ -69,7 +73,8 @@ def settings(project: Project, pyproject: str, dialect: str | None) -> str:
             f'exclude_rules = "{",".join(LINT_EXCLUDED)}"',
         ]
         text = text.rstrip("\n") + "\n\n" + "\n".join(core) + "\n"
-    merged = dict(sorted({**written, **project.placeholder_values()}.items()))
+    values = project.placeholder_values(_kept(project, chosen))
+    merged = dict(sorted({**written, **values}.items()))
     table = "\n".join(
         [
             "[tool.sqruff.templater.placeholder]",
@@ -95,6 +100,50 @@ def settings(project: Project, pyproject: str, dialect: str | None) -> str:
         )
         raise ProjectConfigError(problem) from error
     return written_out
+
+
+def _dialect(sqruff: dict, given: str | None, project: Project) -> str | None:
+    """Return the dialect `sqruff` reads the templates in, by its name."""
+    if "core" in sqruff:
+        # sqruff reads a table without a dialect as ANSI, and so does this.
+        written = sqruff["core"].get("dialect")
+        return written if isinstance(written, str) else None
+    chosen = given or project.dialect
+    return _DIALECTS.get(chosen or "", chosen)
+
+
+_UNPARSABLE = re.compile(r"^L:\s*(\d+) \| P:\s*8 \| \S+ \| Unparsable", re.MULTILINE)
+"""A line `sqruff` cannot read, at the name after `SELECT `."""
+
+
+def _kept(project: Project, dialect: str | None) -> set[str]:
+    """Return the parameter names `sqruff` cannot read as a column in the dialect.
+
+    Each name is linted as `SELECT <name>;`, one to a line, in one run. Without
+    `sqruff` installed, the dialects of SQLAlchemy decide alone.
+    """
+    binary = shutil.which("sqruff")
+    names = sorted(project.parameter_names())
+    if binary is None or not names:
+        return set()
+    command = [binary, "lint", "--parsing-errors", "-"]
+    if dialect:
+        command[2:2] = ["--dialect", dialect]
+    source = "".join(f"SELECT {name};\n" for name in names)
+    # Away from the project, so no setting of its own changes the reading.
+    with tempfile.TemporaryDirectory() as empty:
+        found = subprocess.run(  # noqa: S603 - sqruff, found on the PATH
+            command,
+            input=source,
+            capture_output=True,
+            text=True,
+            cwd=empty,
+            check=False,
+        )
+    # It writes the report to standard error when that is not a terminal.
+    report = found.stdout + found.stderr
+    lines = {int(line) for line in _UNPARSABLE.findall(report)}
+    return {name for number, name in enumerate(names, 1) if number in lines}
 
 
 def _toml_value(value: object) -> str:
