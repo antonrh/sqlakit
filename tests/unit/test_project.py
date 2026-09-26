@@ -376,7 +376,7 @@ def test_export_writes_what_sqruff_needs_into_pyproject(
         "[tool.sqruff.core]\n"
         'dialect = "snowflake"\n'
         'templater = "placeholder"\n'
-        'exclude_rules = "RF01,AL05,ST03"\n'
+        'exclude_rules = "RF01,RF02,RF03,AL05,ST03"\n'
         "\n"
         "[tool.sqruff.templater.placeholder]\n"
         "# `sqlakit export sqruff` writes what the templates need, and keeps\n"
@@ -419,6 +419,36 @@ def test_sqruff_reads_a_template_with_what_export_wrote(project: Path) -> None:
         check=False,
     )
     assert "Unparsable" not in ran.stdout + ran.stderr
+
+
+def test_every_rule_passes_a_macro_that_takes_a_table(project: Path) -> None:
+    import shutil
+    import subprocess
+
+    # `tpl.for_team(u)` passes a table, which RF02 and RF03 read as a column.
+    (project / "sql" / "team.sql").write_text(
+        "SELECT\n    u.id,\n    u.name\nFROM users AS u\nWHERE tpl.for_team(u)\n"
+    )
+    assert main(["export", "sqruff", "--dialect", "postgres"]) == 0
+    pyproject = project / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text().replace(
+            'templater = "placeholder"\n', 'templater = "placeholder"\nrules = "all"\n'
+        )
+    )
+    sqruff = shutil.which("sqruff")
+    assert sqruff is not None
+    # JSON, the one report of the same shape on GitHub Actions as anywhere.
+    ran = subprocess.run(  # noqa: S603 - the linter the project installs
+        [sqruff, "lint", "--format", "json", "sql/team.sql"],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    report = json.loads(ran.stdout or ran.stderr)
+    codes = {problem["code"] for found in report.values() for problem in found}
+    assert not {code for code in codes if code and code.startswith("RF")}, codes
 
 
 def test_export_gives_a_value_to_a_word_the_dialect_keeps(

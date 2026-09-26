@@ -70,11 +70,13 @@ RESERVED = RESERVED_WORDS | POSTGRESQL_RESERVED_WORDS
 """Words a parameter cannot stand in for unquoted, on the databases linted most."""
 """Names SQL keeps for itself, which a linter cannot read a parameter as."""
 
-LINT_EXCLUDED = ("RF01", "AL05", "ST03")
+LINT_EXCLUDED = ("RF01", "RF02", "RF03", "AL05", "ST03")
 """Rules a `tpl.` call trips without anything being wrong with the template.
 
-`RF01` reads `tpl.if_set` as a column of a table named `tpl`, and `AL05` and
-`ST03` miss an alias or a CTE used only inside a macro's argument.
+`RF01` reads `tpl.if_set` as a column of a table named `tpl`. `RF02` and `RF03`,
+outside `sqruff`'s default rules, read a table a macro takes, `tpl.paid(o)`, as
+a column. `AL05` and `ST03` miss an alias or a CTE used only inside a macro's
+argument.
 """
 
 
