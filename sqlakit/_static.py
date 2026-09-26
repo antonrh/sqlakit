@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -52,12 +53,14 @@ SKIPPED = {
     "build",
     "dist",
     "node_modules",
+    "site",
     "site-packages",
     "test",
     "tests",
     "venv",
 }
-"""Directories that hold no code of the application's own."""
+"""Directories that hold no code of the application's own. A hidden one, whose
+name starts with `.`, holds none either."""
 
 
 class StaticMacro(Macro):
@@ -111,6 +114,8 @@ class Discovered:
     unread_namespace: str | None = None
     """Where the code passes a namespace in a way the reading cannot follow."""
     dialect: str | None = None
+    dialect_templated: bool = False
+    """Whether the dialect came from the database that has the templates."""
     origins: dict[Path | str, str] = field(default_factory=dict)
     """Where each path, `namespace` and `dialect` was read: `shop/db.py:8`."""
 
@@ -132,27 +137,40 @@ def discover(root: Path) -> Discovered:
                 found.macros.append(macro)
             elif isinstance(node, ast.Call):
                 _read_call(node, names, path, root, found)
-    if found.unread_namespace is not None and "namespace" not in found.origins:
-        _guess_namespace(found)
     if not found.paths:
-        found.paths = sorted(
+        found.paths = [
             directory
-            for directory in root.rglob("sql")
-            if directory.is_dir() and not _skipped(directory, root)
-        )
+            for directory, _ in _walk(root)
+            if directory.name == "sql" and directory != root
+        ]
         for directory in found.paths:
             found.origins[directory] = "a directory named `sql`"
+    # After the directories, as the guess reads the templates in them.
+    if found.unread_namespace is not None and "namespace" not in found.origins:
+        _guess_namespace(found)
     return found
 
 
 def _python_files(root: Path) -> Iterator[Path]:
-    for path in sorted(root.rglob("*.py")):
-        if not _skipped(path, root):
-            yield path
+    for directory, files in _walk(root):
+        for name in files:
+            if name.endswith(".py"):
+                yield directory / name
 
 
-def _skipped(path: Path, root: Path) -> bool:
-    return any(part in SKIPPED for part in path.relative_to(root).parts[:-1])
+def _walk(root: Path) -> Iterator[tuple[Path, list[str]]]:
+    """Yield each directory of the project's own and its files, in order.
+
+    A directory `SKIPPED` names, or a hidden one, is not entered at all: a
+    virtual environment or `node_modules` would otherwise be listed in full.
+    """
+    for directory, subdirectories, files in os.walk(root):
+        subdirectories[:] = sorted(
+            name
+            for name in subdirectories
+            if name not in SKIPPED and not name.startswith(".")
+        )
+        yield Path(directory), sorted(files)
 
 
 def _assigned(module: ast.Module) -> dict[str, ast.expr]:
@@ -197,10 +215,18 @@ def _read_call(
                 found.namespace = text
                 found.origins["namespace"] = at
         return
-    if called == "Database" and found.dialect is None:
+    # The database with the templates says the dialect, over any other, and a
+    # test's `conftest.py` never does.
+    templated = "templates" in keywords
+    if (
+        called == "Database"
+        and path.name != "conftest.py"
+        and (found.dialect is None or (templated and not found.dialect_templated))
+    ):
         url = node.args[0] if node.args else keywords.get("url")
         if dialect := _dialect_of(url, names):
             found.dialect = dialect
+            found.dialect_templated = templated
             found.origins["dialect"] = at
     if "templates" in keywords and not isinstance(keywords["templates"], ast.Call):
         _add_paths(keywords["templates"], names, path, root, found, at=at)
@@ -383,7 +409,8 @@ def _value(  # noqa: C901, PLR0911 - one case per way code spells a path
         return _value(names.get(node.id), names, path, root, depth + 1)
     if isinstance(node, ast.Call) and _last_name(node.func) == "Path" and node.args:
         inner = _value(node.args[0], names, path, root, depth + 1)
-        return Path(inner) if isinstance(inner, str | Path) else None
+        # A relative path is from where the application runs: the project.
+        return root / inner if isinstance(inner, str | Path) else None
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
         if node.func.attr in ("resolve", "absolute"):
             return _value(node.func.value, names, path, root, depth + 1)
@@ -394,10 +421,10 @@ def _value(  # noqa: C901, PLR0911 - one case per way code spells a path
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
         left = _value(node.left, names, path, root, depth + 1)
         right = _value(node.right, names, path, root, depth + 1)
+        if isinstance(right, Path) and right.is_relative_to(root):
+            right = right.relative_to(root)
         if isinstance(left, Path) and isinstance(right, str | Path):
-            return left / (
-                right.relative_to(root) if isinstance(right, Path) else right
-            )
+            return left / right
         return None
     return None
 
@@ -484,7 +511,8 @@ def _sql_path(node: ast.expr | None, path: Path) -> Path | None:
 
 def _name_column(source: str, node: ast.FunctionDef) -> int:
     """Return the column of a function's name, in characters: `ast` counts bytes."""
-    line = source.splitlines()[node.lineno - 1]
+    # `ast` counts lines at `\n` alone, where `splitlines` also splits at `\f`.
+    line = source.split("\n")[node.lineno - 1]
     written = line.encode()[: node.col_offset].decode(errors="ignore")
     return len(written) + len("def ")
 
@@ -492,7 +520,10 @@ def _name_column(source: str, node: ast.FunctionDef) -> int:
 def _kind(annotation: ast.expr | None) -> tuple[Any, tuple[str, ...]]:
     """Return what an annotation makes an argument, and the SQL a `Literal` allows."""
     if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
-        annotation = ast.parse(annotation.value, mode="eval").body
+        try:
+            annotation = ast.parse(annotation.value, mode="eval").body
+        except SyntaxError:
+            return Sql, ()
     if (
         isinstance(annotation, ast.Subscript)
         and _last_name(annotation.value) == "Literal"

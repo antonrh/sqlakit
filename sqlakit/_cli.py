@@ -8,11 +8,11 @@ import os
 import sys
 from pathlib import Path
 
-from ._project import Problem, load_project
+from ._project import Problem, Project, load_project
 from ._pycharm import DIALECTS, ddl, dialects
 from ._sql import NAMESPACE, registered, signature_of
 from ._sqruff import settings, stale
-from .exceptions import MacroDefinitionError, ProjectConfigError
+from .exceptions import MacroDefinitionError, ProjectConfigError, UnknownImportPathError
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
         help="a directory in the project, the current one by default",
     )
     export.add_argument(
-        "--dialect", help="the dialect, when the code and pyproject.toml name none"
+        "--dialect", help="the dialect to write for, in place of the project's"
     )
     export.add_argument(
         "--check",
@@ -100,11 +100,17 @@ def _macros(
     if not modules or namespace is None:
         try:
             project = load_project(directory)
-        except (ProjectConfigError, MacroDefinitionError):
+        except ProjectConfigError:
             project = None
-    if modules or project is None:
-        found = registered(modules)
-    else:
+    # A module of the project imports from its root, installed or not.
+    sys.path.insert(0, str(project.root if project else directory.resolve()))
+    try:
+        found = registered(modules) if modules or project is None else None
+    except (UnknownImportPathError, MacroDefinitionError) as error:
+        _say(str(error))
+        return 2
+    if found is None:
+        assert project is not None  # noqa: S101 - read above when no module is named
         found = project.templates.macros
     if namespace is None:
         namespace = NAMESPACE if project is None else project.templates.namespace
@@ -118,12 +124,28 @@ def _macros(
     return 0
 
 
-def _check(directory: Path, *, json_output: bool) -> int:
-    """Print what is wrong with the project's templates, and fail if anything is."""
+def _load(directory: Path, *, json_output: bool = False) -> Project | None:
+    """Read the project, or say why it cannot be read and return None."""
     try:
-        project = load_project(directory)
+        return load_project(directory)
     except ProjectConfigError as error:
-        _say(str(error))
+        _say(json.dumps({"error": str(error)}) if json_output else str(error))
+        return None
+
+
+def _check(directory: Path, *, json_output: bool) -> int:
+    """Print what is wrong with the project's templates, and fail if anything is.
+
+    The exit is 1 for problems in the templates, and 2 for a project that cannot
+    be read, or holds no template to check.
+    """
+    project = _load(directory, json_output=json_output)
+    if project is None:
+        return 2
+    if not project.templates.names():
+        where = ", ".join(str(path) for path in project.templates.paths)
+        message = f"no template to check under {where}"
+        _say(json.dumps({"error": message}) if json_output else message)
         return 2
     problems = list(project.problems())
     if json_output:
@@ -145,10 +167,8 @@ def _check(directory: Path, *, json_output: bool) -> int:
 
 def _export_sqruff(directory: Path, *, dialect: str | None, check: bool) -> int:
     """Write the `sqruff` settings that read the templates into `pyproject.toml`."""
-    try:
-        project = load_project(directory)
-    except ProjectConfigError as error:
-        _say(str(error))
+    project = _load(directory)
+    if project is None:
         return 2
     pyproject = project.root / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8") if pyproject.exists() else ""
@@ -158,17 +178,20 @@ def _export_sqruff(directory: Path, *, dialect: str | None, check: bool) -> int:
             _say(f"{', '.join(tables)} out of date: run `sqlakit export sqruff`")
             return 1
         return 0
-    pyproject.write_text(settings(project, text, dialect), encoding="utf-8")
+    try:
+        written = settings(project, text, dialect)
+    except ProjectConfigError as error:
+        _say(str(error))
+        return 2
+    pyproject.write_text(written, encoding="utf-8")
     _say(f"wrote {_relative(pyproject)}")
     return 0
 
 
 def _export_pycharm(directory: Path, *, dialect: str | None, check: bool) -> int:
     """Write what PyCharm needs into `.idea/`: the macros as DDL, and the dialect."""
-    try:
-        project = load_project(directory)
-    except ProjectConfigError as error:
-        _say(str(error))
+    project = _load(directory)
+    if project is None:
         return 2
     chosen = (dialect or project.dialect or "postgresql").lower()
     if chosen not in DIALECTS:

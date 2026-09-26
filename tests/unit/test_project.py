@@ -3,6 +3,8 @@
 import json
 import re
 import sys
+import tomllib
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -512,3 +514,151 @@ def test_a_call_that_cannot_be_made_stays_a_call_when_asked(project: Path) -> No
         assert template.render(ctx) == (
             "SELECT * FROM tpl.values(:rows) AS v\nWHERE tpl.mine(:teams) AND TRUE"
         )
+
+
+@pytest.mark.parametrize(
+    ("dialect", "written"),
+    [
+        ("postgresql", "postgres"),
+        ("mariadb", "mysql"),
+        ("mssql", "tsql"),
+        ("sqlite", "sqlite"),
+    ],
+)
+def test_export_writes_the_dialect_by_the_name_sqruff_knows(
+    project: Path, dialect: str, written: str
+) -> None:
+    assert main(["export", "sqruff", "--dialect", dialect]) == 0
+    assert f'dialect = "{written}"' in (project / "pyproject.toml").read_text()
+
+
+def test_export_rewrites_a_table_whose_header_carries_a_comment(project: Path) -> None:
+    (project / "pyproject.toml").write_text(
+        PYPROJECT + '\n[tool.sqruff.templater.placeholder]  # mine\nkept = "1"\n'
+    )
+    assert main(["export", "sqruff"]) == 0
+
+    written = (project / "pyproject.toml").read_text()
+
+    assert written.count("[tool.sqruff.templater.placeholder]") == 1
+    assert 'kept = "1"' in written
+    tomllib.loads(written)
+
+
+@pytest.mark.parametrize(
+    ("change", "said"),
+    [
+        (
+            lambda root: (root / "_macros.sql").write_text("SELECT broken;\n"),
+            "`_macros.sql` cannot be a macro: line 1 is not",
+        ),
+        (
+            lambda root: (root / "twice.py").write_text(MACROS),
+            "`mine` cannot be a macro: another macro has that name",
+        ),
+        (
+            lambda root: (root / "pyproject.toml").write_text("[project\n"),
+            "is not TOML",
+        ),
+        (
+            lambda root: (root / "pyproject.toml").write_text(
+                PYPROJECT + '[tool.sqlakit.templates]\npaths = "sql"\n'
+            ),
+            'takes a list of strings as `paths`, such as ["app/sql"]',
+        ),
+        (
+            lambda root: (root / "pyproject.toml").write_text(
+                PYPROJECT + '[tool.sqlakit.templates]\npaths = ["nope"]\n'
+            ),
+            "nope` is not a directory",
+        ),
+    ],
+)
+def test_a_project_that_cannot_be_read_is_said_and_exits_2(
+    project: Path,
+    capsys: pytest.CaptureFixture[str],
+    change: Callable[[Path], object],
+    said: str,
+) -> None:
+    change(project)
+
+    assert main(["check"]) == 2
+    assert said in capsys.readouterr().out
+    assert main(["export", "sqruff"]) == 2
+    assert main(["export", "pycharm"]) == 2
+
+
+def test_check_with_no_template_to_check_exits_2(
+    project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for template in (project / "sql").glob("*.sql"):
+        template.unlink()
+
+    assert main(["check", "--format", "json"]) == 2
+    assert json.loads(capsys.readouterr().out)["error"].startswith(
+        "no template to check under"
+    )
+
+
+def test_a_template_that_is_not_utf8_is_a_problem(
+    project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (project / "sql" / "latin.sql").write_bytes("SELECT 1 -- café".encode("cp1252"))
+
+    assert main(["check"]) == 1
+    assert "sql/latin.sql:1:1: The file is not UTF-8 text." in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "spelled",
+    [
+        'Templates(Path("queries"))',
+        'Templates(BASE / Path("queries"))',
+        'Templates(BASE / "queries")',
+    ],
+)
+def test_a_path_is_read_however_the_code_spells_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, spelled: str
+) -> None:
+    (tmp_path / "queries").mkdir()
+    (tmp_path / "db.py").write_text(
+        f"from pathlib import Path\n\nBASE = Path(__file__).parent\n{spelled}\n"
+    )
+    monkeypatch.chdir(tmp_path.parent)
+
+    assert load_project(tmp_path).templates.paths == (tmp_path / "queries",)
+
+
+def test_the_dialect_is_the_one_of_the_database_with_the_templates(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "sql").mkdir()
+    (tmp_path / "conftest.py").write_text('Database("sqlite://")\n')
+    (tmp_path / "a.py").write_text('Database("mysql://x/y")\n')
+    (tmp_path / "b.py").write_text(
+        'Database("postgresql://x/y", templates=Templates("sql"))\n'
+    )
+
+    assert load_project(tmp_path).dialect == "postgresql"
+
+
+def test_the_namespace_is_guessed_in_the_sql_directories_found(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "sql").mkdir()
+    (tmp_path / "sql" / "q.sql").write_text("SELECT 1 WHERE q.if_set(:a, TRUE)")
+    (tmp_path / "db.py").write_text(
+        "import settings\nTemplates(settings.SQL_DIR, namespace=settings.NAMESPACE)\n"
+    )
+
+    assert load_project(tmp_path).templates.namespace == "q"
+
+
+def test_the_macros_of_a_project_module_list_from_its_root(
+    app: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(app)
+    monkeypatch.setattr(sys, "path", [p for p in sys.path if p not in ("", str(app))])
+
+    assert main(["macros", "shop.macros"]) == 0
+    assert "q.owned(:team, *columns)" in capsys.readouterr().out

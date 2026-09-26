@@ -54,6 +54,9 @@ __all__ = ["Problem", "Project", "load_project"]
 
 _KEYS = {"paths", "macros", "namespace", "dialect"}
 
+_BEFORE = 256
+"""How much of the text before a parameter decides what value a linter gets."""
+
 _PARAMETER_IN_TEXT = re.compile(
     rf"{_LITERAL}|(?<![:\w\\]):(?P<param>[A-Za-z_]\w*)(?P<dotted>\.\w+)?", re.DOTALL
 )
@@ -86,7 +89,7 @@ class Problem:
 
     def position(self) -> tuple[int, int]:
         """Return the line and column the problem starts at, both from one."""
-        source = self.path.read_text(encoding="utf-8")
+        source = self.path.read_text(encoding="utf-8", errors="replace")
         line = source.count("\n", 0, self.start) + 1
         column = self.start - (source.rfind("\n", 0, self.start) + 1) + 1
         return line, column
@@ -141,26 +144,45 @@ class Project:
 
     def problems(self) -> Iterator[Problem]:
         """Check every template, and yield what is wrong with each."""
+        texts = self._texts()
+        for path in [*map(self.path_of, self.templates.names()), *self.macro_files()]:
+            if path is not None and path not in texts:
+                yield Problem(path, 0, 0, "The file is not UTF-8 text.")
+        yield from self._template_problems(texts)
+        for path in self.macro_files():
+            source = texts.get(path)
+            for line, message in self.macro_problems(path, source) if source else ():
+                start = _line_start(source or "", line)
+                yield Problem(path, start, start, message)
+        for path, source in texts.items():
+            for start, end, message in self.foreign_calls(source):
+                yield Problem(path, start, end, message)
+
+    def _template_problems(self, texts: dict[Path, str]) -> Iterator[Problem]:
+        """Yield what reading each template finds wrong, where it is."""
         for name in self.templates.names():
             path = self.path_of(name)
-            assert path is not None  # noqa: S101 - `names` lists files
+            if path is None or path not in texts:
+                continue
             try:
-                self.load(name, path.read_text(encoding="utf-8"))
+                self.load(name, texts[path])
             except (MacroSyntaxError, UnknownMacroError, MacroArgumentError) as error:
                 if error.chain:
                     continue  # reported for the included template itself
                 start, end = error.span or (0, 0)
                 yield Problem(path, start, end, str(error))
-        for path in self.macro_files():
-            source = path.read_text(encoding="utf-8")
-            for line, message in self.macro_problems(path, source):
-                start = _line_start(source, line)
-                yield Problem(path, start, start, message)
+
+    def _texts(self) -> dict[Path, str]:
+        """Return the text of every template and file of macros that reads as UTF-8."""
+        texts = {}
         for path in [*map(self.path_of, self.templates.names()), *self.macro_files()]:
-            if path is not None:
-                source = path.read_text(encoding="utf-8")
-                for start, end, message in self.foreign_calls(source):
-                    yield Problem(path, start, end, message)
+            if path is None:
+                continue
+            try:
+                texts[path] = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+        return texts
 
     def foreign_calls(self, source: str) -> list[tuple[int, int, str]]:
         """Return each call of a macro under `tpl` when the namespace is another.
@@ -204,7 +226,7 @@ class Project:
         values: dict[str, str] = {}
         paths = [self.path_of(name) for name in self.templates.names()]
         for path in {*(one for one in paths if one is not None), *self.macro_files()}:
-            placeholders_of(path.read_text(encoding="utf-8"), values)
+            placeholders_of(path.read_text(encoding="utf-8", errors="replace"), values)
         return dict(sorted(values.items()))
 
     def macro_files(self) -> list[Path]:
@@ -245,7 +267,9 @@ def placeholders_of(text: str, values: dict[str, str]) -> dict[str, str]:
         param, dotted = found.group("param", "dotted")
         if param is None:
             continue
-        before = text[: found.start()]
+        # The words right before a parameter decide its value: a stage after
+        # `INTO`, a number in `SAMPLE (`. Reading further back costs time.
+        before = text[max(0, found.start() - _BEFORE) : found.start()]
         if STAGE_AFTER.search(before) or (
             _COPY_INTO.search(before) and _FROM_QUERY.match(text, found.end())
         ):
@@ -293,6 +317,11 @@ def load_project(start: Path | None = None) -> Project:
     paths = (
         [root / path for path in config["paths"]] if "paths" in config else found.paths
     )
+    missing = [path for path in paths if not path.is_dir()]
+    if missing:
+        listed = ", ".join(f"`{path}`" for path in missing)
+        problem = f"{listed} is not a directory, and templates are looked for in one"
+        raise ProjectConfigError(problem)
     if not paths:
         problem = (
             f"no code under {root} builds `Templates(...)` with a path it can read, "
@@ -306,11 +335,16 @@ def load_project(start: Path | None = None) -> Project:
         else [macro for macro in found.macros if isinstance(macro, Path)]
     )
     python_macros = [macro for macro in found.macros if not isinstance(macro, Path)]
-    templates = Templates(
-        paths,
-        macros=[*python_macros, *sql_files],
-        namespace=config.get("namespace", found.namespace),
-    )
+    try:
+        templates = Templates(
+            paths,
+            macros=[*python_macros, *sql_files],
+            namespace=config.get("namespace", found.namespace),
+        )
+    except (MacroDefinitionError, ValueError) as error:
+        # A file of macros that does not read, two macros of one name, or a
+        # namespace that is not a name: the project cannot be read as it is.
+        raise ProjectConfigError(str(error).rstrip(".")) from error
     origins = dict(found.origins)
     for key in ("namespace", "dialect"):
         if key in config:
@@ -360,14 +394,29 @@ def _pyproject(start: Path) -> Path | None:
 
 
 def _section(pyproject: Path) -> dict[str, Any]:
-    with pyproject.open("rb") as file:
-        data = tomllib.load(file)
+    try:
+        with pyproject.open("rb") as file:
+            data = tomllib.load(file)
+    except tomllib.TOMLDecodeError as error:
+        problem = f"`{pyproject}` is not TOML: {error}"
+        raise ProjectConfigError(problem) from error
     config = data.get("tool", {}).get("sqlakit", {}).get("templates", {})
+    table = f"`[tool.sqlakit.templates]` in `{pyproject}`"
     unknown = sorted(set(config) - _KEYS)
     if unknown:
         problem = (
-            f"`[tool.sqlakit.templates]` in `{pyproject}` has "
-            f"{', '.join(unknown)}, and takes {', '.join(sorted(_KEYS))}"
+            f"{table} has {', '.join(unknown)}, and takes {', '.join(sorted(_KEYS))}"
         )
         raise ProjectConfigError(problem)
+    for key in ("paths", "macros"):
+        value = config.get(key, [])
+        if not isinstance(value, list) or not all(
+            isinstance(one, str) for one in value
+        ):
+            problem = f'{table} takes a list of strings as `{key}`, such as ["app/sql"]'
+            raise ProjectConfigError(problem)
+    for key in ("namespace", "dialect"):
+        if not isinstance(config.get(key, ""), str):
+            problem = f"{table} takes a string as `{key}`"
+            raise ProjectConfigError(problem)
     return config
