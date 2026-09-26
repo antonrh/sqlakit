@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `sqlakit export sqruff` turns off `RF02` and `RF03` as well, which read a
+  table an SQL macro takes, `tpl.paid(o)`, as a column. Neither is in
+  `sqruff`'s default rules, so this matters with `rules = "all"`.
+
 ## 0.22.0
 
 ### Fixed

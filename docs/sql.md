@@ -639,10 +639,11 @@ SQLite. Run it again when a template gains a parameter named like a keyword.
 `[tool.sqruff.core]` only when the table is missing, so the rules you set there
 stay yours.
 
-The exported settings turn off three rules a `tpl.` call trips while the
-template is fine: `RF01` reads `tpl.if_set` as a column of a table named `tpl`,
-and `AL05` and `ST03` miss an alias or a CTE used only inside a macro's
-argument.
+The exported settings turn off five rules a `tpl.` call trips while the
+template is fine. `RF01` reads `tpl.if_set` as a column of a table named `tpl`.
+`RF02` and `RF03` read a table a macro takes, as in `tpl.paid(o)`, as a
+column, which matters once you turn on every rule with `rules = "all"`.
+`AL05` and `ST03` miss an alias or a CTE used only inside a macro's argument.
 
 A linter reads a macro call where a value goes: in `WHERE`, in `SELECT`, after
 `ORDER BY`, and where a table goes in `FROM`. Every argument of a built-in
