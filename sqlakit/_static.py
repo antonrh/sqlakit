@@ -118,6 +118,9 @@ class Discovered:
     """Whether the dialect came from the database that has the templates."""
     origins: dict[Path | str, str] = field(default_factory=dict)
     """Where each path, `namespace` and `dialect` was read: `shop/db.py:8`."""
+    jinja: list[str] = field(default_factory=list)
+    """Where the code builds `Templates(engine="jinja")`, whose templates are
+    Jinja and are not read here."""
 
 
 def discover(root: Path) -> Discovered:
@@ -137,7 +140,8 @@ def discover(root: Path) -> Discovered:
                 found.macros.append(macro)
             elif isinstance(node, ast.Call):
                 _read_call(node, names, path, root, found)
-    if not found.paths:
+    # A project of Jinja templates has its `sql` directory read as Jinja.
+    if not found.paths and not found.jinja:
         found.paths = [
             directory
             for directory, _ in walk(root)
@@ -201,6 +205,12 @@ def _read_call(
     called = _last_name(node.func)
     keywords = {keyword.arg: keyword.value for keyword in node.keywords}
     at = f"{path.relative_to(root).as_posix()}:{node.lineno}"
+    if (
+        called == "Templates"
+        and _text_of(keywords.get("engine"), names, path, root) == "jinja"
+    ):
+        found.jinja.append(at)
+        return
     if called == "Templates":
         where = node.args[0] if node.args else keywords.get("path")
         _add_paths(where, names, path, root, found, at=at)

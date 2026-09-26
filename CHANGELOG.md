@@ -55,7 +55,7 @@
 - SQL templates are SQL: `:name` parameters and `tpl.` macro calls in place of
   `Jinja`, so a formatter and a linter read a template without a context.
   Every `.sql` file under `templates=` and every `db.sql.from_string(...)`
-  reads this syntax.
+  reads this syntax, unless `Templates(engine="jinja")` says otherwise.
 
   ```sql
   -- before
@@ -76,6 +76,18 @@
   global is an `@sql_macro` function. The
   [`migrate-from-jinja`](https://github.com/sqlakit/sqlakit/tree/main/.claude/skills/migrate-from-jinja)
   skill has the whole mapping.
+- `Jinja` templates are deprecated, and read for one more release with
+  `Templates(path, engine="jinja")` and `sqlakit[sql]`. `filters=`,
+  `globals=` and `Filter` work as they did there, and a `DeprecationWarning`
+  says the mode goes in 0.22. Upgrade with it first, then move the templates:
+
+  ```python
+  # 0.20
+  Templates("app/sql", filters={"money": money})
+
+  # 0.21, until the templates move
+  Templates("app/sql", engine="jinja", filters={"money": money})
+  ```
 - A parameter binds under the name the template gives it: `:since` in place of
   `:since__1`. Code that reads the bound names, such as a test of the compiled
   SQL, sees the new ones.
@@ -87,29 +99,6 @@
 
 - `Query.order_by` read the nulls of a sort string only in snake case:
   `score.asc.nullsFirst` is now `score.asc.nulls_first`, as it should be.
-
-### Removed
-
-- `Jinja` templates, the `sql` extra and the `jinja2sql` dependency. Install
-  `sqlakit` in place of `sqlakit[sql]`. `Templates` takes no `filters=` or
-  `globals=`, and `sqlakit.sql.Filter` and `AsyncFilterError` are gone. A
-  filter or a global is a macro now:
-
-  ```python
-  # before
-  Templates(BASE_DIR, filters={"upper": lambda value: value.upper()})
-
-  # after
-  from sqlakit.sql import Param, sql_macro
-
-
-  @sql_macro
-  def upper(value: Param) -> str:
-      return f"UPPER({value})"
-
-
-  Templates(BASE_DIR, macros=[upper])
-  ```
 
 ## 0.20.0
 

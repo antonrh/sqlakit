@@ -1,21 +1,22 @@
 ---
 name: migrate-from-jinja
-description: "Move an application's SQL templates from Jinja (jinja2sql) to SQLAKit's `.tpl.sql` macro templates. Use when asked to migrate, convert or port a `.sql` Jinja template, a Jinja macro library or a custom filter to `.tpl.sql`, `tpl.` macros or `@sql_macro`, in SQLAKit or in a project that uses it. Covers the order of work, the Jinja to `.tpl.sql` mapping, the behaviour that changes quietly, and how to prove the new template returns what the old one did."
+description: "Move an application's SQL templates from Jinja (jinja2sql, `Templates(engine='jinja')`) to SQLAKit's `tpl` templates: `:name` parameters and `tpl.` macros. Use when asked to migrate, convert or port a Jinja `.sql` template, a Jinja macro library or a custom filter to `tpl.` macros or `@sql_macro`, in SQLAKit or in a project that uses it. Covers the order of work, the Jinja to `tpl` mapping, the behaviour that changes quietly, and how to prove the new template returns what the old one did."
 ---
 
-# Migrating templates from Jinja to `.tpl.sql`
+# Migrating templates from Jinja to `tpl`
 
-A `.tpl.sql` file is SQL in the production dialect with `:name` parameters.
+A `tpl` template is SQL in the production dialect with `:name` parameters.
 Whatever changes per call is a `tpl.<macro>(...)` call, which every SQL tool
 reads as a function of a schema named `tpl`. The goal of a migration is a file
 that a linter parses without a context, and that renders the same SQL, or SQL
 that returns the same rows, as the Jinja file it replaces.
 
-`SQLAKit` no longer reads Jinja. While templates move, pin the commit that
-reads both, `aa9c416` on the `tpl-macros` branch: there `x.sql` renders with
-Jinja and `x.tpl.sql` with macros, so templates move one at a time. Upgrade
-once no Jinja file is left. Every `.sql` file is a macro template after that,
-and the `.tpl.sql` names keep working. Never transpile a template from one
+`SQLAKit` 0.21 reads `tpl` by default and Jinja with
+`Templates(path, engine="jinja")`, which goes in 0.22. Upgrade first, with
+`engine="jinja"` on the existing directory, so nothing changes. Then write the
+`tpl` templates in a directory of their own, next to the old one, and point the
+database at it once every template has moved. One `Templates` reads one
+engine, so a directory moves as a whole. Never transpile a template from one
 dialect to another. Write it in the production dialect, and keep dialect
 differences inside macros.
 
@@ -43,22 +44,22 @@ by path: `Templates("app/sql", macros=["app.sql.macros"])`.
 2. **Sort it:** mechanical (only `{{ x }}`, `| inclause`, `{% if x %}`),
    dialect branches, or restructuring (`{% for %}`, choosing a table, a
    fragment included into an expression). Do the mechanical ones first.
-3. **Write `x.tpl.sql` next to `x.sql`,** using the mapping below, and point
-   the callers at the new name. Keep `x.sql` until the checks below pass.
-4. **Check it:** `db.sql.check()` reads every `.tpl.sql` file and refuses an
-   unknown macro, a wrong argument count, a non-parameter where `:param` goes,
-   a missing or circular include and an unclosed string, with the file and
-   line.
+3. **Write `x.sql` in the new directory,** under the same name, using the
+   mapping below.
+4. **Check it:** `sqlakit check`, or `Templates(new).check()`, reads every
+   template of the new directory and refuses an unknown macro, a wrong
+   argument count, a non-parameter where `:param` goes, a missing or circular
+   include and an unclosed string, with the file and line.
 5. **Compare it** with the old template, as below, on every dialect the
    application renders for.
-6. **Delete `x.sql`,** then any Jinja macro library, filter or global nothing
-   uses any more.
-7. **Upgrade `SQLAKit`** once the last Jinja file is gone, and drop
+6. **Switch the database** to the new directory once every template is there,
+   `Templates(new, macros=[...])` in place of `engine="jinja"`. Delete the old
+   directory, and any filter or global nothing uses any more, and drop
    `filters=`, `globals=` and the `sql` extra from the application.
 
 ## The mapping
 
-| Jinja | `.tpl.sql` |
+| Jinja | `tpl` |
 |---|---|
 | `{{ x }}` | `:x` |
 | `{{ criteria.search }}`, `{{ d['key'] }}` | `:criteria.search`, `:d.key` (attribute, or key of a mapping) |
@@ -78,7 +79,7 @@ by path: `Templates("app/sql", macros=["app.sql.macros"])`.
 | `= ANY(...)` / `ARRAY_CONTAINS` branches | `tpl.array_contains(array, value)` |
 | any other `{% if dialect == ... %}` | an `@sql_macro` that names the difference and reads `ctx.dialect`; `tpl.on_dialect(postgresql = a, snowflake = b)` only for what has no name, such as a table in another database |
 | `(VALUES {{ rows \| ... }})`, a small table | `FROM tpl.values(:rows) AS v`, columns `column1`, `column2`, ... |
-| `{% include 'q.sql' %}`, a whole query | `FROM tpl.include('q.tpl.sql') AS q` |
+| `{% include 'q.sql' %}`, a whole query | `FROM tpl.include('q.sql') AS q` |
 | `{% include %}` of a fragment, `{% from 'lib.sql' import m %}` | an `@sql_macro` in Python |
 | a plain filter, `{{ x \| f }}` | compute the value in Python and pass it |
 | `Filter(func, bind=True)` | an `@sql_macro` taking `ctx: Context`, binding with `ctx.bind(value, "name")` |
@@ -88,7 +89,7 @@ by path: `Templates("app/sql", macros=["app.sql.macros"])`.
 | `{# comment #}` | `-- comment` |
 | an optional `UNION` branch or CTE | keep it, and make its condition `tpl.if_set(:flag, TRUE, FALSE)` |
 | an optional `JOIN` | `LEFT JOIN ... ON ... AND tpl.if_set(:flag, TRUE, FALSE)`, or `EXISTS` |
-| `FROM {% if x %} a {% else %} b {% endif %}` | `FROM tpl.if_set(:x, a, b)`, or `tpl.if_set(:x, tpl.include('a.tpl.sql'), tpl.include('b.tpl.sql'))` |
+| `FROM {% if x %} a {% else %} b {% endif %}` | `FROM tpl.if_set(:x, a, b)`, or `tpl.if_set(:x, tpl.include('a.sql'), tpl.include('b.sql'))` |
 
 A macro of the application is written once and called like the built-in ones:
 
@@ -146,8 +147,7 @@ limits an argument to that SQL, checked when the file is read.
 
 ## Compare the old and the new
 
-On the pinned commit, render both with the same context and compare the SQL.
-`Templates.render`
+Render both with the same context and compare the SQL. `Templates.render`
 takes the preparer of any dialect, so the production one can be checked
 without connecting to it:
 
@@ -156,16 +156,17 @@ from sqlalchemy.dialects import postgresql
 
 from sqlakit.sql import Templates
 
-templates = Templates("app/sql", macros=["app.sql.macros"])
+old = Templates("app/sql", engine="jinja")
+new = Templates("app/sql_tpl", macros=["app.sql.macros"])
 context = {"dialect": "postgresql", "teams": ["red"], "q": None}
 preparer = postgresql.dialect().identifier_preparer
-old, old_params = templates.render("users/list.sql", context, preparer=preparer)
-new, new_params = templates.render("users/list.tpl.sql", context, preparer=preparer)
-print(old, old_params, new, new_params, sep="\n\n")
+old_sql, old_params = old.render("users/list.sql", context, preparer=preparer)
+new_sql, new_params = new.render("users/list.sql", context, preparer=preparer)
+print(old_sql, old_params, new_sql, new_params, sep="\n\n")
 ```
 
 Jinja names parameters `teams__1` and macros keep `teams`, so compare the
-shape, not the text. The values a `.tpl.sql` file returns are its whole
+shape, not the text. The values a `tpl` template returns are its whole
 context and what its macros bound, such as `q__like__1` from the `icontains`
 that `if_set` dropped. Only the names its SQL holds are bound when it runs.
 
@@ -182,7 +183,8 @@ parse the rendered production SQL with a linter for that dialect (`sqruff` with
 
 ## Done when
 
-- `db.sql.check()` passes, and the old `x.sql` is gone.
+- `sqlakit check` passes, the database reads the new directory, and the old
+  one is gone.
 - Every caller passes the parameters the new file reads, flat or dotted, and no
   longer builds context only Jinja needed (`dialect` is added by `SQLAKit`).
 - No macro library, filter or global is left that nothing calls.

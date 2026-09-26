@@ -247,6 +247,28 @@ def test_a_project_with_no_templates_to_find_is_refused(
         load_project(tmp_path)
 
 
+def test_jinja_templates_are_left_to_jinja(tmp_path: Path) -> None:
+    (tmp_path / "sql").mkdir()
+    (tmp_path / "sql" / "old.sql").write_text("SELECT {{ x }}")
+    code = "from sqlakit.sql import Templates\nold = Templates('sql', engine='jinja')\n"
+    (tmp_path / "db.py").write_text(code)
+
+    with pytest.raises(ProjectConfigError) as raised:
+        load_project(tmp_path)
+    assert str(raised.value) == (
+        "Cannot read the project's templates: the templates of "
+        "`Templates(engine='jinja')` (db.py:2) are Jinja, which "
+        "`sqlakit check`, `export` and the editor do not read: move them to `tpl`, "
+        "as the migrate-from-jinja skill describes."
+    )
+
+    (tmp_path / "new").mkdir()
+    (tmp_path / "db.py").write_text(code + "new = Templates('new')\n")
+    project = load_project(tmp_path)
+    assert project.templates.paths == (tmp_path / "new",)
+    assert project.found[-1] == "jinja: not read (db.py:2)"
+
+
 @pytest.fixture
 def app(tmp_path: Path) -> Path:
     for name, source in APP.items():

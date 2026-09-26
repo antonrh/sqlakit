@@ -779,7 +779,7 @@ def test_an_included_template_is_read_once_while_its_file_stays(
     tmp_path: Path,
 ) -> None:
     write(tmp_path, {"inner.sql": "SELECT 1 AS n"})
-    engine = Templates(tmp_path).engine
+    engine = Templates(tmp_path).macro_engine
     outer = "SELECT n FROM tpl.include('inner.sql') AS i"
 
     first = engine.included("inner.sql", (("<string>", 1),))
@@ -2018,6 +2018,6 @@ def test_a_template_names_the_parameters_a_call_passes(tmp_path: Path) -> None:
         return {"tenant_id": tenant.value}
 
     templates = Templates(tmp_path, macros=[of_tenant])
-    template = templates.engine.get("outer.sql")
+    template = templates.macro_engine.get("outer.sql")
 
     assert template.parameters() == {"team", "q", "filters", "tenant", "x", "limit"}

@@ -6,6 +6,7 @@ import importlib.util
 import inspect
 import itertools
 import re
+import warnings
 from collections.abc import Mapping, Sized
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -21,6 +22,7 @@ from typing import (
     Literal,
     TypeAlias,
     TypeVar,
+    cast,
     get_args,
     get_origin,
     get_type_hints,
@@ -32,6 +34,7 @@ import sqlalchemy as sa
 from ._discovery import import_string
 from ._query import _field_named, _parse_sort_field
 from .exceptions import (
+    AsyncFilterError,
     Chain,
     InlineValueError,
     InvalidSortStringError,
@@ -51,6 +54,9 @@ from .exceptions import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Sequence
 
+    import jinja2
+    from jinja2sql import Jinja2SQL
+    from markupsafe import Markup
     from pydantic import BaseModel, TypeAdapter
     from sqlalchemy.sql import Executable
 
@@ -60,12 +66,19 @@ else:
         from pydantic import BaseModel, TypeAdapter
     except ImportError:  # pragma: no cover - pydantic is installed in CI
         BaseModel = TypeAdapter = None
+    try:
+        import jinja2
+        from jinja2sql import Jinja2SQL
+        from markupsafe import Markup
+    except ImportError:  # pragma: no cover - the extra is installed in CI
+        jinja2 = Jinja2SQL = Markup = None
 
 __all__ = [
     "BUILTIN_MACROS",
     "BaseSQLQuery",
     "Context",
     "FileMacro",
+    "Filter",
     "Inline",
     "Macro",
     "Param",
@@ -2613,6 +2626,40 @@ def search(q: Param, *columns: Sql) -> str:
 """
 
 
+Engine = Literal["tpl", "jinja"]
+"""How templates are read: `tpl`, SQL with macros, or `jinja`, until 0.22."""
+
+_preparer: ContextVar[Any] = ContextVar("sqlakit.identifier_preparer")
+"""The preparer of the database a Jinja template is rendering for."""
+
+
+class Filter:
+    """A filter of a Jinja template, registered the way jinja2sql registers one.
+
+    Deprecated with `Templates(engine="jinja")`: a macro takes its place.
+
+    ```python
+    Templates(
+        "app/sql", engine="jinja", filters={"in_span": Filter(in_span, bind=True)}
+    )
+    ```
+
+    ``bind=True`` calls the filter with a jinja2sql `Binder` as its first
+    argument, so a filter writing SQL of its own binds the values through it.
+    A plain function goes in as it is: whatever it returns is bound as one more
+    value of the statement.
+    """
+
+    __slots__ = ("bind", "func")
+
+    def __init__(self, func: Callable[..., Any], *, bind: bool = False) -> None:
+        self.func = func
+        self.bind = bind
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.func!r}, bind={self.bind})"
+
+
 class Templates:
     """The directory a database's SQL templates live in, and how they render.
 
@@ -2637,25 +2684,72 @@ class Templates:
     ``namespace`` is the schema name calls are written under, `tpl` unless a
     real schema has that name: `Templates("app/sql", namespace="q")` reads
     `q.if_set(...)`.
+
+    ``engine="jinja"`` reads the templates as `Jinja`, the way SQLAKit 0.20
+    did, with its ``filters`` and ``globals``, and needs `sqlakit[sql]`. It is
+    deprecated, and goes in 0.22: it is there so a project can upgrade first
+    and move its templates after.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - the options of two engines, for one release
         self,
         path: PathLike | Sequence[PathLike] = (),
         *,
+        engine: Engine = "tpl",
         auto_reload: bool = False,
         macros: Iterable[Macro | str | Path] = (),
         namespace: str = NAMESPACE,
+        filters: Mapping[str, Callable[..., Any] | Filter] | None = None,
+        globals: Mapping[str, Any] | None = None,  # noqa: A002
     ) -> None:
         self.paths = (
             (path,) if isinstance(path, str | Path) else tuple(path)  # type: ignore[misc]
         )
         self.auto_reload = auto_reload
+        if engine not in get_args(Engine):
+            msg = f"`engine` is 'tpl' or 'jinja', not {engine!r}"
+            raise ValueError(msg)
+        self.engine = engine
         if not _IDENTIFIER.fullmatch(namespace):
             msg = f"`namespace` is a plain name, such as `tpl`, not {namespace!r}"
             raise ValueError(msg)
         self.namespace = namespace
+        self.filters = dict(filters or {})
+        self.globals = dict(globals or {})
+        if engine == "jinja":
+            self._jinja(macros, namespace)
+            self.macros: dict[str, Macro] = {}
+            return
+        if self.filters or self.globals:
+            msg = (
+                "`filters` and `globals` are for `engine='jinja'`: a template of "
+                "`tpl` calls a macro, which `macros` registers"
+            )
+            raise ValueError(msg)
         self.macros = registered([*macros, *self._macro_files()])
+
+    def _jinja(self, macros: Iterable[Macro | str | Path], namespace: str) -> None:
+        """Check the options of a Jinja engine, and say that it is going.
+
+        Raises:
+            ValueError: for an option of the `tpl` engine.
+            AsyncFilterError: for a filter or a global to be awaited.
+
+        """
+        warnings.warn(
+            "`Templates(engine='jinja')` is deprecated and goes in SQLAKit 0.22: "
+            "move the templates to `:name` parameters and `tpl.` macros, as the "
+            "migrate-from-jinja skill describes",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        if list(macros) or namespace != NAMESPACE:
+            msg = "`macros` and `namespace` are for `engine='tpl'`, not 'jinja'"
+            raise ValueError(msg)
+        for name, value in (*self.filters.items(), *self.globals.items()):
+            called = value.func if isinstance(value, Filter) else value
+            if iscoroutinefunction(called):
+                raise AsyncFilterError(name)
 
     def __repr__(self) -> str:
         paths = ", ".join(str(path) for path in self.paths)
@@ -2676,8 +2770,8 @@ class Templates:
         )
 
     @cached_property
-    def engine(self) -> MacroEngine:
-        """The engine that reads and renders the templates."""
+    def macro_engine(self) -> MacroEngine:
+        """The engine that reads and renders templates of `tpl`."""
         return MacroEngine(
             self.paths,
             self.macros,
@@ -2702,11 +2796,67 @@ class Templates:
             TemplateNotFoundError: if no path holds that template.
 
         """
+        if self.engine == "jinja":
+            return self._jinja_render(source, context, preparer, inline=inline)
         if inline:
-            return self.engine.render_string(source, context, preparer)
+            return self.macro_engine.render_string(source, context, preparer)
         if not self.paths:
             raise SQLNotConfiguredError
-        return self.engine.render_file(source, context, preparer)
+        return self.macro_engine.render_file(source, context, preparer)
+
+    @cached_property
+    def renderer(self) -> Jinja2SQL:
+        """The Jinja environment of `engine="jinja"`, built on first use.
+
+        Raises:
+            MissingDependencyError: if `sqlakit[sql]` is not installed.
+
+        """
+        if Jinja2SQL is None:
+            package, needed_by = "jinja2sql", "`engine='jinja'`"
+            raise MissingDependencyError(package, needed_by, "sqlakit[sql]")
+        environment = jinja2.Environment(
+            loader=jinja2.FileSystemLoader([str(path) for path in self.paths]),
+            auto_reload=self.auto_reload,
+            autoescape=True,
+        )
+        environment.globals.update(self.globals)
+        # Named parameters: `text()` reads `:name` and nothing else.
+        # jinja2sql's types name its own styles, and a function is one too.
+        factory: Any = Jinja2SQL
+        renderer = factory(environment, param_style=_placeholder)
+        # Ours quotes through the dialect's preparer, jinja2sql's through one char.
+        renderer.register_filter("identifier", cast("Any", _identifier))
+        for name, filter_ in self.filters.items():
+            if isinstance(filter_, Filter):
+                renderer.register_filter(name, filter_.func, bind=filter_.bind)
+            else:
+                renderer.register_filter(name, filter_)
+        return renderer
+
+    def _jinja_render(
+        self,
+        source: str,
+        context: Mapping[str, Any],
+        preparer: Any,  # noqa: ANN401
+        *,
+        inline: bool,
+    ) -> tuple[str, Mapping[str, Any]]:
+        token = _preparer.set(preparer)
+        try:
+            if inline:
+                sql, params = self.renderer.from_string(source, context=context)
+            else:
+                if not self.paths:
+                    raise SQLNotConfiguredError
+                try:
+                    sql, params = self.renderer.from_file(source, context=context)
+                except jinja2.TemplateNotFound:
+                    raise TemplateNotFoundError(source, self.paths) from None
+        finally:
+            _preparer.reset(token)
+        # Named parameters come back as a mapping, positional ones as a sequence.
+        return sql, cast("Mapping[str, Any]", params)
 
     def names(self) -> list[str]:
         """Return the name of every template: each `.sql` file under the paths.
@@ -2749,7 +2899,7 @@ class Templates:
             macro.expanded([f":{param}" for param in macro.params]),
             self.macros if macros is None else macros,
             namespace=self.namespace,
-            include=self.engine.included,
+            include=self.macro_engine.included,
             expanding=(macro.name,),
             first_line=macro.body_line,
         )
@@ -2766,7 +2916,12 @@ class Templates:
         """
         if not self.paths:
             raise SQLNotConfiguredError
-        self.engine.check(self.names())
+        if self.engine == "jinja":
+            environment = self.renderer.env
+            for name in environment.list_templates(extensions=("sql",)):
+                environment.get_template(name)
+            return
+        self.macro_engine.check(self.names())
         for macro in self.macros.values():
             if isinstance(macro, SqlMacro):
                 self.check_macro(macro)
@@ -2863,6 +3018,23 @@ class BaseSQLQuery(Generic[RowT, DatabaseT]):
         if size is None:
             return self.statement
         return self.statement.execution_options(yield_per=size)
+
+
+def _identifier(value: Any) -> Markup:  # noqa: ANN401
+    """Return a name quoted the way the database in hand quotes one, for Jinja."""
+    parts = (value,) if isinstance(value, str) else value
+    preparer = _preparer.get()
+    # The preparer escapes what it quotes; nothing here reaches the SQL raw.
+    return Markup(".".join(preparer.quote(str(part)) for part in parts))
+
+
+def _placeholder(name: str, index: int) -> str:  # noqa: ARG001 - the style's shape
+    """Return the placeholder a Jinja value renders as.
+
+    A space follows it so that a cast can: `{{ id }}::uuid` renders `:id__1
+    ::uuid`, which `text()` reads as a parameter and a cast.
+    """
+    return f":{name} "
 
 
 def require_pydantic() -> None:

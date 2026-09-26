@@ -6,6 +6,7 @@ DEFAULT_ALIAS = "default"
 
 __all__ = [
     "AliasInUseError",
+    "AsyncFilterError",
     "BulkQueryError",
     "ConflictingDatabaseUrlError",
     "ConflictingJoinError",
@@ -341,6 +342,18 @@ class TemplateNotFoundError(SQLAKitError, FileNotFoundError):
         super().__init__(
             f"No SQL template named `{template}`"
             + (f": {reason}." if reason else f". Looked in: {looked or 'nowhere'}.")
+        )
+
+
+class AsyncFilterError(SQLAKitError, TypeError):
+    """Raised when a Jinja template is given a filter or global to be awaited."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(
+            f"`{name}` is a coroutine function, and templates render "
+            f"synchronously: rendering builds SQL and awaits nothing, in the "
+            f"async API as well. Await the value first, and pass what it "
+            f"returns in the context."
         )
 
 
