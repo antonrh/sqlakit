@@ -6,8 +6,9 @@ import sys
 from pathlib import Path
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
-from sqlakit import ProjectConfigError
+from sqlakit import MacroArgumentError, ProjectConfigError
 from sqlakit._cli import main
 from sqlakit._project import load_project
 from sqlakit._sql import signature_of
@@ -491,3 +492,18 @@ def test_a_call_under_tpl_is_marked_when_the_namespace_is_another(
         ),
         "1 template, 1 problem",
     ]
+
+
+def test_a_macro_read_from_its_source_writes_its_call_when_asked(project: Path) -> None:
+    from sqlakit._sql import Context
+    from sqlakit._static import written_as_called
+
+    loaded = load_project(project)
+    template = loaded.load("x.sql", "SELECT 1 WHERE tpl.if_set(:q, tpl.mine(:teams))")
+    values = {"q": 1, "teams": [1]}
+    ctx = Context("postgresql", postgresql.dialect().identifier_preparer, values)
+
+    with pytest.raises(MacroArgumentError, match="was read from its source"):
+        template.render(ctx)
+    with written_as_called("tpl"):
+        assert template.render(ctx) == "SELECT 1 WHERE tpl.mine(:teams)"
