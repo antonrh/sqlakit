@@ -386,7 +386,6 @@ docstrings. `sqlakit macros app.sql.macros` adds the macros of a module, and
 | --- | --- |
 | `tpl.if_set(:x, expr[, otherwise])` | `expr` when `:x` holds a value, `otherwise` (`TRUE`) when it doesn't |
 | `tpl.unless_set(:x, expr[, otherwise])` | `expr` when `:x` holds no value |
-| `tpl.when(:x, sql)` | `sql` when `:x` holds a value, nothing when it doesn't: a `JOIN` that is there or not. Everything after `:x` is `sql`, commas and all |
 | `tpl.in_list(col, :values, :exclude)` | `col IN (:values)`, or `NOT IN` when `:exclude` is set, and `TRUE` when the list is empty |
 | `tpl.between(col, :from, :to[, '[)'])` | a range whose ends may each be missing |
 | `tpl.order_by(:sort, col, ...)` | the terms of an `ORDER BY` from sort strings, only by the columns listed |
@@ -402,8 +401,8 @@ docstrings. `sqlakit macros app.sql.macros` adds the macros of a module, and
 | `tpl.include('path.sql')` | the query of another template, in parentheses |
 
 A value is missing when it is `None`, `False` or empty. `0` is a value.
-`if_set`, `unless_set`, `when`, `array`, `order_by`, `between` and `in_list`
-also take a parameter the call did not pass, as a missing value. Another macro
+`if_set`, `unless_set`, `array`, `order_by`, `between` and `in_list` also
+take a parameter the call did not pass, as a missing value. Another macro
 refuses it. That covers the optional parts of a query:
 
 ```sql
@@ -429,7 +428,7 @@ ORDER BY tpl.order_by(:sort, id, created_at, name = tpl.icollate(name), 'created
 `GROUP BY name`, sorting by it no longer matches the grouped column, so group
 by the same expression.
 
-`if_set`, `unless_set` and `when` expand only the branch they write. A macro
+`if_set` and `unless_set` expand only the branch they write. A macro
 in the other one never runs, so it can't fail on a value that wasn't meant for
 it. A branch of `if_set` or `unless_set` that joins conditions with `AND` or
 `OR` goes in brackets, so `tpl.if_set(:x, a OR b, FALSE) AND c` stays
@@ -644,11 +643,10 @@ and `AL05` and `ST03` miss an alias or a CTE used only inside a macro's
 argument.
 
 A linter reads a macro call where a value goes: in `WHERE`, in `SELECT`, after
-`ORDER BY`, and where a table goes in `FROM`. A call that stands for a whole
-clause, `tpl.when(:tag, JOIN tags AS t ON t.order_id = o.id)`, is not SQL to
-it, and it skips that part. Where you can, keep the clause and make its
-condition the macro: `LEFT JOIN tags AS t ON t.order_id = o.id AND
-tpl.if_set(:tag, TRUE, FALSE)`, or `EXISTS` in place of an optional `JOIN`.
+`ORDER BY`, and where a table goes in `FROM`. Every argument of a built-in
+macro is an expression, so a template stays SQL to it, and `sqruff fix` formats
+it. Write an optional `JOIN` as a condition: `EXISTS (...)`, or `LEFT JOIN tags
+AS t ON t.order_id = o.id AND tpl.if_set(:tag, TRUE, FALSE)`.
 
 ## Template validation
 

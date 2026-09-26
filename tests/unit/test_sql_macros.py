@@ -417,7 +417,6 @@ def test_signature_says_how_a_template_calls_a_macro() -> None:
     ] == [
         "tpl.if_set(:value, expr[, otherwise])",
         "tpl.unless_set(:value, expr[, otherwise])",
-        "tpl.when(:value, sql, *more)",
         "tpl.order_by(:sort, column, *columns)",
         "tpl.icontains(column, text[, collation])",
         "tpl.icollate(column[, collation])",
@@ -1272,14 +1271,6 @@ def test_order_by_orders_by_nothing_when_the_sort_was_not_passed() -> None:
     )
 
 
-def test_when_writes_nothing_when_the_value_is_not_there() -> None:
-    source = "FROM users AS u tpl.when(:team, JOIN teams AS t ON t.id = u.team_id)"
-    assert render(source, postgresql.dialect(), team="red") == (
-        "FROM users AS u JOIN teams AS t ON t.id = u.team_id"
-    )
-    assert render(source, postgresql.dialect()) == "FROM users AS u"
-
-
 def bound(source: str, dialect: sa.Dialect, **values: Any) -> str:
     """Return what a template becomes on a dialect, values written in where they decide."""
     template = sql_module.MacroTemplate("x.sql", source, sql_module.registered([]))
@@ -1402,14 +1393,6 @@ def test_only_the_branch_taken_is_rendered() -> None:
     )
     assert template.render(ctx) == "SELECT 0, TRUE"
     assert ctx.values == {"x": None}
-
-
-def test_when_takes_a_clause_with_commas() -> None:
-    source = "SELECT * FROM t tpl.when(:n, ORDER BY a DESC, b DESC LIMIT :n)"
-    assert render(source, postgresql.dialect(), n=3) == (
-        "SELECT * FROM t ORDER BY a DESC, b DESC LIMIT :n"
-    )
-    assert render(source, postgresql.dialect(), n=None) == "SELECT * FROM t"
 
 
 def test_order_by_falls_back_to_the_sort_the_template_names() -> None:
