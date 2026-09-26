@@ -98,6 +98,10 @@ type each row is returned as.
 `SQLAKit` adds the template name to the SQL as a comment, so a slow query log
 shows the source file of each query right away.
 
+`sqlakit check` reads every template the project uses and reports a macro call
+that can't work, before the query runs. See [template
+validation](docs/sql.md#template-validation).
+
 ### From a string
 
 ```python

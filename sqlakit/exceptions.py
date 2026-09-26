@@ -333,11 +333,14 @@ class SQLNotConfiguredError(SQLAKitError, RuntimeError):
 class TemplateNotFoundError(SQLAKitError, FileNotFoundError):
     """Raised when no configured path holds the template asked for."""
 
-    def __init__(self, template: str, paths: Iterable[object] = ()) -> None:
+    def __init__(
+        self, template: str, paths: Iterable[object] = (), reason: str = ""
+    ) -> None:
         self.template = template
         looked = ", ".join(str(path) for path in paths)
         super().__init__(
-            f"No SQL template named `{template}`. Looked in: {looked or 'nowhere'}."
+            f"No SQL template named `{template}`"
+            + (f": {reason}." if reason else f". Looked in: {looked or 'nowhere'}.")
         )
 
 

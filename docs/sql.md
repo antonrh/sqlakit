@@ -84,7 +84,8 @@ db = Database(
 )
 ```
 
-`auto_reload` reads a file again when it changes, for a development server.
+`auto_reload` reads a template again when it changes, for a development server.
+A file of macros is read once, so restart the server after changing one.
 `macros` adds [macros of your own](#macros-of-your-own). `namespace` renames
 `tpl`, for a database that has a real schema of that name:
 `Templates(BASE_DIR, namespace="q")` reads `q.if_set(...)`.
@@ -387,8 +388,10 @@ docstrings. `sqlakit macros app.sql.macros` adds the macros of a module, and
 | `tpl.on_dialect(postgresql = a, snowflake = b)` | the branch of the database in hand |
 | `tpl.include('path.sql')` | the query of another template, in parentheses |
 
-A value is missing when it is `None`, `False`, empty, or not passed at all.
-`0` is a value. That covers the optional parts of a query:
+A value is missing when it is `None`, `False` or empty. `0` is a value.
+`if_set`, `unless_set`, `when`, `array`, `order_by`, `between` and `in_list`
+also take a parameter the call did not pass, as a missing value. Another macro
+refuses it. That covers the optional parts of a query:
 
 ```sql
 SELECT * FROM users
@@ -480,8 +483,21 @@ Templates(BASE_DIR, macros=[owned_by, search])
 Templates(BASE_DIR, macros=["app.sql.macros"])
 ```
 
-A macro calls another as a template does, through `tpl`, with strings for SQL
-and values for parameters.
+A macro calls another as a template does, through `tpl`. It passes a `Sql` it
+was given, or what another macro returned, where SQL goes, and a `Param` or a
+plain value where a parameter goes. A plain `str` where SQL goes raises
+`MacroArgumentError`, since it could be a value from a request written into the
+SQL. Wrap SQL of your own in `Sql("...")`:
+
+```python
+from sqlakit.sql import Param, Sql, sql_macro, tpl
+
+
+@sql_macro
+def named(q: Param) -> str:
+    """Rows whose name holds the text, regardless of case."""
+    return tpl.icontains(Sql("name"), q)
+```
 
 `sql_macro` takes three options:
 
@@ -786,6 +802,13 @@ finished value in.
 A template is a whole statement, so there's nothing left to narrow. `where`,
 `order_by` and `page` aren't available and raise `RawStatementError`. Paginate
 in the SQL itself, or read the rows with a query.
+
+A string is read the standard way, with a quote doubled: `'it''s'`. A quote
+escaped with a backslash, `'it\'s'`, which MySQL takes, ends the string early
+for the template: what follows reads as SQL, a `:name` there as a parameter, or
+the template raises `MacroSyntaxError`. Double the quote instead.
+
+The macros write `TRUE` and `FALSE`, which Oracle reads from 23ai on.
 
 Next: [queries](queries.md) for the queries the builder handles better, and
 [debugging](debugging.md) for measuring what your templates cost.

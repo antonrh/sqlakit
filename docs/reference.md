@@ -187,6 +187,8 @@ Covered in [SQL templates](sql.md).
 
 ::: sqlakit.sql.Inline
 
+::: sqlakit.sql.tpl
+
 ## The async classes
 
 The same classes, awaited.

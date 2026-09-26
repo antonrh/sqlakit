@@ -589,6 +589,18 @@ def test_a_plain_str_where_sql_goes_is_refused_from_python() -> None:
     assert "ILIKE" in nested
 
 
+def test_a_choice_is_checked_from_python() -> None:
+    since, until = Param("since", 1), Param("until", 2)
+
+    # `[)` without its quotes would leave the end in, as `'[]'` does.
+    with pytest.raises(MacroArgumentError, match=r"argument 4 must be '\[\]' or"):
+        tpl.between(Sql("at"), since, until, "[)")
+
+    assert tpl.between(Sql("at"), since, until, "'[)'") == (
+        "(at >= :since AND at < :until)"
+    )
+
+
 @pytest.mark.parametrize(
     ("values", "sql"),
     [
@@ -1026,6 +1038,25 @@ def test_a_path_reads_a_property_and_an_enum_value() -> None:
 def test_a_path_inside_a_string_or_a_comment_stays_text() -> None:
     source = "SELECT ':a.b', \"x:a.b\" -- :a.b\n/* :a.b */ FROM t WHERE 1::a.b"
     assert render(source, postgresql.dialect(), a={"b": 1}) == source.replace("\n", " ")
+
+
+def test_a_path_whose_step_holds_a_double_underscore_is_refused() -> None:
+    # `:a__b.c` and `:a.b__c` would both bind as `a__b__c`.
+    with pytest.raises(MacroSyntaxError) as raised:
+        render("SELECT 1\nWHERE x = :a__b.c", postgresql.dialect(), a__b={"c": 1})
+    assert str(raised.value) == (
+        "inline.sql:2: `:a__b.c` binds as `a__b__c`, which another path could too: "
+        "a step of a path holds no `__`."
+    )
+
+
+def test_a_path_is_named_as_written_when_a_macro_refuses_it() -> None:
+    with pytest.raises(MacroArgumentError, match=r"`:c\.rows` has no rows"):
+        render(
+            "SELECT * FROM tpl.values(:c.rows)", postgresql.dialect(), c={"rows": []}
+        )
+    with pytest.raises(MacroArgumentError, match=r"`:c\.teams` was not passed"):
+        render("WHERE tpl.each(:c.teams)", postgresql.dialect())
 
 
 def test_a_path_that_reads_nothing_is_refused() -> None:

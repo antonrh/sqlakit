@@ -547,6 +547,16 @@ def test_a_template_nobody_has_says_where_it_looked(db: Database) -> None:
             db.sql("users/nothing.sql").all()
 
 
+def test_a_file_of_macros_is_not_a_template(db: Database) -> None:
+    with db.connect():
+        with pytest.raises(TemplateNotFoundError) as raised:
+            db.sql("users/_macros.sql").all()
+    assert str(raised.value) == (
+        "No SQL template named `users/_macros.sql`: a file whose name ends in "
+        "`macros.sql` holds macros."
+    )
+
+
 def test_a_database_without_templates_still_runs_sql_written_out(
     templates: Path,
 ) -> None:

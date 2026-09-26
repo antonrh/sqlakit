@@ -160,6 +160,23 @@ class Param:
         return f"{type(self).__name__}({self.name!r}, {self.value!r})"
 
 
+class _PathParam(Param):
+    """A `:a.b` argument, bound as `a__b`, that remembers how it was written."""
+
+    __slots__ = ("path",)
+
+    def __init__(self, name: str, value: Any, path: tuple[str, ...]) -> None:  # noqa: ANN401
+        super().__init__(name, value)
+        self.path = path
+
+
+def _as_written(param: Param) -> str:
+    """Return a parameter as the template wrote it: `:a.b`, not `:a__b`."""
+    if isinstance(param, _PathParam):
+        return ":" + ".".join(param.path)
+    return str(param)
+
+
 class _Value(Param):
     """A value passed where a `:parameter` goes, bound when the SQL names it.
 
@@ -419,6 +436,14 @@ class Macro:
         kind = self._kind_or_none(index)
         if kind is Param and not isinstance(arg, Param):
             return _Value(arg, ctx, self.name)
+        choices = self.slot_at(index).choices if kind is Sql else ()
+        if choices:
+            # One of a few pieces of SQL the macro names, so a plain `str` will do.
+            if str(arg) not in choices:
+                allowed = " or ".join(choices)
+                problem = f"argument {index + 1} must be {allowed}, got {arg}"
+                raise MacroArgumentError(self.name, problem)
+            return Sql(arg)
         if kind is Sql and isinstance(arg, str) and not isinstance(arg, Sql):
             problem = (
                 f"argument {index + 1} is SQL, and a plain `str` could be a value "
@@ -715,6 +740,20 @@ class FileMacro(Macro):
             problem = (
                 f"{path.name} takes {', '.join(unknown)} after `FROM`, and the "
                 f"function takes no argument of that name"
+            )
+            raise MacroDefinitionError(self.name, problem)
+        dotted = next(
+            (
+                found.group("param")
+                for found in _DOTTED.finditer(self.statement.body)
+                if found.group("param")
+            ),
+            None,
+        )
+        if dotted is not None:
+            problem = (
+                f"{path.name} reads `:{dotted}`, and the function returns plain "
+                f"values: read `:{dotted.replace('.', '_')}` and return it"
             )
             raise MacroDefinitionError(self.name, problem)
         self.reads = tuple(
@@ -1031,8 +1070,24 @@ class MacroTemplate:
         self.paths: dict[str, tuple[str, ...]] = {}
         """Every `:a.b` read here, by the name it binds as, `a__b`, and its path."""
         self.parts = _Scanner(source, name, namespace, chain, first_line).parts()
+        self._check_paths(first_line)
         self._check(self.parts)
         self._compiled = self._compile(self.parts)
+
+    def _check_paths(self, first_line: int) -> None:
+        """Refuse a `:a.b` that binds under the name another one would."""
+        for found in _DOTTED.finditer(self.source):
+            path = found.group("param")
+            if path is not None and "__" in path:
+                line = first_line + self.source.count("\n", 0, found.start())
+                problem = (
+                    f"`:{path}` binds as `{path.replace('.', '__')}`, which "
+                    f"another path could too: a step of a path holds no `__`"
+                )
+                span = (found.start(), found.end())
+                raise MacroSyntaxError(
+                    self.name, line, problem, chain=self.chain, span=span
+                )
 
     def parameters(self) -> frozenset[str]:
         """Return the names a call passes values under.
@@ -1111,10 +1166,14 @@ class MacroTemplate:
             macro.statement.body,
         )
         slots = [slot.name for slot in macro.slots]
+        # An argument the call leaves out writes its default.
         written = {
-            name: self.source[slice(*arg.span)]
-            for name, arg in zip(slots, call.args, strict=False)
+            slot.name: str(slot.default) for slot in macro.slots if not slot.required
         }
+        written.update(
+            (name, self.source[slice(*arg.span)])
+            for name, arg in zip(slots, call.args, strict=False)
+        )
         text = macro.statement.expanded(
             [written.get(name, name) for name in macro.statement.params], body
         )
@@ -1336,7 +1395,8 @@ class MacroTemplate:
         values = ctx.values
         missing = [name for name in call.params if name not in values]
         if missing and not macro.optional:
-            problem = f"`:{missing[0]}` was not passed"
+            shown = ".".join(self.paths.get(missing[0], (missing[0],)))
+            problem = f"`:{shown}` was not passed"
             raise call.refuse(problem, self.namespace)
         # Missing values read as None inside the arguments too, for the calls there.
         values.update(dict.fromkeys(missing))
@@ -1376,7 +1436,9 @@ class MacroTemplate:
     def _arguments(self, call: _Expansion, ctx: Context) -> list[Any]:
         args: list[Any] = [ctx] if call.macro.context else []
         for param, parts in call.args:
-            if param is not None:
+            if param is not None and param in self.paths:
+                args.append(_PathParam(param, ctx.values[param], self.paths[param]))
+            elif param is not None:
                 args.append(Param(param, ctx.values[param]))
             elif call.macro.lazy:
                 args.append(_Deferred(self, parts or (), ctx))
@@ -1624,6 +1686,9 @@ class MacroEngine:
         pieces = name.split("/")
         if ".." in pieces or name.startswith("/"):
             raise TemplateNotFoundError(name, self.paths)
+        if pieces[-1].endswith(MACRO_FILE):
+            reason = f"a file whose name ends in `{MACRO_FILE}` holds macros"
+            raise TemplateNotFoundError(name, self.paths, reason)
         for root in self.paths:
             path = root.joinpath(*pieces)
             if path.is_file():
@@ -1911,7 +1976,7 @@ def array(ctx: Context, values: Param, type_name: Sql = Sql("")) -> str:  # noqa
         raise MacroArgumentError(array.name, problem)
     items = values.value
     if isinstance(items, str | bytes):
-        problem = f"`:{values.name}` is a string, and takes a list"
+        problem = f"`{_as_written(values)}` is a string, and takes a list"
         raise MacroArgumentError(array.name, problem)
     if items is None:
         bound = None
@@ -1923,7 +1988,9 @@ def array(ctx: Context, values: Param, type_name: Sql = Sql("")) -> str:  # noqa
     if bound is None:
         return f"NULL{cast}"
     if not bound and not cast:
-        problem = f"`:{values.name}` is empty, and PostgreSQL needs its type: pass one"
+        problem = (
+            f"`{_as_written(values)}` is empty, and PostgreSQL needs its type: pass one"
+        )
         raise MacroArgumentError(array.name, problem)
     return f"ARRAY[{', '.join(bound)}]{cast}"
 
@@ -2234,13 +2301,15 @@ def values_table(ctx: Context, rows: Param) -> str:
         for row in rows.value or ()
     ]
     if not table:
-        problem = f"`:{rows.name}` has no rows, and `VALUES` without one is not SQL"
+        problem = (
+            f"`{_as_written(rows)}` has no rows, and `VALUES` without one is not SQL"
+        )
         raise MacroArgumentError(values_table.name, problem)
     width = len(table[0])
     for number, row in enumerate(table, 1):
         if len(row) != width:
             problem = (
-                f"row {number} of `:{rows.name}` has {len(row)} values, "
+                f"row {number} of `{_as_written(rows)}` has {len(row)} values, "
                 f"and row 1 has {width}"
             )
             raise MacroArgumentError(values_table.name, problem)
@@ -2475,11 +2544,11 @@ def each(ctx: Context, values: Param) -> str:
 
     """
     if isinstance(values.value, str | bytes):
-        problem = f"`:{values.name}` is a string, and takes a list"
+        problem = f"`{_as_written(values)}` is a string, and takes a list"
         raise MacroArgumentError(each.name, problem)
     items = list(values.value or ())
     if not items:
-        problem = f"`:{values.name}` is empty, and `IN ()` is not SQL"
+        problem = f"`{_as_written(values)}` is empty, and `IN ()` is not SQL"
         raise MacroArgumentError(each.name, problem)
     return ", ".join(ctx.bind(item, _named(values)) for item in items)
 
