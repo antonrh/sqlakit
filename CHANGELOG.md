@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- `tpl.when`. Its argument was a clause, not an expression, so a template with
+  it was not SQL to a linter, and `sqruff fix` broke the lines around it. Write
+  the clause as a condition:
+
+  ```sql
+  -- before
+  FROM orders AS o
+  tpl.when(:user_name, JOIN users AS u ON u.id = o.user_id AND u.name = :user_name)
+
+  -- after
+  FROM orders AS o
+  WHERE tpl.if_set(
+      :user_name,
+      EXISTS (SELECT 1 FROM users AS u WHERE u.id = o.user_id AND u.name = :user_name)
+  )
+  ```
+
 ## 0.21.0
 
 ### Added

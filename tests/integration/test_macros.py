@@ -65,18 +65,6 @@ CASES = [
         [1, 2, 3],
     ),
     Case(
-        "when",
-        "SELECT i.id FROM macro_items i tpl.when(:over, JOIN macro_items j ON j.id = i.id AND j.score > :over) ORDER BY i.id",
-        {"over": 15},
-        [2],
-    ),
-    Case(
-        "when",
-        "SELECT i.id FROM macro_items i tpl.when(:over, JOIN macro_items j ON j.id = i.id AND j.score > :over) ORDER BY i.id",
-        {"over": None},
-        [1, 2, 3],
-    ),
-    Case(
         "order_by",
         "SELECT id FROM macro_items ORDER BY tpl.order_by(:sort, id, score)",
         {"sort": "score.desc.nulls_last"},

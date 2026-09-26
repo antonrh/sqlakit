@@ -1954,22 +1954,6 @@ def unless_set(value: Param, expr: Sql, otherwise: Sql = Sql("TRUE")) -> str:  #
     return _grouped(str(otherwise if _is_set(value.value) else expr))
 
 
-@sql_macro(optional=True, lazy=True)
-def when(value: Param, sql: Sql, *more: Sql) -> str:
-    """Write `sql` when the parameter holds a value, and nothing when it does not.
-
-    For a clause that is there or not, rather than a condition that is true or
-    not: `tpl.when(:team, JOIN teams AS t ON t.id = u.team_id)`. `if_set`
-    writes `TRUE` in its place, which only a condition can stand.
-
-    Everything after the parameter is the clause, commas and all:
-    `tpl.when(:limit, ORDER BY score DESC, created_at DESC LIMIT :limit)`.
-    """
-    if not _is_set(value.value):
-        return ""
-    return ", ".join(str(part) for part in (sql, *more))
-
-
 @sql_macro(optional=True)
 def array(ctx: Context, values: Param, type_name: Sql = Sql("")) -> str:  # noqa: B008
     """Write a list as an array, one parameter per value.
@@ -2580,7 +2564,6 @@ BUILTIN_MACROS: Mapping[str, Macro] = {
     for macro in (
         if_set,
         unless_set,
-        when,
         order_by,
         icontains,
         icollate,
