@@ -4,9 +4,10 @@
 
 ### Changed
 
-- `sqlakit export sqruff` turns off `RF02` and `RF03` as well, which read a
-  table an SQL macro takes, `tpl.paid(o)`, as a column. Neither is in
-  `sqruff`'s default rules, so this matters with `rules = "all"`.
+- `sqlakit export sqruff` turns on every rule `sqruff` has, `rules = "all"`,
+  where it writes `[tool.sqruff.core]`: a table already there stays as it is.
+  It turns off `RF02` and `RF03` as well as `RF01`, `AL05` and `ST03`, which
+  read a table an SQL macro takes, `tpl.paid(o)`, as a column.
 
 ## 0.22.0
 

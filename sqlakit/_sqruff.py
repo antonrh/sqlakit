@@ -70,6 +70,7 @@ def settings(project: Project, pyproject: str, dialect: str | None) -> str:
             "[tool.sqruff.core]",
             *([f'dialect = "{chosen}"'] if chosen else []),
             'templater = "placeholder"',
+            'rules = "all"',
             f'exclude_rules = "{",".join(LINT_EXCLUDED)}"',
         ]
         text = text.rstrip("\n") + "\n\n" + "\n".join(core) + "\n"
