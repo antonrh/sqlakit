@@ -117,9 +117,7 @@ def templates(tmp_path: Path) -> Path:
 @pytest.fixture
 def db(templates: Path) -> Iterator[Database]:
     db = Database(
-        "sqlite://",
-        engine_args={"poolclass": sa.StaticPool},
-        templates=Templates(templates, engine="tpl"),
+        "sqlite://", engine_args={"poolclass": sa.StaticPool}, templates=templates
     )
     Base.set_db(db)
     with db.transaction() as conn:
@@ -581,7 +579,7 @@ def test_templates_take_more_than_a_path(templates: Path) -> None:
     db = Database(
         "sqlite://",
         engine_args={"poolclass": sa.StaticPool},
-        templates=Templates([templates], auto_reload=True, namespace="q", engine="tpl"),
+        templates=Templates([templates], auto_reload=True, namespace="q"),
     )
 
     with db.connect():
@@ -632,7 +630,7 @@ def test_a_missing_dependency_says_what_to_install(
 def registry(templates: Path) -> Iterator[None]:
     sqlakit.db.configure(
         {"default": {"url": "sqlite://"}, "warehouse": {"url": "sqlite://"}},
-        templates=Templates(templates, engine="tpl"),
+        templates=templates,
     )
     yield
     sqlakit.db.dispose()

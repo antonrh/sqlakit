@@ -325,9 +325,9 @@ def load_project(start: Path | None = None) -> Project:
     if not paths and found.jinja:
         where = ", ".join(found.jinja)
         problem = (
-            f"the templates the code builds ({where}) are Jinja, the default "
-            f"engine, which `sqlakit check`, `export` and the editor do not "
-            f"read: they read `Templates(path, engine='tpl')`"
+            f"the templates of `Templates(engine='jinja')` ({where}) are Jinja, "
+            f"which `sqlakit check`, `export` and the editor do not read: move "
+            f"them to `tpl`, as the migrate-from-jinja skill describes"
         )
         raise ProjectConfigError(problem)
     if not paths:
@@ -346,7 +346,6 @@ def load_project(start: Path | None = None) -> Project:
     try:
         templates = Templates(
             paths,
-            engine="tpl",
             macros=[*python_macros, *sql_files],
             namespace=config.get("namespace", found.namespace),
         )

@@ -97,7 +97,6 @@ def db(tmp_path: Path) -> Iterator[Database]:
     templates = Templates(
         write(tmp_path, TEMPLATES),
         macros=[for_teams, search, blue_or, bluish],
-        engine="tpl",
     )
     db = Database(
         "sqlite://", engine_args={"poolclass": sa.StaticPool}, templates=templates
@@ -382,12 +381,12 @@ def test_a_macro_cannot_take_a_builtin_name() -> None:
         return str(value)
 
     with pytest.raises(MacroDefinitionError, match="another macro has that name"):
-        Templates(macros=[mine], engine="tpl")
+        Templates(macros=[mine])
 
 
 def test_check_reads_every_macro_template(tmp_path: Path) -> None:
     write(tmp_path, {"ok.sql": "SELECT 1", "bad/one.sql": "SELECT tpl.foo()"})
-    db = Database("sqlite://", templates=Templates(tmp_path, engine="tpl"))
+    db = Database("sqlite://", templates=tmp_path)
     with pytest.raises(UnknownMacroError, match=r"bad/one\.sql:1"):
         db.sql.check()
 
@@ -403,9 +402,7 @@ def test_a_template_outside_the_paths_is_not_found(db: Database) -> None:
 
 def test_auto_reload_reads_a_changed_file(tmp_path: Path) -> None:
     path = write(tmp_path, {"one.sql": "SELECT 1"}) / "one.sql"
-    db = Database(
-        "sqlite://", templates=Templates(tmp_path, auto_reload=True, engine="tpl")
-    )
+    db = Database("sqlite://", templates=Templates(tmp_path, auto_reload=True))
     with db.connect():
         assert db.sql("one.sql").scalars().one() == 1
         path.write_text("SELECT 2")
@@ -456,8 +453,7 @@ async def test_the_async_api_renders_the_same_macros(tmp_path: Path) -> None:
         },
     )
     db = AsyncDatabase(
-        "sqlite+aiosqlite://",
-        templates=Templates(tmp_path, macros=[blue_or], engine="tpl"),
+        "sqlite+aiosqlite://", templates=Templates(tmp_path, macros=[blue_or])
     )
     async with db.connect():
         assert await db.sql("one.sql", teams=["red"]).scalars().all() == ["red"]
@@ -511,7 +507,7 @@ def test_a_namespace_replaces_tpl_where_a_schema_has_that_name(tmp_path: Path) -
     write(tmp_path, {"one.sql": "SELECT q.if_set(:x, 1, 2), tpl.f(1) FROM tpl.t"})
     db = Database(
         "sqlite://",
-        templates=Templates(tmp_path, namespace="q", macros=[for_teams], engine="tpl"),
+        templates=Templates(tmp_path, namespace="q", macros=[for_teams]),
     )
     statement = db.sql("one.sql", x=None).statement
     assert str(statement).splitlines()[-1] == "SELECT 2, tpl.f(1) FROM tpl.t"
@@ -527,7 +523,7 @@ def test_errors_name_the_namespace_in_use() -> None:
 
 def test_a_namespace_is_a_plain_name() -> None:
     with pytest.raises(ValueError, match="`namespace` is a plain name"):
-        Templates(namespace="my schema", engine="tpl")
+        Templates(namespace="my schema")
 
 
 def test_a_macros_own_refusal_says_where_the_call_is() -> None:
@@ -659,7 +655,7 @@ ORDER BY u.id""",
 
 @pytest.fixture
 def included(tmp_path: Path, db: Database) -> Database:
-    db.templates = Templates(write(tmp_path, TEMPLATES | INCLUDES), engine="tpl")
+    db.templates = Templates(write(tmp_path, TEMPLATES | INCLUDES))
     return db
 
 
@@ -714,7 +710,7 @@ def test_an_error_in_an_included_template_says_where_it_was_included(
 
 def test_a_missing_included_template_is_refused_on_load(tmp_path: Path) -> None:
     write(tmp_path, {"outer.sql": "SELECT 1\nFROM tpl.include('gone.sql') AS g"})
-    db = Database("sqlite://", templates=Templates(tmp_path, engine="tpl"))
+    db = Database("sqlite://", templates=tmp_path)
     with pytest.raises(
         MacroArgumentError,
         match=r"No SQL template named `gone\.sql`.* in outer\.sql:2\.",
@@ -747,7 +743,7 @@ def test_an_included_query_drops_its_semicolon(tmp_path: Path) -> None:
             "two.sql": "SELECT n FROM tpl.include('one.sql') AS o",
         },
     )
-    db = Database("sqlite://", templates=Templates(tmp_path, engine="tpl"))
+    db = Database("sqlite://", templates=tmp_path)
     with db.connect():
         assert db.sql("two.sql").scalars().one() == 1
 
@@ -758,7 +754,7 @@ def test_include_is_not_a_name_a_macro_can_take() -> None:
         return str(value)
 
     with pytest.raises(MacroDefinitionError, match="another macro has that name"):
-        Templates(macros=[mine], engine="tpl")
+        Templates(macros=[mine])
 
 
 def test_auto_reload_reads_a_changed_included_file(tmp_path: Path) -> None:
@@ -769,9 +765,7 @@ def test_auto_reload_reads_a_changed_included_file(tmp_path: Path) -> None:
             "outer.sql": "SELECT n FROM tpl.include('inner.sql') AS i",
         },
     )
-    db = Database(
-        "sqlite://", templates=Templates(tmp_path, auto_reload=True, engine="tpl")
-    )
+    db = Database("sqlite://", templates=Templates(tmp_path, auto_reload=True))
     with db.connect():
         assert db.sql("outer.sql").scalars().one() == 1
         path = tmp_path / "inner.sql"
@@ -785,7 +779,7 @@ def test_an_included_template_is_read_once_while_its_file_stays(
     tmp_path: Path,
 ) -> None:
     write(tmp_path, {"inner.sql": "SELECT 1 AS n"})
-    engine = Templates(tmp_path, engine="tpl").macro_engine
+    engine = Templates(tmp_path).macro_engine
     outer = "SELECT n FROM tpl.include('inner.sql') AS i"
 
     first = engine.included("inner.sql", (("<string>", 1),))
@@ -846,7 +840,7 @@ def test_icollate_sorts_under_order_by_without_case(tmp_path: Path) -> None:
             "ORDER BY tpl.order_by(:sort, name = tpl.icollate(name))"
         },
     )
-    db = Database("sqlite://", templates=Templates(tmp_path, engine="tpl"))
+    db = Database("sqlite://", templates=tmp_path)
     with db.connect():
         rows = db.sql("sorted.sql", sort="name").scalars().all()
         plain = db.sql.from_string(
@@ -916,7 +910,7 @@ def test_values_runs_as_a_table(tmp_path: Path) -> None:
             "AS v ORDER BY column1"
         },
     )
-    db = Database("sqlite://", templates=Templates(tmp_path, engine="tpl"))
+    db = Database("sqlite://", templates=tmp_path)
     with db.connect():
         rows = db.sql("segments.sql", segments=[[2, "b"], (1, "a")]).all()
     assert [tuple(row) for row in rows] == [(1, "a"), (2, "b")]
@@ -946,7 +940,7 @@ def test_a_literal_annotation_names_the_sql_an_argument_may_be() -> None:
 
 
 def test_macros_are_imported_from_a_path() -> None:
-    assert set(Templates(macros=[__name__], engine="tpl").macros) - set(
+    assert set(Templates(macros=[__name__]).macros) - set(
         sql_module.BUILTIN_MACROS
     ) == {
         "blue_or",
@@ -955,17 +949,17 @@ def test_macros_are_imported_from_a_path() -> None:
         "search",
     }
     for path in (f"{__name__}:search", f"{__name__}.search"):
-        assert Templates(macros=[path], engine="tpl").macros["search"] is search
+        assert Templates(macros=[path]).macros["search"] is search
 
 
 def test_a_path_to_something_else_is_not_a_macro() -> None:
     with pytest.raises(MacroDefinitionError, match="it is not decorated @sql_macro"):
-        Templates(macros=[f"{__name__}:write"], engine="tpl")
+        Templates(macros=[f"{__name__}:write"])
 
 
 def test_a_path_that_names_nothing_is_refused() -> None:
     with pytest.raises(UnknownImportPathError):
-        Templates(macros=[f"{__name__}:nope"], engine="tpl")
+        Templates(macros=[f"{__name__}:nope"])
 
 
 @pytest.mark.parametrize(
@@ -988,7 +982,7 @@ def test_an_included_query_ends_where_its_sql_ends(
             "outer.sql": "SELECT n FROM tpl.include('inner.sql') AS i",
         },
     )
-    db = Database("sqlite://", templates=Templates(tmp_path, engine="tpl"))
+    db = Database("sqlite://", templates=tmp_path)
     statement = str(db.sql("outer.sql").statement)
     expected = "SELECT n FROM " + included + " AS i"  # noqa: S608 - the test's own SQL
     assert statement.split("\n", 1)[1] == expected
@@ -1106,7 +1100,7 @@ def test_an_included_template_reads_paths_too(tmp_path: Path) -> None:
             "outer.sql": "SELECT s FROM tpl.include('inner.sql') AS i",
         },
     )
-    db = Database("sqlite://", templates=Templates(tmp_path, engine="tpl"))
+    db = Database("sqlite://", templates=tmp_path)
     with db.connect():
         query = db.sql("outer.sql", c=Criteria(teams=[], search="x"))
         assert query.scalars().one() == "x"
@@ -1544,7 +1538,7 @@ def test_an_sql_macro_calls_another(macro_file: Path) -> None:
 
 
 def test_sql_macros_run(macro_file: Path, db: Database, tmp_path: Path) -> None:
-    db.templates = Templates(tmp_path, macros=[str(macro_file)], engine="tpl")
+    db.templates = Templates(tmp_path, macros=[str(macro_file)])
     write(
         tmp_path,
         {
@@ -1612,7 +1606,7 @@ def test_an_sql_macro_cannot_share_a_name(macro_file: Path, tmp_path: Path) -> N
     other = tmp_path / "other.sql"
     other.write_text("SELECT TRUE AS for_tenant FROM t;\n")
     with pytest.raises(MacroDefinitionError, match="another macro has that name"):
-        Templates(macros=[macro_file, other], engine="tpl")
+        Templates(macros=[macro_file, other])
 
 
 def test_an_sql_macro_does_not_run_from_python(macro_file: Path) -> None:
@@ -1643,7 +1637,7 @@ def test_an_include_in_brackets_of_its_own_adds_none(tmp_path: Path) -> None:
             ),
         },
     )
-    db = Database("sqlite://", templates=Templates(tmp_path, engine="tpl"))
+    db = Database("sqlite://", templates=tmp_path)
     assert str(db.sql("outer.sql").statement).split("\n", 1)[1] == (
         "WITH one AS (SELECT 1 AS n\n)\nSELECT n FROM (SELECT 1 AS n\n) AS i"
     )
@@ -1722,7 +1716,7 @@ def test_a_file_of_macros_among_the_templates_is_not_one(tmp_path: Path) -> None
             "tags.sql": "SELECT 1 WHERE tpl.array_match(f.tags, :f.v, :f.x)",
         },
     )
-    templates = Templates(tmp_path, macros=[tmp_path / "_macros.sql"], engine="tpl")
+    templates = Templates(tmp_path, macros=[tmp_path / "_macros.sql"])
     assert templates.names() == ["tags.sql"]
     Database("sqlite://", templates=templates).sql.check()
 
@@ -1730,8 +1724,7 @@ def test_a_file_of_macros_among_the_templates_is_not_one(tmp_path: Path) -> None
 def test_check_reads_the_body_of_a_macro_nothing_calls(tmp_path: Path) -> None:
     write(tmp_path, {"_macros.sql": "SELECT tpl.nope(x) AS unused FROM x;\n"})
     db = Database(
-        "sqlite://",
-        templates=Templates(tmp_path, macros=[tmp_path / "_macros.sql"], engine="tpl"),
+        "sqlite://", templates=Templates(tmp_path, macros=[tmp_path / "_macros.sql"])
     )
     with pytest.raises(UnknownMacroError, match=r"tpl\.nope in _macros\.sql:1"):
         db.sql.check()
@@ -1845,9 +1838,7 @@ def test_an_inline_value_is_read_through_a_path() -> None:
 def test_an_inline_value_runs_and_binds_nothing(tmp_path: Path) -> None:
     write(tmp_path, {"make.sql": "CREATE TABLE :name (id INT)"})
     db = Database(
-        "sqlite://",
-        engine_args={"poolclass": sa.StaticPool},
-        templates=Templates(tmp_path, engine="tpl"),
+        "sqlite://", engine_args={"poolclass": sa.StaticPool}, templates=tmp_path
     )
     with db.connect():
         statement = cast(
@@ -1926,9 +1917,7 @@ def test_a_file_macro_runs(tmp_path: Path) -> None:
     db = Database(
         "sqlite://",
         templates=Templates(
-            tmp_path / "sql",
-            macros=[tenant_macro(tmp_path / "tenant.sql")],
-            engine="tpl",
+            tmp_path / "sql", macros=[tenant_macro(tmp_path / "tenant.sql")]
         ),
     )
     with db.connect():
@@ -1999,7 +1988,7 @@ def test_a_file_macro_in_a_file_of_macros_is_registered_once(tmp_path: Path) -> 
         },
     )
     templates = Templates(
-        tmp_path, macros=[tenant_macro(tmp_path / "tenant.macros.sql")], engine="tpl"
+        tmp_path, macros=[tenant_macro(tmp_path / "tenant.macros.sql")]
     )
     assert isinstance(templates.macros["for_tenant"], sql_module.FileMacro)
     assert isinstance(templates.macros["other"], sql_module.SqlMacro)
@@ -2028,7 +2017,7 @@ def test_a_template_names_the_parameters_a_call_passes(tmp_path: Path) -> None:
     def of_tenant(u: Sql, tenant: Param) -> dict[str, Any]:
         return {"tenant_id": tenant.value}
 
-    templates = Templates(tmp_path, macros=[of_tenant], engine="tpl")
+    templates = Templates(tmp_path, macros=[of_tenant])
     template = templates.macro_engine.get("outer.sql")
 
     assert template.parameters() == {"team", "q", "filters", "tenant", "x", "limit"}

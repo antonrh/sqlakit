@@ -21,10 +21,6 @@ ORDER BY tpl.order_by(:sort, id, name)
 
 Values are bound, so they never reach the SQL text itself.
 
-This syntax is the `tpl` engine, which `Templates(path, engine="tpl")` turns
-on. The default engine reads `Jinja` templates, the way SQLAKit did before
-0.21: see [Jinja templates](#jinja-templates).
-
 ### Why this syntax?
 
 A template is valid SQL, and the syntax exists for that. `tpl.if_set(...)` is
@@ -43,21 +39,16 @@ statements between the lines.
 
 ## Template directories
 
-Set the template directory with `templates=` when you create the database,
-and the engine that reads it:
+Set the template directory with `templates=` when you create the database:
 
 ```python
 from pathlib import Path
 
 from sqlakit import Database
-from sqlakit.sql import Templates
 
 BASE_DIR = Path(__file__).parent / "sql"
 
-db = Database(
-    "postgresql+psycopg://localhost/app",
-    templates=Templates(BASE_DIR, engine="tpl"),
-)
+db = Database("postgresql+psycopg://localhost/app", templates=BASE_DIR)
 ```
 
 If you use the registry, pass the same argument to `configure()`:
@@ -66,13 +57,12 @@ If you use the registry, pass the same argument to `configure()`:
 from pathlib import Path
 
 from sqlakit import db
-from sqlakit.sql import Templates
 
 BASE_DIR = Path(__file__).parent / "sql"
 
 db.configure(
     "postgresql+psycopg://localhost/app",
-    templates=Templates(BASE_DIR, engine="tpl"),
+    templates=BASE_DIR,
 )
 ```
 
@@ -96,14 +86,14 @@ way:
 `db.sql(name)` is a shorthand for `from_file`, and the one you'll use most of
 the time. The other two are covered below.
 
-`Templates` takes the rest of the settings:
+For anything beyond the directory, pass a `Templates` object:
 
 ```python
+from sqlakit.sql import Templates
+
 db = Database(
     DB_URL,
-    templates=Templates(
-        BASE_DIR, engine="tpl", auto_reload=DEBUG, macros=["app.sql.macros"]
-    ),
+    templates=Templates(BASE_DIR, auto_reload=DEBUG, macros=["app.sql.macros"]),
 )
 ```
 
@@ -111,7 +101,7 @@ db = Database(
 A file of macros is read once, so restart the server after changing one.
 `macros` adds [macros of your own](#macros-of-your-own). `namespace` renames
 `tpl`, for a database that has a real schema of that name:
-`Templates(BASE_DIR, engine="tpl", namespace="q")` reads `q.if_set(...)`.
+`Templates(BASE_DIR, namespace="q")` reads `q.if_set(...)`.
 
 ## Row reads
 
@@ -273,10 +263,9 @@ query = db.sql.from_string("SELECT id FROM users WHERE team = :team", team="red"
 ids = query.scalars().all()
 ```
 
-It reads the engine `templates=` names, so a database with no template
-directory still says which one: `templates=Templates(engine="tpl")`. It can't
-`tpl.include` a file without a directory. Grep for it when you want to find
-every place that builds SQL from strings.
+This is the only call that works without `templates=`, and it can't
+`tpl.include` a file without it. Grep for it when you want to find every place
+that builds SQL from strings.
 
 A `:name` the call passes no value for raises `StrayParameterError` before the
 query runs, naming the parameter. A driver's `?` or `%s` binds nothing here:
@@ -503,8 +492,8 @@ Register the macros with the templates, as objects or by the module they live
 in:
 
 ```python
-Templates(BASE_DIR, engine="tpl", macros=[owned_by, search])
-Templates(BASE_DIR, engine="tpl", macros=["app.sql.macros"])
+Templates(BASE_DIR, macros=[owned_by, search])
+Templates(BASE_DIR, macros=["app.sql.macros"])
 ```
 
 A macro calls another as a template does, through `tpl`. It passes a `Sql` it
@@ -566,7 +555,7 @@ and nothing registers it. It isn't a template itself, so `db.sql(...)` won't
 read it. A file elsewhere goes in `macros=` by its path, next to the rest:
 
 ```python
-Templates(BASE_DIR, engine="tpl", macros=["app.sql.macros", SHARED_DIR / "tenant.sql"])
+Templates(BASE_DIR, macros=["app.sql.macros", SHARED_DIR / "tenant.sql"])
 ```
 
 The file is SQL a linter reads like a template, with each argument declared as
@@ -807,9 +796,9 @@ PostgreSQL one. Run the command again when a macro changes, and
 
 ## Jinja templates
 
-`Templates(path)` without `engine=` reads `Jinja` templates, as SQLAKit did
-before 0.21, and so does a path passed as `templates=` alone. Install the
-extra that reads them:
+A project that wrote its templates in `Jinja` before SQLAKit 0.21 keeps them
+working for one release with `engine="jinja"`. Install the extra that reads
+them:
 
 ```console
 $ pip install "sqlakit[sql]"
@@ -817,21 +806,19 @@ $ pip install "sqlakit[sql]"
 
 ```python
 from sqlakit import Database
+from sqlakit.sql import Templates
 
-db = Database("sqlite://", templates="app/sql")
-
-with db.connect():
-    db.sql.from_string("SELECT {{ n }} AS n", n=1).one()
+db = Database("sqlite://", templates=Templates("app/sql", engine="jinja"))
 ```
 
-`filters=` and `globals=` go to the `Jinja` environment, and `Filter(func,
-bind=True)` registers a filter that writes SQL of its own. A `Templates`
-reads one engine: `macros=` and `namespace=` need `engine="tpl"`, and
-`filters=` and `globals=` are refused with it. `sqlakit check`, `export` and
-`sqlakit-lsp` read only `tpl` templates, and leave a `Jinja` directory alone.
+The templates render the way they did, with `filters=` and `globals=`, and
+`Templates` raises a `DeprecationWarning`. The mode goes in 0.22. A
+`Templates` reads one engine: `macros=` and `namespace=` are refused with
+`engine="jinja"`, and `filters=` and `globals=` without it. `sqlakit check`,
+`export` and `sqlakit-lsp` leave a `Jinja` directory alone.
 
-To move a project to `tpl`, write the new templates in a directory of their
-own and point the database at it once they are all there. The
+Move the templates to a new directory of `tpl` templates, and point the
+database at it once they are all there. The
 [`migrate-from-jinja`](https://github.com/sqlakit/sqlakit/tree/main/.claude/skills/migrate-from-jinja)
 skill has the mapping from `Jinja` to macros, and how to compare the old SQL
 with the new.

@@ -31,7 +31,7 @@ HERE = Path(__file__).parent
 
 db = Database(
     os.environ["DATABASE_URL"],
-    templates=Templates(HERE / "sql", macros=[HERE / "_macros.sql"], engine="tpl"),
+    templates=Templates(HERE / "sql", macros=[HERE / "_macros.sql"]),
 )
 """
 
@@ -84,7 +84,6 @@ db = Database(
         BASE_DIR,
         macros=["shop.macros", BASE_DIR / "_macros.sql"],
         namespace="q",
-        engine="tpl",
     ),
 )
 raise RuntimeError("imported")
@@ -152,22 +151,22 @@ def test_pyproject_overrides_what_the_code_says(project: Path) -> None:
     ("db", "namespace", "origin"),
     [
         (
-            'NAMESPACE = "t"\nTemplates("sql", namespace=NAMESPACE, engine="tpl")\n',
+            'NAMESPACE = "t"\nTemplates("sql", namespace=NAMESPACE)\n',
             "t",
             "app/db.py:2",
         ),
         (
-            'from .settings import NAMESPACE\nTemplates("sql", namespace=NAMESPACE, engine="tpl")\n',
+            'from .settings import NAMESPACE\nTemplates("sql", namespace=NAMESPACE)\n',
             "t",
             "app/db.py:2",
         ),
         (
-            'from . import settings\nTemplates("sql", namespace=settings.NAMESPACE, engine="tpl")\n',
+            'from . import settings\nTemplates("sql", namespace=settings.NAMESPACE)\n',
             "t",
             "app/db.py:2",
         ),
         (
-            'import os\nTemplates("sql", namespace=os.environ["NAMESPACE"], engine="tpl")\n',
+            'import os\nTemplates("sql", namespace=os.environ["NAMESPACE"])\n',
             "t",
             (
                 "the templates' calls, as app/db.py:2 passes it in a way the "
@@ -251,28 +250,23 @@ def test_a_project_with_no_templates_to_find_is_refused(
 def test_jinja_templates_are_left_to_jinja(tmp_path: Path) -> None:
     (tmp_path / "sql").mkdir()
     (tmp_path / "sql" / "old.sql").write_text("SELECT {{ x }}")
-    code = (
-        "from sqlakit import Database\n"
-        "from sqlakit.sql import Templates\n"
-        "old = Templates('sql')\n"
-        "Database('sqlite://', templates='sql')\n"
-    )
+    code = "from sqlakit.sql import Templates\nold = Templates('sql', engine='jinja')\n"
     (tmp_path / "db.py").write_text(code)
 
     with pytest.raises(ProjectConfigError) as raised:
         load_project(tmp_path)
     assert str(raised.value) == (
-        "Cannot read the project's templates: the templates the code builds "
-        "(db.py:3, db.py:4) are Jinja, the default engine, which `sqlakit check`, "
-        "`export` and the editor do not read: they read "
-        "`Templates(path, engine='tpl')`."
+        "Cannot read the project's templates: the templates of "
+        "`Templates(engine='jinja')` (db.py:2) are Jinja, which "
+        "`sqlakit check`, `export` and the editor do not read: move them to `tpl`, "
+        "as the migrate-from-jinja skill describes."
     )
 
     (tmp_path / "new").mkdir()
-    (tmp_path / "db.py").write_text(code + "new = Templates('new', engine='tpl')\n")
+    (tmp_path / "db.py").write_text(code + "new = Templates('new')\n")
     project = load_project(tmp_path)
     assert project.templates.paths == (tmp_path / "new",)
-    assert project.found[-1] == "jinja: not read (db.py:3, db.py:4)"
+    assert project.found[-1] == "jinja: not read (db.py:2)"
 
 
 @pytest.fixture
@@ -512,7 +506,7 @@ def test_a_call_under_tpl_is_marked_when_the_namespace_is_another(
     (tmp_path / "sql" / "q.sql").write_text(
         "SELECT 1 WHERE t.if_set(:a, TRUE) AND tpl.if_set(:b, TRUE) -- tpl.when(\n"
     )
-    (tmp_path / "db.py").write_text('Templates("sql", namespace="t", engine="tpl")\n')
+    (tmp_path / "db.py").write_text('Templates("sql", namespace="t")\n')
 
     assert main(["check", "--project", str(tmp_path)]) == 1
     assert capsys.readouterr().out.splitlines()[5:] == [
@@ -640,9 +634,9 @@ def test_a_template_that_is_not_utf8_is_a_problem(
 @pytest.mark.parametrize(
     "spelled",
     [
-        'Templates(Path("queries"), engine="tpl")',
-        'Templates(BASE / Path("queries"), engine="tpl")',
-        'Templates(BASE / "queries", engine="tpl")',
+        'Templates(Path("queries"))',
+        'Templates(BASE / Path("queries"))',
+        'Templates(BASE / "queries")',
     ],
 )
 def test_a_path_is_read_however_the_code_spells_it(
@@ -664,7 +658,7 @@ def test_the_dialect_is_the_one_of_the_database_with_the_templates(
     (tmp_path / "conftest.py").write_text('Database("sqlite://")\n')
     (tmp_path / "a.py").write_text('Database("mysql://x/y")\n')
     (tmp_path / "b.py").write_text(
-        'Database("postgresql://x/y", templates=Templates("sql", engine="tpl"))\n'
+        'Database("postgresql://x/y", templates=Templates("sql"))\n'
     )
 
     assert load_project(tmp_path).dialect == "postgresql"
@@ -676,7 +670,7 @@ def test_the_namespace_is_guessed_in_the_sql_directories_found(
     (tmp_path / "sql").mkdir()
     (tmp_path / "sql" / "q.sql").write_text("SELECT 1 WHERE q.if_set(:a, TRUE)")
     (tmp_path / "db.py").write_text(
-        "import settings\nTemplates(settings.SQL_DIR, namespace=settings.NAMESPACE, engine='tpl')\n"
+        "import settings\nTemplates(settings.SQL_DIR, namespace=settings.NAMESPACE)\n"
     )
 
     assert load_project(tmp_path).templates.namespace == "q"

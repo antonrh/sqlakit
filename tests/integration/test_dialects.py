@@ -19,7 +19,6 @@ from sqlakit import Database, TransactionRolledBackError
 from sqlakit.asyncio import Database as AsyncDatabase
 from sqlakit.asyncio.orm import ModelMixin as AsyncModelMixin
 from sqlakit.orm import ModelMixin, SoftDeletes
-from sqlakit.sql import Templates
 
 QUOTES = {"postgres": '"', "mysql": "`", "mariadb": "`", "oracle": '"'}
 """What each dialect wraps an identifier in, when one has to be wrapped."""
@@ -215,7 +214,7 @@ def _templates(db: Database, tmp_path: Path) -> None:
     (tmp_path / "events" / "named.sql").write_text(
         "SELECT name FROM events WHERE id IN :ids ORDER BY tpl.identifier(:column)"
     )
-    db.templates = Templates(tmp_path, engine="tpl")
+    db.templates = tmp_path
 
 
 @pytest.mark.usefixtures("_templates")
@@ -255,7 +254,7 @@ def _macro_templates(db: Database, tmp_path: Path) -> None:
         "WHERE id IN :ids AND tpl.if_set(:search, tpl.icontains(name, :search), 1 = 1)\n"
         "ORDER BY tpl.order_by(:order_by, id, name)"
     )
-    db.templates = Templates(tmp_path, engine="tpl")
+    db.templates = tmp_path
 
 
 @pytest.mark.usefixtures("_macro_templates")

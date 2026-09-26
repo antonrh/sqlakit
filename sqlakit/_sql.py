@@ -6,6 +6,7 @@ import importlib.util
 import inspect
 import itertools
 import re
+import warnings
 from collections.abc import Mapping, Sized
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -2626,7 +2627,7 @@ def search(q: Param, *columns: Sql) -> str:
 
 
 Engine = Literal["tpl", "jinja"]
-"""How templates are read: `jinja`, the default, or `tpl`, SQL with macros."""
+"""How templates are read: `tpl`, SQL with macros, or `jinja`, until 0.22."""
 
 _preparer: ContextVar[Any] = ContextVar("sqlakit.identifier_preparer")
 """The preparer of the database a Jinja template is rendering for."""
@@ -2635,8 +2636,12 @@ _preparer: ContextVar[Any] = ContextVar("sqlakit.identifier_preparer")
 class Filter:
     """A filter of a Jinja template, registered the way jinja2sql registers one.
 
+    Deprecated with `Templates(engine="jinja")`: a macro takes its place.
+
     ```python
-    Templates("app/sql", filters={"in_span": Filter(in_span, bind=True)})
+    Templates(
+        "app/sql", engine="jinja", filters={"in_span": Filter(in_span, bind=True)}
+    )
     ```
 
     ``bind=True`` calls the filter with a jinja2sql `Binder` as its first
@@ -2658,34 +2663,39 @@ class Filter:
 class Templates:
     """The directory a database's SQL templates live in, and how they render.
 
-    ``engine`` says how a template is written. `jinja`, the default, reads
-    `Jinja` with its ``filters`` and ``globals``, and needs `sqlakit[sql]`.
-    `tpl` reads SQL with `:name` parameters and `tpl.<macro>(...)` calls:
+    A path is enough; the object is for the rest:
 
     ```python
-    db = Database(DB_URL, templates=Templates("app/sql", engine="tpl"))
+    db = Database(DB_URL, templates=Templates("app/sql", auto_reload=DEBUG))
     ```
 
     ``auto_reload`` reads a template again when its file changes, which a
     development server wants and a production one does not.
 
-    ``macros`` are the ones a `tpl` template calls beside the built-in ones,
-    which `sqlakit macros` lists:
+    A template is SQL with `:name` parameters and `tpl.<macro>(...)` calls.
+    ``macros`` are the ones an application adds to the built-in ones, which
+    `sqlakit macros` lists:
 
     ```python
-    Templates("app/sql", engine="tpl", macros=[for_accounts])
-    Templates("app/sql", engine="tpl", macros=["app.sql.macros"])
+    Templates("app/sql", macros=[for_accounts])
+    Templates("app/sql", macros=["app.sql.macros"])  # every macro of a module
     ```
 
     ``namespace`` is the schema name calls are written under, `tpl` unless a
-    real schema has that name: `namespace="q"` reads `q.if_set(...)`.
+    real schema has that name: `Templates("app/sql", namespace="q")` reads
+    `q.if_set(...)`.
+
+    ``engine="jinja"`` reads the templates as `Jinja`, the way SQLAKit 0.20
+    did, with its ``filters`` and ``globals``, and needs `sqlakit[sql]`. It is
+    deprecated, and goes in 0.22: it is there so a project can upgrade first
+    and move its templates after.
     """
 
-    def __init__(  # noqa: PLR0913 - the options of both engines
+    def __init__(  # noqa: PLR0913 - the options of two engines, for one release
         self,
         path: PathLike | Sequence[PathLike] = (),
         *,
-        engine: Engine = "jinja",
+        engine: Engine = "tpl",
         auto_reload: bool = False,
         macros: Iterable[Macro | str | Path] = (),
         namespace: str = NAMESPACE,
@@ -2707,32 +2717,34 @@ class Templates:
         self.filters = dict(filters or {})
         self.globals = dict(globals or {})
         if engine == "jinja":
-            self._check_jinja(macros, namespace)
+            self._jinja(macros, namespace)
             self.macros: dict[str, Macro] = {}
             return
         if self.filters or self.globals:
             msg = (
-                "`filters` and `globals` are for templates of Jinja, the default "
-                "engine: a template of `tpl` calls a macro, which `macros` registers"
+                "`filters` and `globals` are for `engine='jinja'`: a template of "
+                "`tpl` calls a macro, which `macros` registers"
             )
             raise ValueError(msg)
         self.macros = registered([*macros, *self._macro_files()])
 
-    def _check_jinja(
-        self, macros: Iterable[Macro | str | Path], namespace: str
-    ) -> None:
-        """Check the options of the Jinja engine.
+    def _jinja(self, macros: Iterable[Macro | str | Path], namespace: str) -> None:
+        """Check the options of a Jinja engine, and say that it is going.
 
         Raises:
             ValueError: for an option of the `tpl` engine.
             AsyncFilterError: for a filter or a global to be awaited.
 
         """
+        warnings.warn(
+            "`Templates(engine='jinja')` is deprecated and goes in SQLAKit 0.22: "
+            "move the templates to `:name` parameters and `tpl.` macros, as the "
+            "migrate-from-jinja skill describes",
+            DeprecationWarning,
+            stacklevel=3,
+        )
         if list(macros) or namespace != NAMESPACE:
-            msg = (
-                "`macros` and `namespace` are for templates of `tpl`: pass "
-                "`engine='tpl'`, as the default engine reads Jinja"
-            )
+            msg = "`macros` and `namespace` are for `engine='tpl'`, not 'jinja'"
             raise ValueError(msg)
         for name, value in (*self.filters.items(), *self.globals.items()):
             called = value.func if isinstance(value, Filter) else value
@@ -2794,7 +2806,7 @@ class Templates:
 
     @cached_property
     def renderer(self) -> Jinja2SQL:
-        """The Jinja environment of the `jinja` engine, built on first use.
+        """The Jinja environment of `engine="jinja"`, built on first use.
 
         Raises:
             MissingDependencyError: if `sqlakit[sql]` is not installed.
