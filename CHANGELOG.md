@@ -8,6 +8,8 @@
   where it writes `[tool.sqruff.core]`: a table already there stays as it is.
   It turns off `RF02` and `RF03` as well as `RF01`, `AL05` and `ST03`, which
   read a table an SQL macro takes, `tpl.paid(o)`, as a column.
+- `sqlakit export sqruff` writes no comment into
+  `[tool.sqruff.templater.placeholder]`, and drops the one it wrote before.
 
 ## 0.22.0
 

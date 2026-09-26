@@ -79,8 +79,6 @@ def settings(project: Project, pyproject: str, dialect: str | None) -> str:
     table = "\n".join(
         [
             "[tool.sqruff.templater.placeholder]",
-            "# `sqlakit export sqruff` writes what the templates need, and keeps",
-            "# what you add.",
             'param_style = "colon"',
             *(f"{name} = {_toml_value(value)}" for name, value in merged.items()),
         ]
