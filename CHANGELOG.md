@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.22.1
 
 ### Changed
 
@@ -10,6 +10,8 @@
   read a table an SQL macro takes, `tpl.paid(o)`, as a column.
 - `sqlakit export sqruff` writes no comment into
   `[tool.sqruff.templater.placeholder]`, and drops the one it wrote before.
+- The tests run on SQLAlchemy 2.1 as well as 2.0, the integration tests on
+  every database included.
 
 ## 0.22.0
 
