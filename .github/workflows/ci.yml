@@ -85,8 +85,17 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   integration:
-    name: Integration tests
+    name: Integration tests on SQLAlchemy ${{ matrix.sqlalchemy.name }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sqlalchemy:
+          - name: locked
+            install: 'true'
+          # sqlmodel, a dev dependency, holds the lockfile below 2.1.
+          - name: '2.1'
+            install: 'uv pip install "sqlalchemy[asyncio]~=2.1.1"'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -97,14 +106,17 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv sync --all-extras
+      - name: Take SQLAlchemy ${{ matrix.sqlalchemy.name }}
+        run: ${{ matrix.sqlalchemy.install }}
       - name: Run integration tests
-        run: uv run pytest tests/integration
+        run: uv run --no-sync pytest tests/integration
 
   sqlalchemy:
     name: Tests on SQLAlchemy ${{ matrix.sqlalchemy.name }}
     runs-on: ubuntu-latest
-    # The lockfile tests one release. These are the ends of the range:
-    # the floor `pyproject.toml` promises, and what is coming next.
+    # The lockfile tests one release of 2.0, as sqlmodel, a dev dependency,
+    # holds it below 2.1. These are the rest of the range: the floor
+    # `pyproject.toml` promises, the 2.1 release, and what is coming next.
     continue-on-error: ${{ matrix.sqlalchemy.upcoming || false }}
     strategy:
       fail-fast: false
@@ -113,6 +125,8 @@ jobs:
           # Keep in step with the floor in `pyproject.toml`.
           - name: '2.0.22'
             install: 'uv pip install "sqlalchemy[asyncio]==2.0.22"'
+          - name: '2.1'
+            install: 'uv pip install "sqlalchemy[asyncio]~=2.1.1"'
           - name: main
             upcoming: true
             # Through pip: `uv pip` refuses SQLAlchemy's own metadata, which
