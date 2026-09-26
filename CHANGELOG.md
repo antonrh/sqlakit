@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.21.0
 
 ### Added
 
@@ -47,8 +47,6 @@
 - `sqlakit_models = app` in the pytest settings imports every `models` module
   under the package before the plugin creates the tables, so a run of a few
   tests has them all.
-- An editor server, `sqlakit-lsp`, is on its way as a package of its own. It
-  isn't released yet.
 
 ### Changed
 
