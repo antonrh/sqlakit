@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- `sqlakit export sqruff` asks `sqruff`, when it's installed, which parameter
+  names its dialect keeps. A template on SQLite with `:exclude` or `:row` was
+  unparsable to `sqruff`, since SQLAlchemy doesn't keep those words, and
+  `sqruff fix` broke the lines around it.
+
 ### Removed
 
 - `tpl.when`. Its argument was a clause, not an expression, so a template with

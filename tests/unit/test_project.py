@@ -421,6 +421,37 @@ def test_sqruff_reads_a_template_with_what_export_wrote(project: Path) -> None:
     assert "Unparsable" not in ran.stdout + ran.stderr
 
 
+def test_export_gives_a_value_to_a_word_the_dialect_keeps(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import shutil
+    import subprocess
+
+    # SQLAlchemy keeps neither word, and sqruff's SQLite keeps both.
+    (project / "sql" / "kept.sql").write_text(
+        "SELECT * FROM t WHERE tpl.in_list(t.status, :statuses, :exclude)\n"
+        "  AND t.kind = :row.kind\n"
+    )
+    assert main(["export", "sqruff", "--dialect", "sqlite"]) == 0
+    written = (project / "pyproject.toml").read_text()
+    assert 'exclude = "1"\n' in written
+    assert 'row = "row_"\n' in written
+    sqruff = shutil.which("sqruff")
+    assert sqruff is not None
+    ran = subprocess.run(  # noqa: S603 - the linter the project installs
+        [sqruff, "lint", "--parsing-errors", "sql/kept.sql"],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert "Unparsable" not in ran.stdout + ran.stderr
+
+    # Without sqruff, the words SQLAlchemy keeps decide, and the check agrees.
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    assert main(["export", "sqruff", "--check"]) == 0
+
+
 def test_check_passes_a_file_of_macros_among_the_templates(
     app: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -48,7 +48,7 @@ from .exceptions import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Collection, Iterable, Iterator
 
 __all__ = ["Problem", "Project", "load_project"]
 
@@ -212,7 +212,23 @@ class Project:
             if found.group("macro")
         ]
 
-    def placeholder_values(self) -> dict[str, str]:
+    def parameter_names(self) -> set[str]:
+        """Return the name of every `:parameter` the templates and macros read."""
+        names: set[str] = set()
+        for path in self._linted_files():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            names.update(
+                found.group("param")
+                for found in _PARAMETER_IN_TEXT.finditer(text)
+                if found.group("param")
+            )
+        return names
+
+    def _linted_files(self) -> set[Path]:
+        paths = [self.path_of(name) for name in self.templates.names()]
+        return {*(one for one in paths if one is not None), *self.macro_files()}
+
+    def placeholder_values(self, reserved: Iterable[str] = ()) -> dict[str, str]:
         """Return a value for each parameter a linter cannot read by its name.
 
         With no value, the `placeholder` templater writes a parameter's name in
@@ -221,12 +237,14 @@ class Project:
         writes to, a linter reads only `@stage/path`,
         and inside `SAMPLE (...)` only a number. A name SQL reserves reads as
         neither, `LIMIT :limit` reading `LIMIT limit`, so it gets `1`, or its
-        name with `_` after it when a path follows, `:order.id`.
+        name with `_` after it when a path follows, `:order.id`. ``reserved``
+        adds the words a linter's dialect keeps beside those.
         """
         values: dict[str, str] = {}
-        paths = [self.path_of(name) for name in self.templates.names()]
-        for path in {*(one for one in paths if one is not None), *self.macro_files()}:
-            placeholders_of(path.read_text(encoding="utf-8", errors="replace"), values)
+        words = RESERVED | {word.lower() for word in reserved}
+        for path in self._linted_files():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            placeholders_of(text, values, words)
         return dict(sorted(values.items()))
 
     def macro_files(self) -> list[Path]:
@@ -258,7 +276,9 @@ class Project:
         return found
 
 
-def placeholders_of(text: str, values: dict[str, str]) -> dict[str, str]:
+def placeholders_of(
+    text: str, values: dict[str, str], reserved: Collection[str] = RESERVED
+) -> dict[str, str]:
     """Add to ``values`` what a linter needs for each parameter of the text.
 
     See `Project.placeholder_values`, which reads every template with it.
@@ -276,7 +296,7 @@ def placeholders_of(text: str, values: dict[str, str]) -> dict[str, str]:
             values[param] = "@stage/path"
         elif SAMPLE_AFTER.search(before):
             values[param] = "10"
-        elif param.lower() in RESERVED:
+        elif param.lower() in reserved:
             # `COPY INTO :table` needs a name, and other positions a value.
             named = dotted or inline_position(before)
             values.setdefault(param, f"{param}_" if named else "1")

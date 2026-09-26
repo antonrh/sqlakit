@@ -632,7 +632,9 @@ wrote pyproject.toml
 $ sqruff lint app/sql
 ```
 
-Run it again when a template gains a parameter named like a keyword.
+Which words a dialect keeps is asked of `sqruff` itself when it's installed,
+since its dialects keep words SQLAlchemy doesn't: `exclude` and `row` on
+SQLite. Run it again when a template gains a parameter named like a keyword.
 `sqlakit export sqruff --check` fails in CI when it's out of date. It writes
 `[tool.sqruff.core]` only when the table is missing, so the rules you set there
 stay yours.
