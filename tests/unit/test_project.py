@@ -376,6 +376,7 @@ def test_export_writes_what_sqruff_needs_into_pyproject(
         "[tool.sqruff.core]\n"
         'dialect = "snowflake"\n'
         'templater = "placeholder"\n'
+        'rules = "all"\n'
         'exclude_rules = "RF01,RF02,RF03,AL05,ST03"\n'
         "\n"
         "[tool.sqruff.templater.placeholder]\n"
@@ -429,13 +430,8 @@ def test_every_rule_passes_a_macro_that_takes_a_table(project: Path) -> None:
     (project / "sql" / "team.sql").write_text(
         "SELECT\n    u.id,\n    u.name\nFROM users AS u\nWHERE tpl.for_team(u)\n"
     )
+    # The settings export writes turn on every rule.
     assert main(["export", "sqruff", "--dialect", "postgres"]) == 0
-    pyproject = project / "pyproject.toml"
-    pyproject.write_text(
-        pyproject.read_text().replace(
-            'templater = "placeholder"\n', 'templater = "placeholder"\nrules = "all"\n'
-        )
-    )
     sqruff = shutil.which("sqruff")
     assert sqruff is not None
     # JSON, the one report of the same shape on GitHub Actions as anywhere.
