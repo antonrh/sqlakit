@@ -59,11 +59,11 @@ with db.autocommit():  # AUTOCOMMIT, no transaction held open
 
 ## SQL templates
 
-Templates are `Jinja` files, so they can hold anything from a one-line query to
-a report with window functions or a recursive CTE.
-[jinja2sql](https://github.com/antonrh/jinja2sql) turns every `{{ name }}` into
-a bound parameter (`:name__1`), so values never reach the SQL text and there
-is no way to inject anything. Requires the `sqlakit[sql]` extra.
+Templates are SQL files with `:name` parameters, so they hold anything from a
+one-line query to a report with window functions or a recursive CTE, and every
+SQL tool reads them as SQL. Values are bound, so they never reach the SQL
+text. What changes per call, an optional
+condition or a sort order, is a macro such as `tpl.if_set(:team, team = :team)`.
 
 ### From a file
 
@@ -71,7 +71,7 @@ is no way to inject anything. Requires the `sqlakit[sql]` extra.
 -- reports/by_team.sql
 SELECT team, count(*) AS members
 FROM users
-WHERE joined_at > {{ since }}
+WHERE joined_at > :since
 GROUP BY team
 ```
 
@@ -98,13 +98,17 @@ type each row is returned as.
 `SQLAKit` adds the template name to the SQL as a comment, so a slow query log
 shows the source file of each query right away.
 
+`sqlakit check` reads every template the project uses and reports a macro call
+that can't work, before the query runs. See [template
+validation](docs/sql.md#template-validation).
+
 ### From a string
 
 ```python
 db.sql.from_string("SELECT count(*) FROM users").scalars().one()
 ```
 
-The same templating, with no directory to configure.
+The same syntax, with no directory to configure.
 
 ## Query builder
 

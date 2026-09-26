@@ -151,11 +151,11 @@ def test_a_soft_delete_is_stamped_by_the_database(events: Database) -> None:
 def templated(events: Database, tmp_path: Path) -> Database:
     (tmp_path / "events").mkdir()
     (tmp_path / "events" / "named.sql").write_text(
-        "SELECT name FROM events WHERE id IN {{ ids }} ORDER BY {{ column | identifier }}"
+        "SELECT name FROM events WHERE id IN :ids ORDER BY tpl.identifier(:column)"
     )
-    (tmp_path / "events" / "dialect.sql").write_text("SELECT {{ dialect }} AS dialect")
+    (tmp_path / "events" / "dialect.sql").write_text("SELECT :dialect AS dialect")
     (tmp_path / "events" / "payload.sql").write_text(
-        "UPDATE events SET payload = {{ payload }} WHERE id = {{ id }}"
+        "UPDATE events SET payload = :payload WHERE id = :id"
     )
     events.templates = tmp_path
     return events

@@ -26,6 +26,9 @@ dependencies = [
     "typing-extensions>=4.13",
 ]
 
+[project.scripts]
+sqlakit = "sqlakit._cli:main"
+
 [project.entry-points.pytest11]
 sqlakit = "sqlakit.pytest_plugin"
 
@@ -37,16 +40,9 @@ Documentation = "https://sqlakit.readthedocs.io/en/stable/"
 asyncio = [
     "sqlalchemy[asyncio]>=2.0.22",
 ]
-sql = [
-    "jinja2sql>=0.12.0",
-]
 debug = [
     "sqlparse>=0.6.0",
 ]
-
-[build-system]
-requires = ["uv_build>=0.11,<0.13"]
-build-backend = "uv_build"
 
 [tool.uv.build-backend]
 module-name = "sqlakit"
@@ -58,7 +54,7 @@ default-groups = ["dev", "docs"]
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
-    "ty>=0.0.80",
+    "ty>=0.0.84",
     "ruff>=0.16.6",
     "poethepoet>=0.48.0",
     "anyio>=4.14.2",
@@ -69,7 +65,6 @@ dev = [
     "httpx>=0.28.1",
     "httpx2>=2.10.0",
     "sqlmodel>=0.0.39",
-    "jinja2sql>=0.12.0",
     "pydantic>=2.13.4",
     "sqlparse>=0.6.0",
     "rich>=15.0.0",
@@ -81,6 +76,7 @@ dev = [
     "flask>=3.1.3",
     "dirty-equals>=0.11",
     "codespell>=2.4.3",
+    "sqruff>=0.40.0",
 ]
 docs = [
     "mkdocs>=1.6.1,<2",
@@ -98,8 +94,8 @@ filterwarnings = [
 addopts = "-p pytester"
 # The example is a project of its own, run by tests/examples, not collected here.
 norecursedirs = [
-    "examples/testing_plugin",  # a project of its own, run by tests/examples
-    "tests/projects",           # the projects the plugin tests copy
+    "examples/testing_plugin", # a project of its own, run by tests/examples
+    "tests/projects", # the projects the plugin tests copy
     ".*",
     "build",
     "dist",
@@ -134,39 +130,39 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [
-    "S101",     # tests assert
-    "PLR2004",  # and compare against the values they mean
-    "SLF001",   # they read the internals they are testing
-    "PT012",    # a `raises` block is allowed to set the scene
-    "B018",     # touching an attribute is how a test triggers it
-    "SIM117",   # nested `with` reads better than a long line of them
-    "PLC0415",  # a fixture imports what it is about, where it is about it
-    "DTZ001",   # naive datetimes are fine as fixtures
-    "ARG001",   # a fixture may be requested for its side effect
-    "PT011",    # `raises` without `match` is enough for our own errors
-    "ANN401",   # test helpers take whatever the example hands them
-    "D401",     # test docstrings read as descriptions
-    "N818",     # a test's own exception needs no Error suffix
-    "FBT001",   # parametrised booleans arrive positionally
-    "PLW0108",  # a lambda in a parameter table is deliberate
-    "DTZ005",   # naive datetimes are fine as fixtures
-    "S106",     # the passwords here are fake, and the point of the test
-    "S310",     # the URLs here are the tests' own server
+    "S101", # tests assert
+    "PLR2004", # and compare against the values they mean
+    "SLF001", # they read the internals they are testing
+    "PT012", # a `raises` block is allowed to set the scene
+    "B018", # touching an attribute is how a test triggers it
+    "SIM117", # nested `with` reads better than a long line of them
+    "PLC0415", # a fixture imports what it is about, where it is about it
+    "DTZ001", # naive datetimes are fine as fixtures
+    "ARG001", # a fixture may be requested for its side effect
+    "PT011", # `raises` without `match` is enough for our own errors
+    "ANN401", # test helpers take whatever the example hands them
+    "D401", # test docstrings read as descriptions
+    "N818", # a test's own exception needs no Error suffix
+    "FBT001", # parametrised booleans arrive positionally
+    "PLW0108", # a lambda in a parameter table is deliberate
+    "DTZ005", # naive datetimes are fine as fixtures
+    "S106", # the passwords here are fake, and the point of the test
+    "S310", # the URLs here are the tests' own server
 ]
 "tools/**/*.py" = [
-    "INP001",   # a script, not a package
-    "T201",     # a script that says what it found
+    "INP001", # a script, not a package
+    "T201", # a script that says what it found
 ]
 "examples/**/*.py" = [
-    "INP001",   # examples are read one file at a time, not imported as a package
-    "ARG001",   # FastAPI hands handlers a request they may not use
-    "TC003",    # examples keep their imports where a reader expects them
+    "INP001", # examples are read one file at a time, not imported as a package
+    "ARG001", # FastAPI hands handlers a request they may not use
+    "TC003", # examples keep their imports where a reader expects them
 ]
 "examples/testing_plugin/*.py" = [
-    "S101",     # the example is a test suite, and tests assert
+    "S101", # the example is a test suite, and tests assert
 ]
 "tests/projects/**/*.py" = [
-    "INP001",   # a project the tests copy, not a package of this one
+    "INP001", # a project the tests copy, not a package of this one
 ]
 
 [tool.ty.src]
@@ -209,3 +205,7 @@ default_item_type = "cmd"
 # `froms` is SQLAlchemy's own word for what a SELECT selects from.
 ignore-words-list = "froms"
 skip = "./.venv,./site,./uv.lock,./.git"
+
+[build-system]
+requires = ["uv_build>=0.11,<0.13"]
+build-backend = "uv_build"

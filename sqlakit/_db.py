@@ -72,11 +72,9 @@ class Database(BaseDatabase[sa.Connection, Session]):
         db.sql("reports/by_team.sql", since=since).typed(TeamReport).all()
         ```
 
-        Templates need `sqlakit[sql]`, and nothing else here does, so the layer is
-        imported when it is first reached.
         """
         # Here rather than at the top, so that `import sqlakit` stays free of
-        # the optional layer and of what it imports.
+        # the template engine until a template is asked for.
         from .sql import SQL  # noqa: PLC0415
 
         return SQL(self)

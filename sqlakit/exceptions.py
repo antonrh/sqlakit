@@ -6,7 +6,6 @@ DEFAULT_ALIAS = "default"
 
 __all__ = [
     "AliasInUseError",
-    "AsyncFilterError",
     "BulkQueryError",
     "ConflictingDatabaseUrlError",
     "ConflictingJoinError",
@@ -14,11 +13,16 @@ __all__ = [
     "DatabaseNotConfiguredError",
     "DefaultAliasError",
     "DetachedInstanceError",
+    "InlineValueError",
     "InstanceNotFoundError",
     "InvalidCursorError",
     "InvalidDatabaseConfigError",
     "InvalidNullsError",
     "InvalidOrderFieldError",
+    "InvalidSortStringError",
+    "MacroArgumentError",
+    "MacroDefinitionError",
+    "MacroSyntaxError",
     "MissingConnectionError",
     "MissingDatabaseUrlError",
     "MissingDefaultDatabaseError",
@@ -27,6 +31,8 @@ __all__ = [
     "MissingSessionError",
     "MultipleInstancesFoundError",
     "NullCursorValueError",
+    "ParameterPathError",
+    "ProjectConfigError",
     "RawStatementError",
     "RetryNotSupportedError",
     "SQLAKitError",
@@ -36,7 +42,9 @@ __all__ = [
     "TransactionRolledBackError",
     "UnknownDatabaseError",
     "UnknownFieldError",
+    "UnknownIdentifierError",
     "UnknownImportPathError",
+    "UnknownMacroError",
     "UnorderedPageError",
     "UnregisteredDatabaseError",
 ]
@@ -325,23 +333,14 @@ class SQLNotConfiguredError(SQLAKitError, RuntimeError):
 class TemplateNotFoundError(SQLAKitError, FileNotFoundError):
     """Raised when no configured path holds the template asked for."""
 
-    def __init__(self, template: str, paths: Iterable[object] = ()) -> None:
+    def __init__(
+        self, template: str, paths: Iterable[object] = (), reason: str = ""
+    ) -> None:
         self.template = template
         looked = ", ".join(str(path) for path in paths)
         super().__init__(
-            f"No SQL template named `{template}`. Looked in: {looked or 'nowhere'}."
-        )
-
-
-class AsyncFilterError(SQLAKitError, TypeError):
-    """Raised when a template is given a filter or global that has to be awaited."""
-
-    def __init__(self, name: str) -> None:
-        super().__init__(
-            f"`{name}` is a coroutine function, and templates render "
-            f"synchronously: rendering builds SQL and awaits nothing, in the "
-            f"async API as well. Await the value first, and pass what it "
-            f"returns in the context."
+            f"No SQL template named `{template}`"
+            + (f": {reason}." if reason else f". Looked in: {looked or 'nowhere'}.")
         )
 
 
@@ -352,14 +351,121 @@ class StrayParameterError(SQLAKitError, ValueError):
         self.names = tuple(names)
         where = f"`{template}`" if template else "This SQL"
         listed = ", ".join(f"`:{name}`" for name in self.names)
-        written = ", ".join(f"`{{{{ {name} }}}}`" for name in self.names)
+        passed = ", ".join(f"`{name}=...`" for name in self.names)
         super().__init__(
-            f"{where} reads as though {listed} were a parameter, and nothing "
-            f"binds it. Values come from the template: write {written} and "
-            f"pass them in the context. A colon that belongs to the SQL, "
+            f"{where} reads {listed} as a parameter, and the call passed no "
+            f"value for it: pass {passed}. A colon that belongs to the SQL, "
             f"inside a JSON document or a string that starts with one, is "
             f"written `\\:`."
         )
+
+
+Chain = tuple[tuple[str, int], ...]
+"""The templates one was included from, outermost first, and the line of each call."""
+
+Span = tuple[int, int] | None
+"""Where in its template a problem is, as offsets into the text."""
+
+
+def _included_from(chain: Chain) -> str:
+    """Return where a template was included from, as an error says it."""
+    if not chain:
+        return ""
+    calls = ", from ".join(f"{name}:{line}" for name, line in reversed(chain))
+    return f" (included from {calls})"
+
+
+class MacroSyntaxError(SQLAKitError, ValueError):
+    """Raised when a template cannot be cut into text and macro calls."""
+
+    def __init__(
+        self,
+        template: str = "",
+        line: int = 0,
+        problem: str = "",
+        *,
+        chain: Chain = (),
+        span: Span = None,
+    ) -> None:
+        self.template = template
+        self.line = line
+        self.problem = problem
+        self.chain = chain
+        self.span = span
+        super().__init__(f"{template}:{line}{_included_from(chain)}: {problem}.")
+
+
+class UnknownMacroError(SQLAKitError, ValueError):
+    """Raised when a template calls a `tpl.` macro that nobody registered."""
+
+    def __init__(  # noqa: PLR0913 - where the call is, and what there is
+        self,
+        name: str = "",
+        template: str = "",
+        line: int = 0,
+        available: Iterable[str] = (),
+        *,
+        namespace: str = "tpl",
+        chain: Chain = (),
+        span: Span = None,
+    ) -> None:
+        self.name = name
+        self.template = template
+        self.line = line
+        self.chain = chain
+        self.span = span
+        self.problem = (
+            f"unknown macro {namespace}.{name}; available: "
+            f"{', '.join(sorted(available)) or 'none'}"
+        )
+        super().__init__(
+            f"Unknown macro {namespace}.{name} in {template}:{line}"
+            f"{_included_from(chain)}; available: "
+            f"{', '.join(sorted(available)) or 'none'}. Register one with "
+            f"`Templates(..., macros=[...])`."
+        )
+
+
+class MacroArgumentError(SQLAKitError, ValueError):
+    """Raised when a `tpl.` call has arguments its macro cannot take."""
+
+    def __init__(  # noqa: PLR0913 - what was refused, and where
+        self,
+        name: str = "",
+        problem: str = "",
+        template: str = "",
+        line: int = 0,
+        *,
+        namespace: str = "tpl",
+        chain: Chain = (),
+        span: Span = None,
+    ) -> None:
+        self.name = name
+        self.problem = problem
+        self.template = template
+        self.line = line
+        self.chain = chain
+        self.span = span
+        where = f" in {template}:{line}{_included_from(chain)}" if template else ""
+        super().__init__(f"{namespace}.{name}: {problem}{where}.")
+
+
+class ProjectConfigError(SQLAKitError, ValueError):
+    """Raised when the templates of a project cannot be found or configured."""
+
+    def __init__(self, problem: str = "") -> None:
+        self.problem = problem
+        super().__init__(f"Cannot read the project's templates: {problem}.")
+
+
+class MacroDefinitionError(SQLAKitError, TypeError):
+    """Raised when a function, or a statement of a file, cannot be a macro."""
+
+    def __init__(self, name: str = "", problem: str = "", *, line: int = 1) -> None:
+        self.name = name
+        self.line = line
+        """The line of a file of SQL macros the problem is on."""
+        super().__init__(f"`{name}` cannot be a macro: {problem}.")
 
 
 class RawStatementError(SQLAKitError, TypeError):
@@ -405,6 +511,40 @@ class PageItemsMismatchError(SQLAKitError, TypeError):
         )
 
 
+class InlineValueError(SQLAKitError, ValueError):
+    """Raised when a value to write into the SQL is not one it can take."""
+
+    def __init__(self, value: object = "", problem: str = "") -> None:
+        self.value = value
+        super().__init__(
+            f"`{value}` {problem}. A value written into the SQL rather than bound "
+            f"is checked where it is built: see `Inline`."
+        )
+
+
+class InvalidSortStringError(SQLAKitError, ValueError):
+    """Raised when a sort string asks for a direction or nulls there are not."""
+
+    def __init__(self, field: str = "") -> None:
+        self.field = field
+        super().__init__(
+            f"`{field}` is not a sort string: after the field comes `asc` or "
+            f"`desc`, and after that `nulls_first` or `nulls_last`, in any case "
+            f"convention."
+        )
+
+
+class ParameterPathError(SQLAKitError, ValueError):
+    """Raised when a `:parameter.path` reads something its value does not have."""
+
+    def __init__(self, path: str = "", step: str = "") -> None:
+        self.path = path
+        super().__init__(
+            f"`:{path}` reads `{step}`, and the value before it has no key or "
+            f"attribute of that name."
+        )
+
+
 class UnknownOrderFieldError(SQLAKitError, ValueError):
     """Raised when an ordering names a field the model does not offer."""
 
@@ -413,6 +553,18 @@ class UnknownOrderFieldError(SQLAKitError, ValueError):
         super().__init__(
             f"`{field}` is not something this model orders by. "
             f"It offers: {offered or 'nothing'}."
+        )
+
+
+class UnknownIdentifierError(SQLAKitError, ValueError):
+    """Raised when a template is handed a name it does not take as an identifier."""
+
+    def __init__(self, name: object = None, allowed: Iterable[str] = ()) -> None:
+        self.name = name
+        offered = ", ".join(sorted(allowed))
+        super().__init__(
+            f"`{name}` is not a name this template takes. "
+            + (f"It takes: {offered}." if offered else "Pass a non-empty name.")
         )
 
 

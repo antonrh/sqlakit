@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from ._discovery import import_models
 from ._recording import Recording, check, require_expectation
 from ._registry import db as importable_db
 from .exceptions import UnknownDatabaseError
@@ -81,6 +82,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "hide the test's own block, so the code it calls opens one as in production",
         type="bool",
         default=False,
+    )
+    parser.addini(
+        "sqlakit_models",
+        "import every `models` module under these packages before creating tables",
+        type="linelist",
+        default=[],
     )
     parser.addini(
         "sqlakit_skip_queries_from",
@@ -256,11 +263,23 @@ def sqlakit_metadata() -> sa.MetaData | None:
 
 @pytest.fixture(scope="session")
 def sqlakit_schema(
+    request: pytest.FixtureRequest,
     sqlakit_db: Any,  # noqa: ANN401
     sqlakit_base: Any,  # noqa: ANN401
     sqlakit_metadata: sa.MetaData | None,
 ) -> Iterator[None]:
     """Build the schema for the session, and take it down after.
+
+    A model reaches the metadata when its module is imported, so a run of a
+    few tests may leave out the tables of the models nothing imported.
+    `sqlakit_models` names the packages to import every `models` module of
+    first, the way `import_models` does:
+
+    ```ini
+    [pytest]
+    sqlakit = true
+    sqlakit_models = app
+    ```
 
     Override it to build the schema another way, `Alembic` against a server
     `pytest-docker` started among them:
@@ -269,12 +288,12 @@ def sqlakit_schema(
     @pytest.fixture(scope="session")
     def sqlakit_schema(alembic_config, _postgres):
         alembic.command.upgrade(alembic_config, "head")
-
-    Yield:
+        yield  # the tests run here
         alembic.command.downgrade(alembic_config, "base")
     ```
-
     """
+    for package in request.config.getini("sqlakit_models"):
+        import_models(package)
     with _entered(_schema_blocks(sqlakit_db, sqlakit_base, sqlakit_metadata)):
         yield
 

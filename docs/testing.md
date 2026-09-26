@@ -400,8 +400,20 @@ Ask for `sqlakit_schema`, or the rows go in before the tables exist.
 
 `provisioned_tables()` creates the tables the metadata holds. A model whose
 module was never imported is not in the metadata, so its tables are missing,
-and the failure looks like a bug in the test. If your application keeps models
-next to the features they belong to, import them all first:
+and the failure looks like a bug in the test. A run of a few tests is where it
+shows: the rest of the suite imported the model, and these tests don't.
+
+If your application keeps models next to the features they belong to, name
+the package, and the plugin imports every `models` module under it before it
+creates the tables:
+
+```ini
+[pytest]
+sqlakit = true
+sqlakit_models = app
+```
+
+Without the plugin, import them in your own fixture:
 
 ```python
 from sqlakit import import_models

@@ -7,8 +7,6 @@ from typing import Any, cast
 
 import pytest
 import sqlalchemy as sa
-from jinja2sql import Binder
-from markupsafe import Markup
 from pydantic import BaseModel, ValidationError, ValidationInfo, field_validator
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.orm.exc import MultipleResultsFound, NoResultFound
@@ -18,8 +16,8 @@ import sqlakit
 import sqlakit.asyncio.sql
 import sqlakit.sql
 from sqlakit import (
-    AsyncFilterError,
     Database,
+    MacroSyntaxError,
     MissingConnectionError,
     MissingDependencyError,
     RawStatementError,
@@ -29,41 +27,41 @@ from sqlakit import (
 )
 from sqlakit import _sql as sql_module
 from sqlakit.orm import ModelMixin
-from sqlakit.sql import Filter, Templates
+from sqlakit.sql import Templates
 
 TEMPLATES = {
     "users/active.sql": """
-        SELECT * FROM users WHERE team = {{ team }} ORDER BY id
+        SELECT * FROM users WHERE team = :team ORDER BY id
     """,
     "users/by_ids.sql": """
-        SELECT name FROM users WHERE id IN {{ ids }} ORDER BY id
+        SELECT name FROM users WHERE id IN :ids ORDER BY id
     """,
-    "users/in_clause.sql": """
-        SELECT name FROM users WHERE team IN {{ teams | inclause }} ORDER BY id
+    "users/each.sql": """
+        SELECT name FROM users WHERE team IN (tpl.each(:teams)) ORDER BY id
     """,
     "users/count.sql": """
         SELECT count(*) FROM users
     """,
     "users/ordered.sql": """
-        SELECT name FROM users ORDER BY {{ column | identifier }}
+        SELECT name FROM users ORDER BY tpl.identifier(:column)
     """,
     "users/one.sql": """
-        SELECT name, team FROM users WHERE name = {{ name }}
+        SELECT name, team FROM users WHERE name = :name
     """,
     "users/rename_team.sql": """
-        UPDATE users SET team = {{ to }} WHERE team = {{ from_ }}
+        UPDATE users SET team = :to WHERE team = :from_
     """,
     "users/since.sql": """
-        SELECT name FROM users WHERE joined_at > {{ joined_at }} ORDER BY id
+        SELECT name FROM users WHERE joined_at > :joined_at ORDER BY id
     """,
     "users/dialect.sql": """
-        SELECT {{ dialect }} AS dialect
+        SELECT :dialect AS dialect
     """,
     "users/all.sql": """
         SELECT name FROM users ORDER BY id
     """,
     "users/cast.sql": """
-        SELECT cast(id AS text) || {{ suffix }} FROM users ORDER BY id
+        SELECT cast(id AS text) || :suffix FROM users ORDER BY id
     """,
     "hidden/all.sql": """
         SELECT * FROM hidden ORDER BY id
@@ -155,7 +153,7 @@ def test_a_value_is_bound_rather_than_written_into_the_sql(db: Database) -> None
 def test_sql_written_out_here(db: Database) -> None:
     with db.connect():
         names = db.sql.from_string(
-            "SELECT name FROM users WHERE team = {{ team }} ORDER BY id", team="red"
+            "SELECT name FROM users WHERE team = :team ORDER BY id", team="red"
         )
 
         assert names.scalars().all() == ["b", "d"]
@@ -176,7 +174,7 @@ def test_the_context_is_a_mapping_or_keywords(db: Database) -> None:
             3,
             5,
         ]
-        named = db.sql.from_string("SELECT {{ context }}", context={"context": 7})
+        named = db.sql.from_string("SELECT :context", context={"context": 7})
         assert named.scalars().one() == 7
         assert filters == {"team": "red"}
 
@@ -190,9 +188,9 @@ def test_a_query_reads_a_template_with_a_mapping(db: Database) -> None:
 
 def test_a_list_is_a_list_to_the_database(db: Database) -> None:
     with db.connect():
-        # A bare list expands on this side, `| inclause` on the template's.
+        # A list binds as one expanding parameter, `tpl.each` as one per value.
         assert db.sql("users/by_ids.sql", ids=[1, 3]).scalars().all() == ["a", "c"]
-        assert db.sql("users/in_clause.sql", teams=["red"]).scalars().all() == [
+        assert db.sql("users/each.sql", teams=["red"]).scalars().all() == [
             "b",
             "d",
         ]
@@ -209,11 +207,11 @@ def test_a_colon_the_database_owns_is_left_alone(db: Database) -> None:
     # `::` is a cast on PostgreSQL, not a parameter, and `text()` knows it.
     with db.connect():
         statement = db.sql.from_string(
-            "SELECT name::text FROM users WHERE team = {{ team }}", team="red"
+            "SELECT name::text FROM users WHERE team = :team", team="red"
         ).statement
 
         assert "name::text" in str(statement)
-        assert list(cast("sa.TextClause", statement)._bindparams) == ["team__1"]
+        assert list(cast("sa.TextClause", statement)._bindparams) == ["team"]
         assert db.sql("users/cast.sql", suffix="!").scalars().first() == "1!"
 
 
@@ -350,63 +348,8 @@ def test_a_statement_built_with_sqlalchemy_is_read_the_same_way(
         assert rows.typed(TeamMember).one() == TeamMember(name="b", team="red")
         assert db.sql.from_statement(sa.select(sa.literal(1))).typed(int).one() == 1
 
-        # Nothing is rendered, so `{{ }}` is not read and `:name` is the
-        # statement's own parameter.
-        assert "{{" not in str(rows.statement)
-
-
-def test_a_filter_that_has_to_be_awaited_is_refused() -> None:
-    async def money(value: int) -> str:
-        return f"{value}!"
-
-    # Without the check it renders, and binds the coroutine as the value.
-    with pytest.raises(AsyncFilterError, match="money"):
-        Templates("app/sql", filters={"money": money})
-
-    with pytest.raises(AsyncFilterError, match="rates"):
-        Templates("app/sql", globals={"rates": money})
-
-    with pytest.raises(AsyncFilterError, match="money"):
-        Templates("app/sql", filters={"money": Filter(money, bind=True)})
-
-
-def test_a_bound_filter_writes_sql_and_binds_the_values_in_it(
-    templates: Path,
-) -> None:
-    def in_span(binder: Binder, span: tuple[str, str]) -> Markup:
-        start, end = span
-        return binder.raw(
-            f"BETWEEN {binder.bind('span', start)} AND {binder.bind('span', end)}"
-        )
-
-    db = Database(
-        "sqlite://",
-        engine_args={"poolclass": sa.StaticPool},
-        templates=Templates(
-            templates,
-            filters={
-                "in_span": Filter(in_span, bind=True),
-                # The same wrapper without the flag registers a plain filter.
-                "doubled": Filter(lambda value: value * 2),
-            },
-        ),
-    )
-
-    rows = db.sql.from_string(
-        "SELECT {{ n | doubled }} WHERE at {{ span | in_span }}",
-        n=1,
-        span=("2026-01-01", "2026-02-01"),
-    )
-    statement = cast("sa.TextClause", rows.statement)
-
-    assert str(statement) == "SELECT :n__1  WHERE at BETWEEN :span__2  AND :span__3 "
-    assert statement.compile().params == {
-        "n__1": 2,
-        "span__2": "2026-01-01",
-        "span__3": "2026-02-01",
-    }
-    assert repr(Filter(in_span, bind=True)).startswith("Filter(")
-    db.dispose()
+        # Nothing is rendered: `:name` is the statement's own parameter.
+        assert str(rows.statement) == "SELECT name, team FROM users WHERE name = :name"
 
 
 def test_scalars_read_the_first_column(db: Database) -> None:
@@ -465,18 +408,6 @@ def test_a_writing_template_commits_when_no_transaction_is_open(db: Database) ->
         assert db.sql("users/active.sql", team="green").all() != []
 
 
-def test_a_value_is_never_escaped_on_its_way_to_the_database(db: Database) -> None:
-    # The templates are Jinja, which escapes what it renders, but a value is
-    # bound rather than rendered, so it reaches the database as it was.
-    with db.connect():
-        value = "a & b <c> 'd'"
-
-        assert (
-            db.sql.from_string("SELECT {{ value }}", value=value).scalars().one()
-            == value
-        )
-
-
 def test_a_statement_of_your_own_carries_no_query_filter(db: Database) -> None:
     class Hidden(Base):
         __tablename__ = "hidden"
@@ -524,20 +455,19 @@ def test_a_colon_the_sql_owns_is_caught_where_it_was_written(db: Database) -> No
 
         assert db.sql.from_string(r"""SELECT '{"a"\:1}'""").scalars().one() == '{"a":1}'
 
-        # The other way to reach it: a parameter written as SQLAlchemy binds
-        # one, which a template does not.
-        with pytest.raises(StrayParameterError, match=r"\{\{ name \}\}"):
-            db.sql.from_string("SELECT * FROM users WHERE name = :name", name="b").all()
+        # A parameter the call passed no value for is caught the same way.
+        with pytest.raises(StrayParameterError, match=r"pass `name=\.\.\.`"):
+            db.sql.from_string("SELECT * FROM users WHERE name = :name").all()
 
 
 def test_a_cast_can_follow_a_value(db: Database) -> None:
-    # `{{ id }}::uuid` is how a PostgreSQL template is written, and the
-    # placeholder has to end where the cast begins.
+    # `:id::uuid` is how a PostgreSQL template is written, and `text()` reads
+    # no parameter there unless the cast is set apart from it.
     with db.connect():
-        statement = db.sql.from_string("SELECT {{ n }}::text", n=7).statement
+        statement = db.sql.from_string("SELECT :n::text", n=7).statement
 
-        assert list(cast("sa.TextClause", statement)._bindparams) == ["n__1"]
-        assert "::text" in str(statement)
+        assert list(cast("sa.TextClause", statement)._bindparams) == ["n"]
+        assert str(statement) == "SELECT :n ::text"
 
 
 def test_a_template_needs_a_block_and_no_orm(db: Database) -> None:
@@ -578,7 +508,7 @@ def test_a_statement_stands_in_wherever_sqlalchemy_takes_one(db: Database) -> No
 
         # The other two doors of `db.sql` map onto the model the same way.
         inline = db.sql.from_string(
-            "SELECT * FROM users WHERE team = {{ team }} ORDER BY id", team="red"
+            "SELECT * FROM users WHERE team = :team ORDER BY id", team="red"
         )
         built = sa.text("SELECT * FROM users WHERE name = :name").bindparams(name="b")
 
@@ -617,6 +547,16 @@ def test_a_template_nobody_has_says_where_it_looked(db: Database) -> None:
             db.sql("users/nothing.sql").all()
 
 
+def test_a_file_of_macros_is_not_a_template(db: Database) -> None:
+    with db.connect():
+        with pytest.raises(TemplateNotFoundError) as raised:
+            db.sql("users/_macros.sql").all()
+    assert str(raised.value) == (
+        "No SQL template named `users/_macros.sql`: a file whose name ends in "
+        "`macros.sql` holds macros."
+    )
+
+
 def test_a_database_without_templates_still_runs_sql_written_out(
     templates: Path,
 ) -> None:
@@ -639,16 +579,13 @@ def test_templates_take_more_than_a_path(templates: Path) -> None:
     db = Database(
         "sqlite://",
         engine_args={"poolclass": sa.StaticPool},
-        templates=Templates(
-            [templates],
-            auto_reload=True,
-            globals={"limit": 1},
-            filters={"doubled": lambda value: value * 2},
-        ),
+        templates=Templates([templates], auto_reload=True, namespace="q"),
     )
 
     with db.connect():
-        assert db.sql.from_string("SELECT {{ limit | doubled }}").scalars().one() == 2
+        assert (
+            db.sql.from_string("SELECT q.if_set(:x, 1, 2)", x=None).scalars().one() == 2
+        )
 
     assert str(templates) in repr(db.sql.templates)
     assert repr(db.sql).startswith("SQL(")
@@ -661,9 +598,9 @@ def test_a_broken_template_can_be_found_before_it_is_asked_for(
 ) -> None:
     db.sql.check()
 
-    (templates / "users/broken.sql").write_text("SELECT {% if %}")
+    (templates / "users/broken.sql").write_text("SELECT tpl.if_set(:x, 1")
 
-    with pytest.raises(sql_module.jinja2.TemplateSyntaxError):
+    with pytest.raises(MacroSyntaxError, match=r"users/broken\.sql:1: "):
         db.sql.check()
 
 
@@ -684,12 +621,6 @@ def test_a_missing_dependency_says_what_to_install(
 
     with pytest.raises(MissingDependencyError, match="pydantic"):
         db.sql("users/one.sql", name="b").typed(TeamMember)
-
-    monkeypatch.setattr(sql_module, "Jinja2SQL", None)
-    fresh = Templates(db.sql.templates.paths)
-
-    with pytest.raises(MissingDependencyError, match=r"sqlakit\[sql\]"):
-        fresh.check()
 
 
 # more than one database
@@ -742,7 +673,7 @@ def test_a_value_may_be_named_like_the_argument_before_it(db: Database) -> None:
     # every keyword as a value, so neither may be reserved.
     with db.connect():
         rows = db.sql.from_string(
-            "SELECT {{ source }} AS source, {{ template }} AS template",
+            "SELECT :source AS source, :template AS template",
             source="feed",
             template="daily",
         ).all()

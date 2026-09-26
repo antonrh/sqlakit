@@ -6,8 +6,10 @@ Docker is not installed, which keeps the rest of the suite runnable anywhere.
 """
 
 import contextlib
+import gc
 import pathlib
 import shutil
+import sys
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
@@ -77,9 +79,19 @@ def dialect(request: pytest.FixtureRequest) -> str:
 def url(dialect: str, docker_services: pytest.FixtureRequest) -> str:
     """Return the URL of a database that answers."""
     address = URLS[dialect]
-    docker_services.wait_until_responsive(  # ty: ignore[unresolved-attribute]
-        timeout=WAIT.get(dialect, 120.0), pause=1.0, check=lambda: _responds(address)
-    )
+    # A connection the server resets while it starts leaves its socket to the
+    # collector, and pytest would report it inside whichever test runs first.
+    hook = sys.unraisablehook
+    sys.unraisablehook = lambda _: None
+    try:
+        docker_services.wait_until_responsive(  # ty: ignore[unresolved-attribute]
+            timeout=WAIT.get(dialect, 120.0),
+            pause=1.0,
+            check=lambda: _responds(address),
+        )
+        gc.collect()
+    finally:
+        sys.unraisablehook = hook
     return address
 
 

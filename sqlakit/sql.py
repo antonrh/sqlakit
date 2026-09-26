@@ -8,10 +8,15 @@ from typing_extensions import Unpack
 from ._query import merged
 from ._sql import (
     BaseSQLQuery,
-    Filter,
+    Context,
+    Inline,
+    Param,
+    Sql,
     Templates,
     require_pydantic,
+    sql_macro,
     templates_of,
+    tpl,
 )
 
 if TYPE_CHECKING:
@@ -23,7 +28,18 @@ if TYPE_CHECKING:
     from ._db import Database
     from .types import ValidationArgs
 
-__all__ = ["SQL", "Filter", "SQLQuery", "SQLRows", "Templates"]
+__all__ = [
+    "SQL",
+    "Context",
+    "Inline",
+    "Param",
+    "SQLQuery",
+    "SQLRows",
+    "Sql",
+    "Templates",
+    "sql_macro",
+    "tpl",
+]
 
 RowT = TypeVar("RowT")
 OtherT = TypeVar("OtherT")
@@ -94,13 +110,12 @@ class SQL:
         """Read the rows of SQL written out here rather than kept in a file.
 
         ```python
-        db.sql.from_string("SELECT id FROM users WHERE team = {{ team }}", team="red")
+        db.sql.from_string("SELECT id FROM users WHERE team = :team", team="red")
         ```
 
-        Values are named in `{{ }}` and passed by keyword, or as the ``context``
-        mapping, as in a template. A `:name` or a `?` binds nothing here, and
-        rendering says so rather than reaching the driver. It needs no
-        ``templates=``.
+        It reads as a template does: `:name` parameters, passed by keyword or
+        as the ``context`` mapping, and `tpl.` macros. It needs no
+        ``templates=``, and cannot `tpl.include` a file without it.
         """
         return SQLQuery(self.db, source, merged(context, values), inline=True)
 

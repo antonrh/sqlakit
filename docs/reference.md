@@ -165,7 +165,7 @@ plain declarative base.
 
 ## SQL templates
 
-Requires the `sqlakit[sql]` extra. Covered in [SQL templates](sql.md).
+Covered in [SQL templates](sql.md).
 
 ::: sqlakit.sql.SQL
 
@@ -177,7 +177,17 @@ Requires the `sqlakit[sql]` extra. Covered in [SQL templates](sql.md).
 
 ::: sqlakit.sql.Templates
 
-::: sqlakit.sql.Filter
+::: sqlakit.sql.sql_macro
+
+::: sqlakit.sql.Param
+
+::: sqlakit.sql.Sql
+
+::: sqlakit.sql.Context
+
+::: sqlakit.sql.Inline
+
+::: sqlakit.sql.tpl
 
 ## The async classes
 
@@ -308,6 +318,8 @@ except ValueError:  # any bad input, from here or elsewhere
 
 ::: sqlakit.UnknownOrderFieldError
 
+::: sqlakit.InvalidSortStringError
+
 ::: sqlakit.ConflictingJoinError
 
 ::: sqlakit.InvalidOrderFieldError
@@ -346,4 +358,18 @@ except ValueError:  # any bad input, from here or elsewhere
 
 ::: sqlakit.StrayParameterError
 
-::: sqlakit.AsyncFilterError
+::: sqlakit.ParameterPathError
+
+::: sqlakit.InlineValueError
+
+::: sqlakit.MacroSyntaxError
+
+::: sqlakit.UnknownMacroError
+
+::: sqlakit.MacroArgumentError
+
+::: sqlakit.MacroDefinitionError
+
+::: sqlakit.UnknownIdentifierError
+
+::: sqlakit.ProjectConfigError

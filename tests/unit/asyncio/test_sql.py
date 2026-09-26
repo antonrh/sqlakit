@@ -21,10 +21,10 @@ TEMPLATES = {
         SELECT id, text FROM notes ORDER BY id
     """,
     "notes/by_text.sql": """
-        SELECT id, text FROM notes WHERE text = {{ text }}
+        SELECT id, text FROM notes WHERE text = :text
     """,
     "notes/rename.sql": """
-        UPDATE notes SET text = {{ to }} WHERE text = {{ from_ }}
+        UPDATE notes SET text = :to WHERE text = :from_
     """,
 }
 
@@ -196,7 +196,7 @@ async def test_sql_written_out_here_needs_no_templates() -> None:
     db = Database("sqlite+aiosqlite://", engine_args={"poolclass": sa.StaticPool})
 
     async with db.connect():
-        assert await db.sql.from_string("SELECT {{ n }}", n=7).scalars().one() == 7
+        assert await db.sql.from_string("SELECT :n", n=7).scalars().one() == 7
 
         with pytest.raises(SQLNotConfiguredError):
             await db.sql("notes/all.sql").all()
