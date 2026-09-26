@@ -2,8 +2,7 @@
 
 The language server and the command line need what `Templates(...)` holds:
 where the templates are, which macros they call, and under which namespace.
-The application already says so in its code, so nothing repeats it: the code
-is parsed, never imported.
+The code is parsed, never imported.
 
 - A function decorated `@sql_macro` is a macro. Its name, arguments,
   docstring and line come from the parse, which is all a check or an editor

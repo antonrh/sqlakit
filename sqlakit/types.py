@@ -27,7 +27,6 @@ __all__ = [
     "ValidationArgs",
 ]
 
-# Quoted, so importing this module never reaches `Templates`.
 TemplatesLike: TypeAlias = "str | Path | Sequence[str | Path] | Templates"
 """Where a database's SQL templates are: a path, several, or the object."""
 

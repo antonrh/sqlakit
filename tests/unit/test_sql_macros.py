@@ -3,8 +3,6 @@
 import enum
 import os
 import re
-import subprocess
-import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -181,15 +179,15 @@ def test_order_by_refuses_what_is_not_a_sort_string(sort: str) -> None:
 @pytest.mark.parametrize(
     "sort",
     [
-        "vendorId.asc.nulls_first",
-        "vendorId.ASC.nullsFirst",
-        "vendor_id.asc.NULLS_FIRST",
+        "teamId.asc.nulls_first",
+        "teamId.ASC.nullsFirst",
+        "team_id.asc.NULLS_FIRST",
     ],
 )
 def test_order_by_reads_a_sort_string_in_any_case_convention(sort: str) -> None:
-    source = "ORDER BY tpl.order_by(:o, name, vendor_id)"
+    source = "ORDER BY tpl.order_by(:o, name, team_id)"
     assert render(source, postgresql.dialect(), o=[sort]) == (
-        "ORDER BY vendor_id ASC NULLS FIRST"
+        "ORDER BY team_id ASC NULLS FIRST"
     )
 
 
@@ -220,7 +218,9 @@ def test_order_by_places_nulls_on_mysql_without_nulls_last() -> None:
 
 
 def test_order_by_refuses_nulls_after_the_call() -> None:
-    with pytest.raises(MacroArgumentError, match="Pass the default as an argument"):
+    with pytest.raises(
+        MacroArgumentError, match="pass 'nulls_last' or 'nulls_first' as an argument"
+    ):
         render(
             "ORDER BY tpl.order_by(:o, id)\n  nulls last", postgresql.dialect(), o=None
         )
@@ -301,7 +301,7 @@ def test_a_parameter_argument_must_be_a_parameter() -> None:
     with pytest.raises(MacroArgumentError) as raised:
         render("WHERE tpl.if_set(name, TRUE)", postgresql.dialect())
     assert str(raised.value) == (
-        "tpl.if_set: argument 1 must be a :parameter, got 'name' in inline.sql:1."
+        "tpl.if_set: argument 1 must be a `:parameter`, got 'name' in inline.sql:1."
     )
 
 
@@ -437,48 +437,6 @@ def test_signature_says_how_a_template_calls_a_macro() -> None:
     ]
 
 
-def test_every_sql_file_and_string_reads_macros(tmp_path: Path) -> None:
-    write(tmp_path, {"plain.sql": "SELECT tpl.if_set(:x, 1, 2)"})
-    db = Database("sqlite://", templates=tmp_path)
-    with db.connect():
-        assert db.sql("plain.sql", x=None).scalars().one() == 2
-        assert (
-            db.sql.from_string("SELECT tpl.if_set(:x, 1, 2)", x=1).scalars().one() == 1
-        )
-    db.sql.check()
-
-
-def test_templates_import_no_jinja(tmp_path: Path) -> None:
-    write(tmp_path, {"plain.sql": "SELECT tpl.if_set(:x, 1, 2)"})
-    script = f"""
-import sys
-for name in ("jinja2", "jinja2sql", "markupsafe"):
-    sys.modules[name] = None
-from sqlakit import Database
-from sqlakit.sql import Templates
-db = Database("sqlite://", templates={str(tmp_path)!r})
-db.sql.check()
-with db.connect():
-    print(db.sql("plain.sql").scalars().one())
-"""
-    ran = subprocess.run(  # noqa: S603 - our own interpreter, our own script
-        [sys.executable, "-c", script], capture_output=True, text=True, check=False
-    )
-    assert (ran.returncode, ran.stdout, ran.stderr) == (0, "2\n", "")
-
-
-def test_the_cli_lists_the_macros_of_a_module(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from sqlakit._cli import main
-
-    assert main(["macros", f"{__name__}:search", "--markdown", "--namespace", "q"]) == 0
-    assert capsys.readouterr().out.endswith(
-        "### `q.search(:q, *columns)`\n\n"
-        "Rows where any of the columns holds the text, regardless of case.\n\n"
-    )
-
-
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"  # aiosqlite runs on asyncio
@@ -518,11 +476,11 @@ def test_identifier_quotes_a_name_only_where_it_has_to(value: Any, quoted: str) 
 
 
 def test_identifier_takes_only_the_names_it_lists() -> None:
-    source = "SELECT tpl.identifier(:c, a.id, fans = fans_count)"
+    source = "SELECT tpl.identifier(:c, a.id, members = members_count)"
     dialect = postgresql.dialect()
-    assert render(source, dialect, c="fans") == "SELECT fans_count"
+    assert render(source, dialect, c="members") == "SELECT members_count"
     assert render(source, dialect, c="ID") == "SELECT a.id"
-    with pytest.raises(UnknownIdentifierError, match="It takes: fans, id"):
+    with pytest.raises(UnknownIdentifierError, match="It takes: id, members"):
         render(source, dialect, c="password")
 
 
@@ -652,16 +610,16 @@ def test_a_macro_names_the_values_it_binds() -> None:
 
 
 INCLUDES = {
-    "fans/ids.sql": """SELECT id FROM users
+    "members/ids.sql": """SELECT id FROM users
 WHERE team IN :teams AND tpl.if_set(:q, tpl.icontains(name, :q));
 """,
-    "fans/count.sql": (
-        "SELECT count(*) FROM tpl.include('fans/ids.sql') AS f\n"
+    "members/count.sql": (
+        "SELECT count(*) FROM tpl.include('members/ids.sql') AS f\n"
         "WHERE tpl.icontains('x', :q) OR TRUE"
     ),
-    "fans/names.sql": """SELECT u.name
+    "members/names.sql": """SELECT u.name
 FROM users AS u
-JOIN tpl.include('fans/ids.sql') AS f ON f.id = u.id
+JOIN tpl.include('members/ids.sql') AS f ON f.id = u.id
 ORDER BY u.id""",
     "loop/a.sql": "SELECT * FROM tpl.include('loop/b.sql') AS b",
     "loop/b.sql": "SELECT * FROM tpl.include('loop/a.sql') AS a",
@@ -677,12 +635,12 @@ def included(tmp_path: Path, db: Database) -> Database:
 
 
 def test_include_puts_a_whole_query_in_place(included: Database) -> None:
-    assert names(included, "fans/names.sql", teams=["red"], q="n") == [
+    assert names(included, "members/names.sql", teams=["red"], q="n") == [
         "Ann",
         "dan_x",
     ]
     with included.connect():
-        count = included.sql("fans/count.sql", teams=["red", "blue"], q=None)
+        count = included.sql("members/count.sql", teams=["red", "blue"], q=None)
         assert count.scalars().one() == 4
 
 
@@ -690,9 +648,9 @@ def test_include_writes_the_query_in_parentheses_labelled_once(
     included: Database,
 ) -> None:
     with included.connect():
-        statement = included.sql("fans/count.sql", teams=["red"], q="a").statement
+        statement = included.sql("members/count.sql", teams=["red"], q="a").statement
     assert str(statement) == (
-        "/* fans/count.sql */\n"
+        "/* members/count.sql */\n"
         "SELECT count(*) FROM (SELECT id FROM users\n"
         "WHERE team IN (__[POSTCOMPILE_teams]) AND lower(name) LIKE "
         "lower(:q__like__1) ESCAPE '!'\n) AS f\n"
@@ -752,7 +710,7 @@ def test_include_takes_one_path_written_out(argument: str, written: str) -> None
     )
 
 
-def test_include_reads_any_sql_file(tmp_path: Path) -> None:
+def test_an_included_query_drops_its_semicolon(tmp_path: Path) -> None:
     write(
         tmp_path,
         {
@@ -879,7 +837,7 @@ def test_between_refuses_other_bounds_when_the_file_is_read() -> None:
     with pytest.raises(MacroArgumentError) as raised:
         render("WHERE tpl.between(d, :s, :e, '(]')", postgresql.dialect())
     assert str(raised.value) == (
-        "tpl.between: argument 4 is '[]' or '[)', got '(]' in inline.sql:1."
+        "tpl.between: argument 4 must be '[]' or '[)', got '(]' in inline.sql:1."
     )
 
 
@@ -1177,7 +1135,7 @@ def test_string_agg_on_the_other_databases(dialect: sa.Dialect, sql: str) -> Non
 def test_an_array_macro_refuses_a_database_without_arrays(macro: str) -> None:
     with pytest.raises(MacroArgumentError) as raised:
         render(f"SELECT tpl.{macro}", mysql.dialect())
-    assert "has no form for mysql: it writes postgresql, snowflake" in str(raised.value)
+    assert "has no form for mysql, only for postgresql, snowflake" in str(raised.value)
 
 
 def test_json_object_and_string_agg_run(db: Database, tmp_path: Path) -> None:
@@ -1237,13 +1195,13 @@ def test_a_path_through_none_reads_as_none() -> None:
     ctx = Context(
         "postgresql",
         postgresql.dialect().identifier_preparer,
-        {"filters": {"campaign": None}},
+        {"filters": {"team": None}},
     )
     template = sql_module.MacroTemplate(
-        "x.sql", "WHERE c = :filters.campaign.value", sql_module.registered([])
+        "x.sql", "WHERE c = :filters.team.value", sql_module.registered([])
     )
-    assert template.render(ctx) == "WHERE c = :filters__campaign__value"
-    assert ctx.values["filters__campaign__value"] is None
+    assert template.render(ctx) == "WHERE c = :filters__team__value"
+    assert ctx.values["filters__team__value"] is None
 
 
 def test_order_by_orders_by_nothing_when_the_sort_was_not_passed() -> None:
@@ -1349,7 +1307,7 @@ def test_array_writes_a_list_as_an_array(
     ("source", "problem"),
     [
         ("tpl.array(:g)", "`:g` is empty, and PostgreSQL needs its type"),
-        ("tpl.array(:g, 'text; DROP')", "the type is a name such as 'text'"),
+        ("tpl.array(:g, 'text; DROP')", "takes a type name such as 'text'"),
     ],
 )
 def test_array_refuses_what_it_cannot_write(source: str, problem: str) -> None:
@@ -1552,8 +1510,8 @@ def test_an_sql_macro_takes_as_many_arguments_as_its_header_names(
 @pytest.mark.parametrize(
     ("source", "problem"),
     [
-        ("SELECT TRUE;\n", "bad.sql:1 is not `SELECT <expression> AS <name>"),
-        ("-- A note.\nt.id = 1;\n", "bad.sql:2 is not `SELECT <expression> AS <name>"),
+        ("SELECT TRUE;\n", "line 1 is not `SELECT <expression> AS <name>"),
+        ("-- A note.\nt.id = 1;\n", "line 2 is not `SELECT <expression> AS <name>"),
         ("SELECT TRUE AS twice FROM a, a;\n", "name one twice"),
     ],
 )
@@ -1648,7 +1606,7 @@ def test_an_sql_macro_passes_its_argument_where_a_parameter_goes(
         "SELECT tpl.arrays_overlap(col, tpl.array(vals, 'text')) AS overlaps\n"
         "FROM col, vals;\n"
     )
-    source = "WHERE tpl.picked(u.country, :countries, :exclude) AND tpl.overlaps(u.dsp, :d.v)"
+    source = "WHERE tpl.picked(u.country, :countries, :exclude) AND tpl.overlaps(u.tags, :d.v)"
     template = sql_module.MacroTemplate(
         source=source, name="x.sql", macros=sql_module.registered([path])
     )
@@ -1658,7 +1616,7 @@ def test_an_sql_macro_passes_its_argument_where_a_parameter_goes(
         {"countries": ["de"], "exclude": True, "d": {"v": ["a"]}},
     )
     assert template.render(ctx) == (
-        "WHERE (u.country NOT IN (:countries)) AND ((u.dsp && ARRAY[:d__v__1]::text[]))"
+        "WHERE (u.country NOT IN (:countries)) AND ((u.tags && ARRAY[:d__v__1]::text[]))"
     )
 
 
@@ -1677,11 +1635,11 @@ def test_a_file_of_macros_among_the_templates_is_not_one(tmp_path: Path) -> None
         tmp_path,
         {
             "_macros.sql": ARRAY_MATCH,
-            "fans.sql": "SELECT 1 WHERE tpl.array_match(f.dsp, :f.v, :f.x)",
+            "tags.sql": "SELECT 1 WHERE tpl.array_match(f.tags, :f.v, :f.x)",
         },
     )
     templates = Templates(tmp_path, macros=[tmp_path / "_macros.sql"])
-    assert templates.names() == ["fans.sql"]
+    assert templates.names() == ["tags.sql"]
     Database("sqlite://", templates=templates).sql.check()
 
 

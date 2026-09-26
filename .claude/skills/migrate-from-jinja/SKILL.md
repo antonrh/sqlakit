@@ -134,9 +134,6 @@ limits an argument to that SQL, checked when the file is read.
   act as wildcards. `icontains` matches them only as themselves.
 - **Case in ordering.** `tpl.icollate` orders without regard to case on every
   database, so a test database that sorted `B` before `a` stops doing so.
-- **Arguments render before the macro decides.** `tpl.if_set(:q, tpl.m(:q))`
-  runs `m` even when `:q` is missing, and hands it `None`. A macro of your own
-  has to accept that.
 - **Nothing is bound twice for one name.** An included template shares every
   parameter of the call, the way `include with context` does. One query
   included twice with different values needs two names.

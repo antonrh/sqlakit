@@ -74,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.command == "check":
         return _check(Path(arguments.project), json_output=arguments.format == "json")
     if arguments.command == "export":
-        export = _export_pycharm if arguments.tool == "pycharm" else _export
+        export = _export_pycharm if arguments.tool == "pycharm" else _export_sqruff
         return export(
             Path(arguments.project), dialect=arguments.dialect, check=arguments.check
         )
@@ -134,11 +134,16 @@ def _check(directory: Path, *, json_output: bool) -> int:
             line, column = problem.position()
             _say(f"{_relative(problem.path)}:{line}:{column}: {problem.message}")
         count = len(project.templates.names())
-        _say(_paint(f"{count} templates, {len(problems)} problems", DIM))
+        _say(
+            _paint(
+                f"{_counted(count, 'template')}, {_counted(len(problems), 'problem')}",
+                DIM,
+            )
+        )
     return 1 if problems else 0
 
 
-def _export(directory: Path, *, dialect: str | None, check: bool) -> int:
+def _export_sqruff(directory: Path, *, dialect: str | None, check: bool) -> int:
     """Write the `sqruff` settings that read the templates into `pyproject.toml`."""
     try:
         project = load_project(directory)
@@ -187,13 +192,13 @@ def _export_pycharm(directory: Path, *, dialect: str | None, check: bool) -> int
         ),
     }
     if check:
-        stale = [
+        outdated = [
             _relative(path)
             for path, text in wanted.items()
             if not path.exists() or path.read_text(encoding="utf-8") != text
         ]
-        if stale:
-            _say(f"{', '.join(stale)} out of date: run `sqlakit export pycharm`")
+        if outdated:
+            _say(f"{', '.join(outdated)} out of date: run `sqlakit export pycharm`")
             return 1
         return 0
     idea.mkdir(exist_ok=True)
@@ -246,8 +251,13 @@ def _paint(text: str, *codes: str) -> str:
     return f"\033[{';'.join(codes)}m{text}\033[0m"
 
 
+def _counted(number: int, thing: str) -> str:
+    """Return `1 template`, or `2 templates`."""
+    return f"{number} {thing}{'' if number == 1 else 's'}"
+
+
 def _say(text: str) -> None:
-    """Print, and flush: the server then blocks, and a pipe would hold this."""
+    """Print and flush, so a pipe gets each line at once."""
     print(text, flush=True)  # noqa: T201
 
 

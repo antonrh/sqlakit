@@ -1,4 +1,4 @@
-"""`sqlakit check` and `sqlakit export`: a project's templates, read from pyproject.toml."""
+"""`sqlakit check` and `sqlakit export`: a project's templates, read from its code."""
 
 import json
 import re
@@ -111,14 +111,13 @@ def side(which: Literal["'left'", "'right'"] = "'left'") -> str:
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (tmp_path / "pyproject.toml").write_text(PYPROJECT)
     (tmp_path / "db.py").write_text(DB)
-    (tmp_path / "lsp_macros.py").write_text(MACROS)
+    (tmp_path / "macros.py").write_text(MACROS)
     (tmp_path / "_macros.sql").write_text(SQL_MACROS)
     for name, source in TEMPLATES.items():
         path = tmp_path / "sql" / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delitem(sys.modules, "lsp_macros", raising=False)
     return tmp_path
 
 
@@ -334,7 +333,7 @@ def test_check_passes_a_clean_project(
     assert capsys.readouterr().out.splitlines() == [
         *FOUND,
         "",
-        "1 templates, 0 problems",
+        "1 template, 0 problems",
     ]
 
 
@@ -382,7 +381,6 @@ def test_export_writes_what_sqruff_needs_into_pyproject(
         'param_style = "colon"\n'
         'limit = "1"\n'
     )
-    assert not (project / ".sqruffignore").exists()
     assert main(["export", "sqruff"]) == 0
     assert (project / "pyproject.toml").read_text() == written
     assert capsys.readouterr().out.splitlines()[-1] == "wrote pyproject.toml"
@@ -424,7 +422,7 @@ def test_check_passes_a_file_of_macros_among_the_templates(
     app: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (app / "shop" / "sql" / "_macros.sql").write_text(
-        "SELECT tpl.if_set(negate, NOT col, col) AS flipped FROM col, negate;\n"
+        "SELECT q.if_set(negate, NOT col, col) AS flipped FROM col, negate;\n"
         "\n"
         "-- Rows of the team.\n"
         "SELECT t.team = :team AS for_team FROM t;\n"
@@ -436,7 +434,7 @@ def test_check_passes_a_file_of_macros_among_the_templates(
         "macros: 2 in Python, 1 file of SQL macros",
         "dialect: sqlite (shop/db.py:9)",
         "",
-        "1 templates, 0 problems",
+        "1 template, 0 problems",
     ]
 
 
@@ -474,3 +472,22 @@ def test_a_file_macro_is_read_from_the_code_with_its_file(app: Path) -> None:
     macro = templates.macros["for_tenant"]
     assert getattr(macro, "sql_path", None) == app / "shop" / "sql" / "tenant.sql"
     assert templates.names() == ["users.sql"]
+
+
+def test_a_call_under_tpl_is_marked_when_the_namespace_is_another(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "sql").mkdir()
+    (tmp_path / "sql" / "q.sql").write_text(
+        "SELECT 1 WHERE t.if_set(:a, TRUE) AND tpl.if_set(:b, TRUE) -- tpl.when(\n"
+    )
+    (tmp_path / "db.py").write_text('Templates("sql", namespace="t")\n')
+
+    assert main(["check", "--project", str(tmp_path)]) == 1
+    assert capsys.readouterr().out.splitlines()[5:] == [
+        (
+            f"{tmp_path / 'sql' / 'q.sql'}:1:39: `tpl.if_set` is not a macro call: "
+            "the namespace is `t`, so write `t.if_set`"
+        ),
+        "1 template, 1 problem",
+    ]

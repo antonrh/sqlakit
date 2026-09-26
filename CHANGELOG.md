@@ -47,8 +47,7 @@
   returns the values the SQL reads.
 - `sqlakit macros` lists the macros, and `sqlakit check` checks every template
   of a project. It reads where the templates and the macros are from the
-  project's code without running it. The `sqlakit` command is back for these,
-  without `debugserver`.
+  project's code without running it.
 - [`sqlakit-lsp`](https://github.com/sqlakit/sqlakit-lsp), a package of its own, serves the same
   checks to an editor, with completion, hover and go to definition.
 - `sqlakit export sqruff` writes the `sqruff` settings that read the templates
@@ -68,7 +67,13 @@
 - `IN (:ids)` binds a list as `IN :ids` does, and a `LIMIT :limit` or
   `OFFSET :offset` with no value takes every row and skips none, on every
   database.
-
+- Exceptions for templates and macros, each also a `ValueError` or a
+  `TypeError`: `MacroSyntaxError`, `UnknownMacroError`, `MacroArgumentError`,
+  `MacroDefinitionError`, `ParameterPathError`, `InlineValueError`,
+  `UnknownIdentifierError`, `InvalidSortStringError` and `ProjectConfigError`.
+  `db.sql.check()` raises them in place of Jinja's `TemplateSyntaxError`.
+- `Templates(namespace="q")` names the schema macro calls are written under,
+  for a database with a real schema named `tpl`.
 - `sqlakit_models = app` in the pytest settings imports every `models` module
   under the package before the plugin creates the tables, so a run of a few
   tests has them all.

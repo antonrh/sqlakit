@@ -448,22 +448,20 @@ class MacroArgumentError(SQLAKitError, ValueError):
 
 
 class ProjectConfigError(SQLAKitError, ValueError):
-    """Raised when a project's `pyproject.toml` does not say where its templates are."""
+    """Raised when the templates of a project cannot be found or configured."""
 
     def __init__(self, problem: str = "") -> None:
         self.problem = problem
-        super().__init__(
-            f"Cannot read the project's templates: {problem}. Say where they are "
-            f"in `pyproject.toml`, under `[tool.sqlakit.templates]`, with `paths` "
-            f"and, for macros of your own, `macros`."
-        )
+        super().__init__(f"Cannot read the project's templates: {problem}.")
 
 
 class MacroDefinitionError(SQLAKitError, TypeError):
-    """Raised when a function cannot be a macro as written."""
+    """Raised when a function, or a statement of a file, cannot be a macro."""
 
-    def __init__(self, name: str = "", problem: str = "") -> None:
+    def __init__(self, name: str = "", problem: str = "", *, line: int = 1) -> None:
         self.name = name
+        self.line = line
+        """The line of a file of SQL macros the problem is on."""
         super().__init__(f"`{name}` cannot be a macro: {problem}.")
 
 

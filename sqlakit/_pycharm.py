@@ -11,11 +11,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from typing import TYPE_CHECKING
 
-from sqlalchemy.dialects.postgresql.base import (
-    RESERVED_WORDS as POSTGRESQL_RESERVED_WORDS,
-)
-from sqlalchemy.sql.compiler import RESERVED_WORDS
-
+from ._project import RESERVED
 from ._sql import INCLUDE, Macro
 
 if TYPE_CHECKING:
@@ -38,8 +34,6 @@ DIALECTS = {
 VARIADIC = 10
 """How many arguments past its own a macro that takes any number is declared with,
 on a database with no variadic functions."""
-
-_RESERVED = RESERVED_WORDS | POSTGRESQL_RESERVED_WORDS
 
 
 def ddl(project: Project, dialect: str) -> str:
@@ -73,10 +67,11 @@ def ddl(project: Project, dialect: str) -> str:
 
 def _declared(macro: Macro, namespace: str, *, snowflake: bool) -> list[str]:
     name = _name(macro.name, namespace, snowflake=snowflake)
-    doc = macro.doc.split("\n\n", 1)[0].replace("\n", " ").replace("'", "''")
+    summary = macro.doc.split("\n\n", 1)[0]
+    doc = summary.replace("\n", " ").replace("'", "''")
     required = [slot.name for slot in macro.slots if slot.required]
     optional = [slot.name for slot in macro.slots if not slot.required]
-    lines = [f"-- {line}" for line in macro.doc.split("\n\n", 1)[0].splitlines()]
+    lines = [f"-- {line}" for line in summary.splitlines()]
     if snowflake:
         extra = (
             [f"{macro.variadic.name}_{index}" for index in range(1, VARIADIC + 1)]
@@ -117,13 +112,13 @@ def _declared(macro: Macro, namespace: str, *, snowflake: bool) -> list[str]:
 
 def _name(name: str, namespace: str, *, snowflake: bool) -> str:
     """Return a function's name, quoted when SQL keeps the word for itself."""
-    if name.lower() not in _RESERVED:
+    if name.lower() not in RESERVED:
         return f"{namespace}.{name}"
     return f'{namespace}."{name.upper() if snowflake else name.lower()}"'
 
 
 def _argument(name: str) -> str:
-    return f'"{name}"' if name.lower() in _RESERVED else name
+    return f'"{name}"' if name.lower() in RESERVED else name
 
 
 def dialects(root: Path, paths: list[Path], dialect: str, written: str | None) -> str:

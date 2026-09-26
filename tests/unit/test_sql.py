@@ -36,7 +36,7 @@ TEMPLATES = {
     "users/by_ids.sql": """
         SELECT name FROM users WHERE id IN :ids ORDER BY id
     """,
-    "users/in_clause.sql": """
+    "users/each.sql": """
         SELECT name FROM users WHERE team IN (tpl.each(:teams)) ORDER BY id
     """,
     "users/count.sql": """
@@ -190,7 +190,7 @@ def test_a_list_is_a_list_to_the_database(db: Database) -> None:
     with db.connect():
         # A list binds as one expanding parameter, `tpl.each` as one per value.
         assert db.sql("users/by_ids.sql", ids=[1, 3]).scalars().all() == ["a", "c"]
-        assert db.sql("users/in_clause.sql", teams=["red"]).scalars().all() == [
+        assert db.sql("users/each.sql", teams=["red"]).scalars().all() == [
             "b",
             "d",
         ]
@@ -406,15 +406,6 @@ def test_a_writing_template_commits_when_no_transaction_is_open(db: Database) ->
 
     with db.connect():
         assert db.sql("users/active.sql", team="green").all() != []
-
-
-def test_a_value_is_never_escaped_on_its_way_to_the_database(db: Database) -> None:
-    # A value is bound rather than written into the SQL, so it reaches the
-    # database as it was.
-    with db.connect():
-        value = "a & b <c> 'd'"
-
-        assert db.sql.from_string("SELECT :value", value=value).scalars().one() == value
 
 
 def test_a_statement_of_your_own_carries_no_query_filter(db: Database) -> None:

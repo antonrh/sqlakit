@@ -27,6 +27,9 @@ from sqlalchemy.dialects.postgresql.base import (
 from sqlalchemy.sql.compiler import RESERVED_WORDS
 
 from ._sql import (
+    _LITERAL,
+    INCLUDE,
+    NAMESPACE,
     SAMPLE_AFTER,
     STAGE_AFTER,
     MacroTemplate,
@@ -35,7 +38,7 @@ from ._sql import (
     inline_position,
     sql_macros,
 )
-from ._static import StaticMacro, discover
+from ._static import discover
 from .exceptions import (
     MacroArgumentError,
     MacroDefinitionError,
@@ -52,9 +55,7 @@ __all__ = ["Problem", "Project", "load_project"]
 _KEYS = {"paths", "macros", "namespace", "dialect"}
 
 _PARAMETER_IN_TEXT = re.compile(
-    r"""'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|/\*.*?\*/"""
-    r"|(?<![:\w\\]):([A-Za-z_]\w*)(\.\w+)?",
-    re.DOTALL,
+    rf"{_LITERAL}|(?<![:\w\\]):(?P<param>[A-Za-z_]\w*)(?P<dotted>\.\w+)?", re.DOTALL
 )
 """A `:parameter`, past the strings and comments that may hold a colon."""
 
@@ -62,7 +63,8 @@ _COPY_INTO = re.compile(r"\bCOPY\s+INTO\s*$", re.IGNORECASE)
 _FROM_QUERY = re.compile(r"\s+FROM\s*\(", re.IGNORECASE)
 """`COPY INTO :x FROM (...)` writes a query to a stage: `:x` is the stage."""
 
-_RESERVED = RESERVED_WORDS | POSTGRESQL_RESERVED_WORDS
+RESERVED = RESERVED_WORDS | POSTGRESQL_RESERVED_WORDS
+"""Words a parameter cannot stand in for unquoted, on the databases linted most."""
 """Names SQL keeps for itself, which a linter cannot read a parameter as."""
 
 LINT_EXCLUDED = ("RF01", "AL05", "ST03")
@@ -154,6 +156,39 @@ class Project:
             for line, message in self.macro_problems(path, source):
                 start = _line_start(source, line)
                 yield Problem(path, start, start, message)
+        for path in [*map(self.path_of, self.templates.names()), *self.macro_files()]:
+            if path is not None:
+                source = path.read_text(encoding="utf-8")
+                for start, end, message in self.foreign_calls(source):
+                    yield Problem(path, start, end, message)
+
+    def foreign_calls(self, source: str) -> list[tuple[int, int, str]]:
+        """Return each call of a macro under `tpl` when the namespace is another.
+
+        With `namespace="t"`, `tpl.if_set(...)` is SQL the database reads as a
+        function of a schema named `tpl`, and fails there with its own message.
+        """
+        namespace = self.templates.namespace
+        if namespace.lower() == NAMESPACE:
+            return []
+        names = sorted([*self.templates.macros, INCLUDE], key=len, reverse=True)
+        calls = re.compile(
+            rf"{_LITERAL}|(?<![\w.]){NAMESPACE}\.(?P<macro>{'|'.join(names)})\s*\(",
+            re.IGNORECASE | re.DOTALL,
+        )
+        return [
+            (
+                found.start(),
+                found.end("macro"),
+                (
+                    f"`{NAMESPACE}.{found.group('macro')}` is not a macro call: the "
+                    f"namespace is `{namespace}`, so write "
+                    f"`{namespace}.{found.group('macro')}`"
+                ),
+            )
+            for found in calls.finditer(source)
+            if found.group("macro")
+        ]
 
     def placeholder_values(self) -> dict[str, str]:
         """Return a value for each parameter a linter cannot read by its name.
@@ -189,7 +224,7 @@ class Project:
         try:
             written = sql_macros(path, source)
         except MacroDefinitionError as error:
-            return [(1, str(error))]
+            return [(error.line, str(error))]
         macros = {**self.templates.macros, **{one.name: one for one in written}}
         found = []
         for macro in written:
@@ -207,7 +242,7 @@ def placeholders_of(text: str, values: dict[str, str]) -> dict[str, str]:
     See `Project.placeholder_values`, which reads every template with it.
     """
     for found in _PARAMETER_IN_TEXT.finditer(text):
-        param, dotted = found.groups()
+        param, dotted = found.group("param", "dotted")
         if param is None:
             continue
         before = text[: found.start()]
@@ -217,7 +252,7 @@ def placeholders_of(text: str, values: dict[str, str]) -> dict[str, str]:
             values[param] = "@stage/path"
         elif SAMPLE_AFTER.search(before):
             values[param] = "10"
-        elif param.lower() in _RESERVED:
+        elif param.lower() in RESERVED:
             # `COPY INTO :table` needs a name, and other positions a value.
             named = dotted or inline_position(before)
             values.setdefault(param, f"{param}_" if named else "1")
@@ -265,7 +300,7 @@ def load_project(start: Path | None = None) -> Project:
             f'`pyproject.toml`: [tool.sqlakit.templates] paths = ["app/sql"]'
         )
         raise ProjectConfigError(problem)
-    sql_macros = (
+    sql_files = (
         [root / macro for macro in config["macros"] if macro.endswith(".sql")]
         if "macros" in config
         else [macro for macro in found.macros if isinstance(macro, Path)]
@@ -273,7 +308,7 @@ def load_project(start: Path | None = None) -> Project:
     python_macros = [macro for macro in found.macros if not isinstance(macro, Path)]
     templates = Templates(
         paths,
-        macros=[*python_macros, *sql_macros],
+        macros=[*python_macros, *sql_files],
         namespace=config.get("namespace", found.namespace),
     )
     origins = dict(found.origins)
@@ -303,7 +338,7 @@ def _found(
     ]
     namespace = project.templates.namespace
     lines.append(f"namespace: {namespace} ({origins.get('namespace', 'the default')})")
-    python = sum(isinstance(macro, StaticMacro) for macro in python_macros)
+    python = len(python_macros)
     files = len(project.macro_files())
     lines.append(
         f"macros: {python} in Python, {files} "

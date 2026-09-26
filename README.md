@@ -61,8 +61,8 @@ with db.autocommit():  # AUTOCOMMIT, no transaction held open
 
 Templates are SQL files with `:name` parameters, so they hold anything from a
 one-line query to a report with window functions or a recursive CTE, and every
-SQL tool reads them as SQL. Values are bound, so they never reach the SQL text
-and there is no way to inject anything. What changes per call, an optional
+SQL tool reads them as SQL. Values are bound, so they never reach the SQL
+text. What changes per call, an optional
 condition or a sort order, is a macro such as `tpl.if_set(:team, team = :team)`.
 
 ### From a file

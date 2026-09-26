@@ -49,12 +49,10 @@ from .exceptions import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
 
+    from pydantic import BaseModel, TypeAdapter
     from sqlalchemy.sql import Executable
 
     from ._base import BaseDatabase
-
-if TYPE_CHECKING:
-    from pydantic import BaseModel, TypeAdapter
 else:
     try:
         from pydantic import BaseModel, TypeAdapter
@@ -68,7 +66,6 @@ __all__ = [
     "FileMacro",
     "Inline",
     "Macro",
-    "MacroEngine",
     "Param",
     "Sql",
     "SqlMacro",
@@ -85,26 +82,28 @@ _context: ContextVar[Context] = ContextVar("sqlakit.macro_context")
 """The call a macro template is rendering, for a macro that calls another."""
 
 RowT = TypeVar("RowT")
-OtherT = TypeVar("OtherT")
-SessionT = TypeVar("SessionT")
 DatabaseT = TypeVar("DatabaseT", bound="BaseDatabase[Any, Any]")
 QueryT = TypeVar("QueryT", bound="BaseSQLQuery[Any, Any]")
 
 PathLike = str | Path
-"""The directories templates are looked for in: one, or several."""
+"""A template directory."""
 
 
 MACRO_FILE = "macros.sql"
-"""How a file of SQL macros ends its name, which is how it is found."""
+"""The suffix that marks a file of SQL macros."""
 
 NAMESPACE = "tpl"
 """The schema name macros are called under unless `Templates` says otherwise."""
 _IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
 _PARAMETER = re.compile(r"\s*:([A-Za-z_]\w*(?:\.\w+)*)\s*")
+_LITERAL = (
+    r"""'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|/\*.*?\*/"""
+    r"|\$(?P<tag>\w*)\$.*?\$(?P=tag)\$"
+)
+"""A string, a comment or a dollar-quoted body: text that may hold a colon."""
+
 _DOTTED = re.compile(
-    r"""'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|/\*.*?\*/|\$(\w*)\$.*?\$\1\$"""
-    r"|(?<![:\w\\]):([A-Za-z_]\w*(?:\.\w+)+)",
-    re.DOTALL,
+    rf"{_LITERAL}|(?<![:\w\\]):(?P<param>[A-Za-z_]\w*(?:\.\w+)+)", re.DOTALL
 )
 """A `:parameter.with.a.path`, past the strings and comments that may hold one."""
 _DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$")
@@ -162,15 +161,12 @@ class _Value(Param):
         return self._placeholder
 
 
-def _named(param: Param, *suffix: str) -> str | None:
+def _named(param: Param) -> str | None:
     """Return the name to bind a value derived from a parameter under.
 
-    `:q` binds its pattern as `:q__like__1`. A value passed in Python has no
-    name of its own, and binds as `:__p1`.
+    A value passed in Python has no name of its own, and binds as `:__p1`.
     """
-    if isinstance(param, _Value):
-        return None
-    return "__".join((param.name, *suffix))
+    return None if isinstance(param, _Value) else param.name
 
 
 def _outside_a_template(macro: str) -> MacroArgumentError:
@@ -200,8 +196,7 @@ class Inline:
     only after `INTO`, `FROM`, `JOIN`, `LIST`, `PUT <file>`, `TABLE`, `VIEW`,
     `STAGE`, `TO`, `SCHEMA`, `DATABASE`, `USE` and inside `SAMPLE (...)`, and
     refused where a bound value would do. `Inline.stage` and `Inline.name` check
-    what they are given, and `Inline(text)` is for the rest: its name marks the
-    call a review looks at.
+    what they are given, and `Inline(text)` writes any text as it is.
     """
 
     __slots__ = ("text",)
@@ -359,9 +354,8 @@ class Macro:
         if iscoroutinefunction(func):
             raise MacroDefinitionError(
                 self.name,
-                "it is a coroutine function, and templates render synchronously, "
-                "in the async API as well. Await the value first, and pass it in "
-                "the context",
+                "it is a coroutine function, and templates render synchronously: "
+                "await the value and pass it in",
             )
         self.context, self.slots, self.variadic = _slots_of(func, self.name)
 
@@ -517,18 +511,18 @@ def sql_macros(path: Path | str, source: str | None = None) -> list[SqlMacro]:
     if source is None:
         source = path.read_text(encoding="utf-8")
     found = []
-    for start, end in _statements(source):
+    for start, end in _statements(source, path.name):
         doc: list[str] = []
         offset = start
-        for line in source[start:end].splitlines(keepends=True):
-            stripped = line.strip()
+        for text_line in source[start:end].splitlines(keepends=True):
+            stripped = text_line.strip()
             if stripped.startswith("--"):
                 doc.append(stripped.removeprefix("--").strip())
             elif stripped:
                 break
             else:
                 doc = []
-            offset += len(line)
+            offset += len(text_line)
         written = source[offset:end]
         if not written.strip():
             continue
@@ -536,10 +530,10 @@ def sql_macros(path: Path | str, source: str | None = None) -> list[SqlMacro]:
         statement = _MACRO_STATEMENT.fullmatch(written)
         if statement is None:
             problem = (
-                f"{path.name}:{line} is not `SELECT <expression> AS <name> "
+                f"line {line} is not `SELECT <expression> AS <name> "
                 f"[FROM <arguments>];`"
             )
-            raise MacroDefinitionError(path.name, problem)
+            raise MacroDefinitionError(path.name, problem, line=line)
         name = statement.group("name")
         params = [
             one.strip()
@@ -548,7 +542,7 @@ def sql_macros(path: Path | str, source: str | None = None) -> list[SqlMacro]:
         ]
         if len(set(params)) != len(params):
             problem = f"its arguments in {path.name}:{line} name one twice: {params}"
-            raise MacroDefinitionError(name, problem)
+            raise MacroDefinitionError(name, problem, line=line)
         named = offset + statement.start("name")
         found.append(
             SqlMacro(
@@ -568,9 +562,9 @@ def sql_macros(path: Path | str, source: str | None = None) -> list[SqlMacro]:
     return found
 
 
-def _statements(source: str) -> list[tuple[int, int]]:
+def _statements(source: str, name: str) -> list[tuple[int, int]]:
     """Return where each statement of a file starts and ends, at its `;`."""
-    scanner = _Scanner(source, "", NAMESPACE)
+    scanner = _Scanner(source, name, NAMESPACE)
     found = []
     start = index = 0
     while index < len(source):
@@ -634,7 +628,7 @@ def sql_macro(
     """
     if isinstance(func, str):
         sql = func
-        return lambda func: FileMacro(func, sql, name, optional=optional)
+        return lambda func: FileMacro(func, sql, name, optional=optional, lazy=lazy)
     if func is None:
         return lambda func: Macro(func, name, optional=optional, lazy=lazy)
     return Macro(func, name, optional=optional, lazy=lazy)
@@ -661,8 +655,9 @@ class FileMacro(Macro):
         name: str | None = None,
         *,
         optional: bool = False,
+        lazy: bool = False,
     ) -> None:
-        super().__init__(func, name, optional=optional)
+        super().__init__(func, name, optional=optional, lazy=lazy)
         path = Path(sql)
         if not path.is_absolute():
             path = Path(inspect.getsourcefile(func) or ".").parent / path
@@ -684,9 +679,9 @@ class FileMacro(Macro):
             raise MacroDefinitionError(self.name, problem)
         self.reads = tuple(
             dict.fromkeys(
-                found.group(1)
+                found.group("param")
                 for found in PARAMETER_IN_TEXT.finditer(self.statement.body)
-                if found.group(1)
+                if found.group("param")
             )
         )
         """The parameters the SQL reads, whose values the function returns."""
@@ -734,7 +729,9 @@ def _slots_of(
             slots.append(_Slot(parameter.name, kind, parameter.default, choices))
         else:
             raise MacroDefinitionError(
-                name, f"`{parameter.name}` is keyword-only, and calls in SQL are not"
+                name,
+                f"`{parameter.name}` is keyword-only, and a template passes "
+                f"arguments by position",
             )
     return context, tuple(slots), variadic
 
@@ -1039,7 +1036,9 @@ class MacroTemplate:
         prefix = f"{macro.name}_{next(_FILE_CALLS)}"
         body = PARAMETER_IN_TEXT.sub(
             lambda found: (
-                f":{prefix}__{found.group(1)}" if found.group(1) else found.group()
+                f":{prefix}__{found.group('param')}"
+                if found.group("param")
+                else found.group()
             ),
             macro.statement.body,
         )
@@ -1124,7 +1123,7 @@ class MacroTemplate:
 
     def _flattened(self, match: re.Match[str]) -> str:
         """Write `:a.b` as the parameter it binds as, and leave the rest alone."""
-        path = match.group(2)
+        path = match.group("param")
         return match.group() if path is None else f":{self._key(path)}"
 
     def _key(self, param: str) -> str:
@@ -1165,8 +1164,8 @@ class MacroTemplate:
                 and _NULLS_AFTER.match(after)
             ):
                 problem = (
-                    "a NULLS after the call would follow a NULLS of a sort string. "
-                    "Pass the default as an argument: 'nulls_last' or 'nulls_first'"
+                    "`NULLS` after the call repeats the one a sort string writes: "
+                    "pass 'nulls_last' or 'nulls_first' as an argument"
                 )
                 raise self._refuse(part.name, problem, part)
             if part.name == INCLUDE:
@@ -1191,13 +1190,13 @@ class MacroTemplate:
                 slot = macro.slot_at(position)
                 written = self._written(arg.parts)
                 if slot.kind is Param and arg.param is None:
-                    problem = (
-                        f"argument {position + 1} must be a :parameter, got {written!r}"
-                    )
+                    problem = f"argument {position + 1} must be a `:parameter`, got {written!r}"
                     raise self._refuse(macro.name, problem, part, arg.span)
                 if slot.choices and written not in slot.choices:
                     allowed = " or ".join(slot.choices)
-                    problem = f"argument {position + 1} is {allowed}, got {written}"
+                    problem = (
+                        f"argument {position + 1} must be {allowed}, got {written}"
+                    )
                     raise self._refuse(macro.name, problem, part, arg.span)
                 self._check(arg.parts)
 
@@ -1217,7 +1216,7 @@ class MacroTemplate:
                 if isinstance(part, str)
                 else self._from_values(part, ctx)
                 if isinstance(part, _FileExpansion)
-                else self._expand(part, ctx)
+                else str(self._call(part, ctx))
                 for part in parts
             ]
         )
@@ -1232,30 +1231,20 @@ class MacroTemplate:
             raise part.call.refuse(problem, self.namespace)
         missing = [name for name in part.reads if name not in values]
         extra = [name for name in values if name not in part.reads]
-        if missing or extra:
-            problem = "; ".join(
-                [
-                    *(
-                        [f"returned no {', '.join(missing)}, which {part.file} reads"]
-                        if missing
-                        else []
-                    ),
-                    *(
-                        [
-                            f"returned {', '.join(extra)}, which {part.file} does not read"
-                        ]
-                        if extra
-                        else []
-                    ),
-                ]
+        problems = []
+        if missing:
+            problems.append(
+                f"returned no {', '.join(missing)}, which {part.file} reads"
             )
-            raise part.call.refuse(problem, self.namespace)
+        if extra:
+            problems.append(
+                f"returned {', '.join(extra)}, which {part.file} does not read"
+            )
+        if problems:
+            raise part.call.refuse("; ".join(problems), self.namespace)
         for name in part.reads:
             ctx.values[f"{part.prefix}__{name}"] = values[name]
         return self._render(part.parts, ctx)
-
-    def _expand(self, call: _Expansion, ctx: Context) -> str:
-        return str(self._call(call, ctx))
 
     def _call(self, call: _Expansion, ctx: Context) -> Any:  # noqa: ANN401
         """Call a macro with the arguments of the call, and return what it returns."""
@@ -1368,7 +1357,7 @@ class _Expansion:
     args: tuple[tuple[str | None, tuple[_Part, ...] | None], ...]
     params: tuple[str, ...]
     template: str
-    """The template the call is written in, which an include makes another."""
+    """The name of the template the call is written in."""
     chain: Chain
 
     def refuse(self, problem: str, namespace: str) -> MacroArgumentError:
@@ -1386,7 +1375,7 @@ def _followed(value: Any, root: str, path: Sequence[str]) -> Any:  # noqa: ANN40
     """Return what `:root.path` reads: a key of a mapping, an attribute otherwise.
 
     A `None` on the way reads as `None` to the end, as an optional object
-    that was not given: `:filters.campaign.value` with no campaign.
+    that was not given: `:filters.team.id` with no team.
 
     Raises:
         ParameterPathError: if a step names nothing there.
@@ -1610,7 +1599,7 @@ def _written_in(sql: str, values: Mapping[str, Any]) -> str:
     written: list[str] = []
     done = 0
     for found in PARAMETER_IN_TEXT.finditer(sql):
-        name = found.group(1)
+        name = found.group("param")
         value = values.get(name) if name else None
         if not isinstance(value, Inline):
             continue
@@ -1627,9 +1616,7 @@ def _written_in(sql: str, values: Mapping[str, Any]) -> str:
 
 
 PARAMETER_IN_TEXT = re.compile(
-    r"""'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|/\*.*?\*/"""
-    r"|(?<![:\w\\]):([A-Za-z_]\w*)",
-    re.DOTALL,
+    rf"{_LITERAL}|(?<![:\w\\]):(?P<param>[A-Za-z_]\w*)", re.DOTALL
 )
 """A `:parameter`, past the strings and comments that may hold a colon."""
 
@@ -1795,7 +1782,7 @@ def array(ctx: Context, values: Param, type_name: Sql = Sql("")) -> str:  # noqa
     written = type_name.strip().strip("'")
     if written and not _TYPE_NAME.fullmatch(written):
         problem = (
-            f"the type is a name such as 'text' or 'integer', got {type_name.strip()}"
+            f"takes a type name such as 'text' or 'integer', got {type_name.strip()}"
         )
         raise MacroArgumentError(array.name, problem)
     items = values.value
@@ -1817,12 +1804,16 @@ def array(ctx: Context, values: Param, type_name: Sql = Sql("")) -> str:  # noqa
 _JOINS_CONDITIONS = re.compile(r"\b(AND|OR)\b", re.IGNORECASE)
 
 
+@lru_cache(maxsize=1024)
 def _grouped(sql: str) -> str:
     """Return a condition in brackets when it joins others with `AND` or `OR`.
 
     Only a join outside brackets and strings counts: `(a OR b)` and `'a or b'`
-    stay as they are.
+    stay as they are. A branch holds placeholders, not values, so the texts it
+    sees are few, and each is read once.
     """
+    if not _JOINS_CONDITIONS.search(sql):
+        return sql
     scanner = _Scanner(sql, "", NAMESPACE)
     depth = index = 0
     while index < len(sql):
@@ -1981,7 +1972,7 @@ def icollate(
     ```
 
     `COLLATE(column, ...)` on Snowflake, under ``collation``: `'en-ci'` unless it says
-    `'und-ci-ai'` to ignore accents as well. `lower()` elsewhere, which minds
+    `'en-ci-ai'` to ignore accents as well. `lower()` elsewhere, which minds
     accents, and the column as it is on MySQL, which compares without regard
     to case already.
 
@@ -2005,15 +1996,14 @@ def between(
     """Keep a column within a range whose ends may each be missing.
 
     ```sql
-    AND tpl.between(ir.date, :date_from, :date_to)
+    AND tpl.between(o.created_on, :date_from, :date_to)
     AND tpl.between(created_at, :since, :until, '[)')
     ```
 
     `BETWEEN` when both ends are there, `>=` or `<=` when one is, `TRUE` when
     neither is: an end holds no value as in `if_set`. ``bounds`` is `'[]'`,
     which includes the end as `BETWEEN` does, or `'[)'`, which leaves it out,
-    as a range of times wants. A start after the end is data, and matches
-    nothing.
+    as a range of times wants. A start after the end matches no rows.
     """
     has_start, has_end = _is_set(start.value), _is_set(end.value)
     closed = bounds == "'[]'"
@@ -2084,13 +2074,14 @@ def values_table(ctx: Context, rows: Param) -> str:
     """Write a small table out in the query, one parameter per value.
 
     ```sql
-    SELECT column1 AS position, column2 AS name FROM tpl.values(:segments) AS v
+    SELECT column1 AS position, column2 AS name FROM tpl.values(:rows) AS v
     ```
 
     Rows are tuples or lists of one length; a plain value is a row of one
-    column. The columns are `column1`, `column2`, ... on every database: MySQL
-    and MariaDB name the columns of `VALUES` otherwise, so there it is written
-    as `SELECT ... UNION ALL SELECT ...`. Name them in the select list, since
+    column. The columns are `column1`, `column2`, ... on every database. MySQL
+    and MariaDB name the columns of `VALUES` otherwise, and Oracle wants them
+    named, so there it is written as `SELECT ... UNION ALL SELECT ...`, from
+    `dual` on Oracle. Name them in the select list, since
     MariaDB takes no `AS v (position, name)`. The database works out the types,
     and PostgreSQL wants one type down a column: cast where the rows mix them.
 
@@ -2118,12 +2109,17 @@ def values_table(ctx: Context, rows: Param) -> str:
             raise MacroArgumentError(values_table.name, problem)
     name = _named(rows)
     bound = [[ctx.bind(value, name) for value in row] for row in table]
-    if ctx.dialect in ("mysql", "mariadb"):
+    if ctx.dialect in ("mysql", "mariadb", "oracle"):
         first, *rest = bound
         named = ", ".join(
             f"{value} AS column{index}" for index, value in enumerate(first, 1)
         )
-        selects = [f"SELECT {named}", *(f"SELECT {', '.join(row)}" for row in rest)]
+        # Oracle selects from something, and `dual` is the table of one row.
+        source = " FROM dual" if ctx.dialect == "oracle" else ""
+        selects = [
+            f"SELECT {named}{source}",
+            *(f"SELECT {', '.join(row)}{source}" for row in rest),
+        ]
         return f"({' UNION ALL '.join(selects)})"
     written = ", ".join(f"({', '.join(row)})" for row in bound)
     return f"(VALUES {written})"
@@ -2134,8 +2130,9 @@ def json_object(ctx: Context, *pairs: Sql) -> str:
     """Build a JSON object of keys and values: `json_object('id', id, 'name', name)`.
 
     `JSON_BUILD_OBJECT` on PostgreSQL, `OBJECT_CONSTRUCT_KEEP_NULL` on
-    Snowflake, and `JSON_OBJECT` on MySQL, MariaDB and SQLite. A key whose
-    value is `NULL` stays in the object on every one of them.
+    Snowflake, `JSON_OBJECT` on MySQL, MariaDB and SQLite, and `JSON_OBJECT`
+    with `key VALUE value` pairs on Oracle. A key whose value is `NULL` stays in
+    the object on every one of them.
 
     Raises:
         MacroArgumentError: on another database.
@@ -2149,7 +2146,14 @@ def json_object(ctx: Context, *pairs: Sql) -> str:
         mysql="JSON_OBJECT",
         mariadb="JSON_OBJECT",
         sqlite="json_object",
+        oracle="JSON_OBJECT",
     )
+    if ctx.dialect == "oracle":
+        keyed = [
+            f"{key} VALUE {value}"
+            for key, value in zip(*[iter(pairs)] * 2, strict=True)
+        ]
+        return f"{name}({', '.join(keyed)} NULL ON NULL)"
     return f"{name}({', '.join(pairs)})"
 
 
@@ -2172,9 +2176,9 @@ def array_agg(ctx: Context, value: Sql, *order_by: Sql) -> str:
 def string_agg(ctx: Context, value: Sql, separator: Sql, *order_by: Sql) -> str:
     """Join the values of a group with the separator, in the order the rest name.
 
-    `STRING_AGG` on PostgreSQL, `LISTAGG ... WITHIN GROUP` on Snowflake,
-    `GROUP_CONCAT ... SEPARATOR` on MySQL and MariaDB, and `group_concat` on
-    SQLite, which takes an order from 3.44 on.
+    `STRING_AGG` on PostgreSQL, `LISTAGG ... WITHIN GROUP` on Snowflake and
+    Oracle, `GROUP_CONCAT ... SEPARATOR` on MySQL and MariaDB, and
+    `group_concat` on SQLite, which takes an order from 3.44 on.
 
     Raises:
         MacroArgumentError: on another database.
@@ -2188,11 +2192,12 @@ def string_agg(ctx: Context, value: Sql, separator: Sql, *order_by: Sql) -> str:
         mysql=True,
         mariadb=True,
         sqlite=True,
+        oracle=True,
     )
     order = f" ORDER BY {', '.join(order_by)}" if order_by else ""
     if ctx.dialect in ("mysql", "mariadb"):
         return f"GROUP_CONCAT({value}{order} SEPARATOR {separator})"
-    if ctx.dialect == "snowflake":
+    if ctx.dialect in ("snowflake", "oracle"):
         return _aggregate(ctx, "LISTAGG", [value, separator], order_by)
     name = "group_concat" if ctx.dialect == "sqlite" else "STRING_AGG"
     return f"{name}({value}, {separator}{order})"
@@ -2206,7 +2211,7 @@ def _aggregate(
     if not order_by:
         return f"{name}({written})"
     order = f"ORDER BY {', '.join(order_by)}"
-    if ctx.dialect == "snowflake":
+    if ctx.dialect in ("snowflake", "oracle"):
         return f"{name}({written}) WITHIN GROUP ({order})"
     return f"{name}({written} {order})"
 
@@ -2233,13 +2238,12 @@ def on_dialect(ctx: Context, branch: Sql, *branches: Sql) -> str:
     """Write the SQL of the database in hand: `postgresql = a, snowflake = b`.
 
     ```sql
-    FROM tpl.on_dialect(postgresql = dim_country, snowflake = facts.prod.dim_country)
+    FROM tpl.on_dialect(postgresql = countries, snowflake = analytics.prod.countries)
     ```
 
-    `default = ...` is for every database not named. A way out rather than a
-    first choice: a macro that names the difference, as `icontains` does, says
-    more, and this is for what nothing names, such as a table that lives
-    elsewhere.
+    `default = ...` is for every database not named. Prefer a macro that names
+    the difference, such as `icontains`. This is for what none covers, such as
+    a table that lives elsewhere.
 
     Raises:
         MacroArgumentError: if a branch is not `name = sql`, or none is for the
@@ -2272,7 +2276,7 @@ def _for_dialect(ctx: Context, macro: str, **forms: Any) -> Any:  # noqa: ANN401
 
     """
     if ctx.dialect not in forms:
-        problem = f"has no form for {ctx.dialect}: it writes {', '.join(forms)}"
+        problem = f"has no form for {ctx.dialect}, only for {', '.join(forms)}"
         raise MacroArgumentError(macro, problem)
     return forms[ctx.dialect]
 
@@ -2289,11 +2293,11 @@ def identifier(ctx: Context, name: Param, *allowed: Sql) -> str:
     `order_by` matches a sort string, and written as the template lists them:
 
     ```sql
-    SELECT tpl.identifier(:column, id, name, fans = fans_count) FROM artists
+    SELECT tpl.identifier(:column, id, name, created = created_at) FROM users
     ```
 
-    A name that comes from a request wants the list: quoting keeps SQL out, but
-    not a column the table does not have.
+    Pass the list for a name that comes from a request: quoting stops
+    injection, not an unknown column.
     """
     value = name.value
     if allowed:
@@ -2421,7 +2425,8 @@ class Templates:
         """Return the files of SQL macros in the template directories.
 
         A file is one when its name ends in `macros.sql`: `_macros.sql`,
-        `tenant.macros.sql`. Nothing registers it.
+        `tenant.macros.sql`. These are registered without being listed in
+        `macros`.
         """
         return sorted(
             path
@@ -2478,9 +2483,9 @@ class Templates:
         }
         found = {
             path.relative_to(root).as_posix()
-            for root in map(Path, self.paths)
+            for root in (Path(path).resolve() for path in self.paths)
             for path in root.rglob("*.sql")
-            if path.resolve() not in macro_files
+            if path not in macro_files
         }
         return sorted(found)
 
@@ -2513,8 +2518,7 @@ class Templates:
         """Read every `.sql` template, so a broken one fails where deploys do.
 
         Raises:
-            SQLNotConfiguredError: if there is nowhere to look, which makes checking
-                a lie rather than a pass.
+            SQLNotConfiguredError: if no template path was given.
             MacroSyntaxError: if a template cannot be read.
             UnknownMacroError: if it calls a macro nobody registered.
             MacroArgumentError: if a call has arguments its macro cannot take.
@@ -2531,8 +2535,7 @@ class Templates:
 class BaseSQLQuery(Generic[RowT, DatabaseT]):
     """The source of the SQL, its context, and the type its rows become.
 
-    Built by `db.sql(...)`. Nothing can be narrowed: what the SQL selects is
-    what comes back.
+    Built by `db.sql(...)`. The SQL alone decides the rows.
     """
 
     def __init__(  # noqa: PLR0913 - the shape of a query, not a call site
@@ -2588,8 +2591,8 @@ class BaseSQLQuery(Generic[RowT, DatabaseT]):
     def _as(self, query: type[QueryT], **changes: Any) -> QueryT:  # noqa: ANN401
         """Return the same template read another way, as another class.
 
-        The classes are the API: what a query no longer offers, it no longer
-        has, so `typed()` cannot be called on rows that carry a type already.
+        Each class offers only the methods valid for its state, so `typed()`
+        cannot be called on rows that carry a type already.
         """
         arguments = {
             "inline": self.inline,
@@ -2629,7 +2632,9 @@ def require_pydantic() -> None:
         MissingDependencyError: if it is not.
 
     """
-    _required(TypeAdapter, "pydantic", "`typed()`")
+    if TypeAdapter is None:
+        package, needed_by = "pydantic", "`typed()`"
+        raise MissingDependencyError(package, needed_by)
 
 
 def templates_of(db: BaseDatabase[Any, Any]) -> Templates:
@@ -2639,23 +2644,6 @@ def templates_of(db: BaseDatabase[Any, Any]) -> Templates:
         templates = Templates() if templates is None else Templates(templates)
         db.templates = templates
     return templates
-
-
-def _required(
-    module: Any,  # noqa: ANN401
-    package: str,
-    needed_by: str,
-    install: str | None = None,
-) -> Any:  # noqa: ANN401
-    """Return it, or say what to install.
-
-    Raises:
-        MissingDependencyError: if the import failed.
-
-    """
-    if module is None:
-        raise MissingDependencyError(package, needed_by, install)
-    return module
 
 
 def _statement(
@@ -2696,14 +2684,25 @@ _CAST_AFTER = re.compile(r"(?<![:\w\\])(:[A-Za-z_]\w*)(?=::)")
 """A parameter a cast follows, `:id::uuid`, which `text()` does not read as one."""
 
 
-@lru_cache(maxsize=1024)
+_CACHED_TEXT = 8192
+"""The longest SQL `_text` keeps. `tpl.values` writes a parameter per value, so
+each row count is new SQL, and a clause holds a bind parameter for each."""
+
+
 def _text(sql: str) -> tuple[sa.TextClause, frozenset[str]]:
     """Return the SQL as `text()`, and the names of the parameters it holds.
 
     Reading the parameters out of the SQL is most of what building a statement
     costs, and a template renders the same SQL whenever its values have the same
-    shape. Sharing the clause is safe: `bindparams` returns a copy.
+    shape. Sharing the clause is safe: `bindparams` returns a copy. SQL longer
+    than `_CACHED_TEXT` is read each time, which costs little next to running it.
     """
+    return _parsed(sql) if len(sql) <= _CACHED_TEXT else _parsed.__wrapped__(sql)
+
+
+@lru_cache(maxsize=1024)
+def _parsed(sql: str) -> tuple[sa.TextClause, frozenset[str]]:
+    """Read the SQL into `text()` and the names of its parameters: see `_text`."""
     sql = _CAST_AFTER.sub(r"\1 ", _POSIX_CLASS.sub(r"[\\:\1\\:]", sql))
     clause = sa.text(sql)
     named = frozenset(

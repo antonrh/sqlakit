@@ -298,7 +298,7 @@ A dotted name reads an attribute of the value, or a key of a mapping, so a
 caller passes the object it has rather than taking it apart:
 
 ```python
-rows = db.sql("users/search.sql", criteria=criteria).all()
+rows = db.sql("users/search.sql", criteria=criteria, status=Status).all()
 ```
 
 ```sql
@@ -520,7 +520,7 @@ read, with each argument's text where the expression names it:
 template's own, and the macros in the expression expand as they would in the
 template.
 
-Name the file so that it ends in `macros.sql`, `_macros.sql` or
+Name the file so that it ends in `macros.sql`, such as `_macros.sql` or
 `tenant.macros.sql`, and put it in a template directory: the templates find it,
 and nothing registers it. It isn't a template itself, so `db.sql(...)` won't
 read it. A file elsewhere goes in `macros=` by its path, next to the rest:
@@ -645,7 +645,7 @@ macros: 3 in Python, 1 file of SQL macros
 dialect: postgresql (app/db.py:10)
 
 app/sql/users/search.sql:4:7: Unknown macro tpl.nope in users/search.sql:4; ...
-12 templates, 1 problems
+12 templates, 1 problem
 ```
 
 It exits with `1` when it finds a problem, so it fits CI and a pre-commit hook.
