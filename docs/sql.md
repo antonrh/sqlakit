@@ -702,17 +702,22 @@ $ pip install sqlakit-lsp
 In a `.sql` template it gives:
 
 - the problems `sqlakit check` finds, as you type
-- completion after `tpl.` and in `tpl.include('`
-- the macro's signature and docstring on hover
+- completion after `tpl.` and in `tpl.include('`, and the arguments of a macro
+  while you write them
+- on hover, the SQL a call writes on the project's dialect, with its parameters
+  given and not, above the macro's signature and docstring
 - go to definition on a macro, to its function or its SQL, and on an included
   template, to the file
 - find references: every call of a macro, from a call or from its definition,
   and everything that reads a template, `tpl.include` and `db.sql(...)`, asked
   from anywhere in the template
+- rename a macro of the project, its definition and every call, or a template,
+  its file and every name that reads it
 
 In your Python, the name in `db.sql("users/search.sql")`, `from_file` or
 `from_sql` completes, links to the file, and is marked when no template
-directory holds it.
+directory holds it. A value the call passes by a name the template does not
+read is marked, and the names it reads complete inside the call.
 
 The server talks over stdio. Register `sqlakit-lsp` for `.sql` and `.py` files,
 next to the language servers you already run for them. In Neovim 0.11:
