@@ -1611,10 +1611,41 @@ def _as_bound(sql: str, values: Mapping[str, Any], dialect: str) -> str:
         written = "0" if clause.upper() == "OFFSET" else _UNLIMITED.get(dialect)
         return found.group() if written is None else f"{clause}{space}{written}"
 
-    sql = _LIMIT.sub(limit, _IN_ONE.sub(in_list, sql))
+    sql = _substituted(_LIMIT, limit, _substituted(_IN_ONE, in_list, sql))
     if not any(isinstance(value, Inline) for value in values.values()):
         return sql
     return _written_in(sql, values)
+
+
+def _substituted(
+    pattern: re.Pattern[str], write: Callable[[re.Match[str]], str], sql: str
+) -> str:
+    """Return `pattern.sub(write, sql)`, the pattern searched once for each SQL.
+
+    A template renders the same SQL whenever its values have the same shape, and
+    searching it is most of what `_as_bound` costs; SQL longer than
+    `_CACHED_TEXT` is searched each time, as `_text` reads it.
+    """
+    found = (
+        _found(pattern, sql)
+        if len(sql) <= _CACHED_TEXT
+        else tuple(pattern.finditer(sql))
+    )
+    if not found:
+        return sql
+    parts: list[str] = []
+    done = 0
+    for match in found:
+        parts.extend((sql[done : match.start()], write(match)))
+        done = match.end()
+    parts.append(sql[done:])
+    return "".join(parts)
+
+
+@lru_cache(maxsize=1024)
+def _found(pattern: re.Pattern[str], sql: str) -> tuple[re.Match[str], ...]:
+    """Return each match of the pattern in the SQL, kept for `_substituted`."""
+    return tuple(pattern.finditer(sql))
 
 
 def _written_in(sql: str, values: Mapping[str, Any]) -> str:

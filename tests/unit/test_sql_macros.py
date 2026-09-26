@@ -1282,6 +1282,22 @@ def test_a_list_in_brackets_binds_as_a_list(db: Database, tmp_path: Path) -> Non
     assert names(db, "users/in.sql", teams="blue") == ["bob"]
 
 
+def test_the_same_sql_binds_as_each_call_asks() -> None:
+    short = "WHERE team IN (:teams) LIMIT :limit"
+    long = f"{short} -- {'x' * sql_module._CACHED_TEXT}"
+    dialect = postgresql.dialect()
+
+    for source in (short, long):
+        rest = source.removeprefix(short)
+        assert bound(source, dialect, teams=["a"], limit=None) == (
+            f"WHERE team IN :teams LIMIT ALL{rest}"
+        )
+        assert bound(source, dialect, teams="a", limit=5) == source
+        assert bound(source, dialect, teams=["a"], limit=None) == (
+            f"WHERE team IN :teams LIMIT ALL{rest}"
+        )
+
+
 @pytest.mark.parametrize(
     ("source", "values", "postgres", "on_snowflake"),
     [
