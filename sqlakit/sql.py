@@ -9,7 +9,6 @@ from ._query import merged
 from ._sql import (
     BaseSQLQuery,
     Context,
-    Filter,
     Inline,
     Param,
     Sql,
@@ -32,7 +31,6 @@ if TYPE_CHECKING:
 __all__ = [
     "SQL",
     "Context",
-    "Filter",
     "Inline",
     "Param",
     "SQLQuery",

@@ -133,7 +133,7 @@ class Project:
             MacroArgumentError: if a call has arguments its macro cannot take.
 
         """
-        engine = self.templates.macro_engine
+        engine = self.templates.engine
         return MacroTemplate(
             name,
             source,
@@ -322,14 +322,6 @@ def load_project(start: Path | None = None) -> Project:
         listed = ", ".join(f"`{path}`" for path in missing)
         problem = f"{listed} is not a directory, and templates are looked for in one"
         raise ProjectConfigError(problem)
-    if not paths and found.jinja:
-        where = ", ".join(found.jinja)
-        problem = (
-            f"the templates of `Templates(engine='jinja')` ({where}) are Jinja, "
-            f"which `sqlakit check`, `export` and the editor do not read: move "
-            f"them to `tpl`, as the migrate-from-jinja skill describes"
-        )
-        raise ProjectConfigError(problem)
     if not paths:
         problem = (
             f"no code under {root} builds `Templates(...)` with a path it can read, "
@@ -360,10 +352,7 @@ def load_project(start: Path | None = None) -> Project:
     if "paths" in config:
         origins.update(dict.fromkeys(paths, "pyproject.toml"))
     project = Project(root, templates, config.get("dialect", found.dialect))
-    summary = _found(project, origins, python_macros)
-    if found.jinja:
-        summary = (*summary, f"jinja: not read ({', '.join(found.jinja)})")
-    return replace(project, found=summary)
+    return replace(project, found=_found(project, origins, python_macros))
 
 
 def _found(

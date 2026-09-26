@@ -794,35 +794,6 @@ The DDL is written for PostgreSQL or Snowflake: another dialect gets the
 PostgreSQL one. Run the command again when a macro changes, and
 `sqlakit export pycharm --check` fails in CI when the files are out of date.
 
-## Jinja templates
-
-A project that wrote its templates in `Jinja` before SQLAKit 0.21 keeps them
-working for one release with `engine="jinja"`. Install the extra that reads
-them:
-
-```console
-$ pip install "sqlakit[sql]"
-```
-
-```python
-from sqlakit import Database
-from sqlakit.sql import Templates
-
-db = Database("sqlite://", templates=Templates("app/sql", engine="jinja"))
-```
-
-The templates render the way they did, with `filters=` and `globals=`, and
-`Templates` raises a `DeprecationWarning`. The mode goes in 0.22. A
-`Templates` reads one engine: `macros=` and `namespace=` are refused with
-`engine="jinja"`, and `filters=` and `globals=` without it. `sqlakit check`,
-`export` and `sqlakit-lsp` leave a `Jinja` directory alone.
-
-Move the templates to a new directory of `tpl` templates, and point the
-database at it once they are all there. The
-[`migrate-from-jinja`](https://github.com/sqlakit/sqlakit/tree/main/.claude/skills/migrate-from-jinja)
-skill has the mapping from `Jinja` to macros, and how to compare the old SQL
-with the new.
-
 ## Async templates
 
 The same methods in `sqlakit.asyncio`, awaited:
