@@ -559,9 +559,9 @@ Templates(BASE_DIR, macros=["app.sql.macros", SHARED_DIR / "tenant.sql"])
 ```
 
 The file is SQL a linter reads like a template, with each argument declared as
-a table, so it checks the references in the expression too. `check()`,
-`sqlakit check` and `sqlakit-lsp` read it as well: an unknown macro in a body
-is reported on its line in the file.
+a table, so it checks the references in the expression too. `check()` and
+`sqlakit check` read it as well: an unknown macro in a body is reported on its
+line in the file.
 
 ## Macros with their SQL in a file
 
@@ -681,9 +681,8 @@ It exits with `1` when it finds a problem, so it fits CI and a pre-commit hook.
 `--format json` prints a list of `path`, `line`, `column` and `message` for a
 tool to read, and `--project app` checks the project around another directory.
 
-There's nothing to configure. `sqlakit check`, `sqlakit export` and
-`sqlakit-lsp` read your code without running it, and find what the application
-already says:
+There's nothing to configure. `sqlakit check` and `sqlakit export` read your
+code without running it, and find what the application already says:
 
 - the template directories, the files of SQL macros and the namespace, from the
   `Templates(...)` you build
@@ -720,56 +719,6 @@ macros are always found by their decorator. The application never reads this
 table.
 
 ## Editor support
-
-[`sqlakit-lsp`](https://github.com/sqlakit/sqlakit-lsp) is a language server for your templates. It is a
-package of its own:
-
-```console
-$ pip install sqlakit-lsp
-```
-
-In a `.sql` template it gives:
-
-- the problems `sqlakit check` finds, as you type
-- completion after `tpl.` and in `tpl.include('`, and the arguments of a macro
-  while you write them
-- on hover, the SQL a call writes on the project's dialect, with its parameters
-  given and not, above the macro's signature and docstring
-- go to definition on a macro, to its function or its SQL, and on an included
-  template, to the file, and go to implementation from a macro's SQL file to
-  its function and back
-- the name in `tpl.include('...')` as a link to the file
-- find references: every call of a macro, from a call or from its definition,
-  and everything that reads a template, `tpl.include` and `db.sql(...)`, asked
-  from anywhere in the template
-- rename a macro of the project, its definition and every call, or a template,
-  its file and every name that reads it
-- the macros' calls and the parameters coloured, where the editor takes colours
-  from the server: in Zed, `"semantic_tokens": "combined"` in the settings
-- a parameter no call of the project passes, marked, and a warning with a
-  quick fix when a call passes a name close to it
-- **Show rendered SQL**, a code action that opens the whole template as the
-  SQL it writes, the parameters left as placeholders
-- the outline of a template, with the templates it includes, the macros it
-  calls and its parameters, and a search for a macro or a template across the
-  project
-
-In your Python, the name in `db.sql("users/search.sql")`, `from_file` or
-`from_sql` completes, links to the file, and is marked when no template
-directory holds it. A value the call passes by a name the template does not
-read is marked, and the names it reads complete inside the call.
-
-The server talks over stdio. Register `sqlakit-lsp` for `.sql` and `.py` files,
-next to the language servers you already run for them. In Neovim 0.11:
-
-```lua
-vim.lsp.config("sqlakit", {
-  cmd = { "sqlakit-lsp" },
-  filetypes = { "sql", "python" },
-  root_markers = { "pyproject.toml" },
-})
-vim.lsp.enable("sqlakit")
-```
 
 PyCharm and DataGrip check SQL against a database schema, so every `tpl.`
 call reads as an unknown function there. `sqlakit export pycharm` writes a
