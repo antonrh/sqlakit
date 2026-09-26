@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import tempfile
 import tomllib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ._project import LINT_EXCLUDED
 from .exceptions import ProjectConfigError
@@ -112,10 +112,6 @@ def _dialect(sqruff: dict, given: str | None, project: Project) -> str | None:
     return _DIALECTS.get(chosen or "", chosen)
 
 
-_UNPARSABLE = re.compile(r"^L:\s*(\d+) \| P:\s*8 \| \S+ \| Unparsable", re.MULTILINE)
-"""A line `sqruff` cannot read, at the name after `SELECT `."""
-
-
 def _kept(project: Project, dialect: str | None) -> set[str]:
     """Return the parameter names `sqruff` cannot read as a column in the dialect.
 
@@ -126,7 +122,8 @@ def _kept(project: Project, dialect: str | None) -> set[str]:
     names = sorted(project.parameter_names())
     if binary is None or not names:
         return set()
-    command = [binary, "lint", "--parsing-errors", "-"]
+    # JSON, as the report of its own is another shape on GitHub Actions.
+    command = [binary, "lint", "--parsing-errors", "--format", "json", "-"]
     if dialect:
         command[2:2] = ["--dialect", dialect]
     source = "".join(f"SELECT {name};\n" for name in names)
@@ -140,10 +137,27 @@ def _kept(project: Project, dialect: str | None) -> set[str]:
             cwd=empty,
             check=False,
         )
-    # It writes the report to standard error when that is not a terminal.
-    report = found.stdout + found.stderr
-    lines = {int(line) for line in _UNPARSABLE.findall(report)}
+    lines = {
+        problem["range"]["start"]["line"]
+        for problems in _report(found.stdout, found.stderr).values()
+        for problem in problems
+        # The name starts after `SELECT `, at the eighth character.
+        if problem.get("message") == "Unparsable section"
+        and problem["range"]["start"]["character"] == len("SELECT ") + 1
+    }
     return {name for number, name in enumerate(names, 1) if number in lines}
+
+
+def _report(*outputs: str) -> dict[str, list[dict[str, Any]]]:
+    """Return the JSON report, from whichever stream `sqruff` wrote it to."""
+    for output in outputs:
+        try:
+            report = json.loads(output)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(report, dict):
+            return report
+    return {}
 
 
 def _toml_value(value: object) -> str:
