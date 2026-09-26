@@ -775,6 +775,24 @@ def test_auto_reload_reads_a_changed_included_file(tmp_path: Path) -> None:
         assert db.sql("outer.sql").scalars().one() == 2
 
 
+def test_an_included_template_is_read_once_while_its_file_stays(
+    tmp_path: Path,
+) -> None:
+    write(tmp_path, {"inner.sql": "SELECT 1 AS n"})
+    engine = Templates(tmp_path).engine
+    outer = "SELECT n FROM tpl.include('inner.sql') AS i"
+
+    first = engine.included("inner.sql", (("<string>", 1),))
+    assert engine.included("inner.sql", (("<string>", 1),)) is first
+    assert engine._from_string(outer).includes == {"inner.sql": first.mtime}
+
+    path = tmp_path / "inner.sql"
+    path.write_text("SELECT 2 AS n")
+    stat = path.stat()
+    os.utime(path, (stat.st_atime, stat.st_mtime + 1))
+    assert engine.included("inner.sql", (("<string>", 1),)) is not first
+
+
 def snowflake() -> sa.Dialect:
     dialect = default.DefaultDialect()
     dialect.name = "snowflake"

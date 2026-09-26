@@ -139,7 +139,7 @@ class Project:
             source,
             self.templates.macros,
             namespace=self.templates.namespace,
-            load=engine._read,  # noqa: SLF001 - the engine reads its includes
+            include=engine.included,
         )
 
     def problems(self) -> Iterator[Problem]:

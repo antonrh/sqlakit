@@ -19,10 +19,23 @@ WHERE team IN (:teams)
 ORDER BY tpl.order_by(:sort, id, name)
 ```
 
-Every tool that reads SQL reads this file as it is: `tpl.if_set` is a function
-in a schema named `tpl`, and `:teams` is a parameter. A formatter formats it
-and a linter checks it without a context. Values are bound, so they never
-reach the SQL text itself.
+Values are bound, so they never reach the SQL text itself.
+
+### Why this syntax?
+
+A template is valid SQL, and the syntax exists for that. `tpl.if_set(...)` is
+a call of a function in a schema named `tpl`, and `:teams` is a parameter, the
+way SQL writes both. So every tool that reads SQL reads a template as it is,
+with no context and no plugin:
+
+- a formatter or a linter, such as `sqruff` or `sqlfluff`
+- the SQL support of an editor, and PyCharm or DataGrip
+- a database console, once the parameters have values
+
+A template language such as `Jinja` puts `{% if %}` and `{{ x }}` between the
+SQL, so a tool that reads SQL sees a file it can't parse. The price of staying
+SQL is that the logic lives in macros, each a function you call, and not in
+statements between the lines.
 
 ## Template directories
 

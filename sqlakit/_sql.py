@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import importlib
 import importlib.util
 import inspect
@@ -990,7 +991,12 @@ class _Scanner:
         return start + lead, max(start + lead, end - (len(text) - len(text.rstrip())))
 
     def _line(self, index: int) -> int:
-        return self.source.count("\n", 0, index) + self.first_line
+        return bisect.bisect_right(self._newlines, index - 1) + self.first_line
+
+    @cached_property
+    def _newlines(self) -> list[int]:
+        """The offset of each line break, for finding a line without counting."""
+        return [found.start() for found in re.finditer("\n", self.source)]
 
     def _error(self, problem: str, index: int) -> MacroSyntaxError:
         return MacroSyntaxError(
@@ -1050,7 +1056,7 @@ class MacroTemplate:
         mtime: float = 0,
         namespace: str = NAMESPACE,
         *,
-        load: Callable[[str], tuple[str, float]] | None = None,
+        include: Callable[[str, Chain], MacroTemplate] | None = None,
         chain: tuple[tuple[str, int], ...] = (),
         expanding: tuple[str, ...] = (),
         first_line: int = 1,
@@ -1062,7 +1068,8 @@ class MacroTemplate:
         self.mtime = mtime
         self.macros = macros
         self.namespace = namespace
-        self.load = load
+        self.include = include
+        """Return an included template, read in the chain of includes given."""
         self.chain = chain
         """The templates this one was included from, and the line of each call."""
         self.includes: dict[str, float] = {}
@@ -1182,7 +1189,7 @@ class MacroTemplate:
             text,
             self.macros,
             namespace=self.namespace,
-            load=self.load,
+            include=self.include,
             chain=(*self.chain, (self.name, call.line)),
             expanding=(*self.expanding, macro.name),
             first_line=macro.statement.body_line,
@@ -1208,7 +1215,7 @@ class MacroTemplate:
             macro.expanded(written),
             self.macros,
             namespace=self.namespace,
-            load=self.load,
+            include=self.include,
             chain=(*self.chain, (self.name, call.line)),
             expanding=(*self.expanding, macro.name),
             first_line=macro.body_line,
@@ -1225,28 +1232,16 @@ class MacroTemplate:
         if name in {template for template, _ in chain}:
             cycle = " -> ".join((*(template for template, _ in chain), name))
             raise self._refuse(INCLUDE, f"includes itself: {cycle}", call)
-        if self.load is None:
+        if self.include is None:
             problem = "has no template paths to read from"
             raise self._refuse(INCLUDE, problem, call)
         try:
-            source, mtime = self.load(name)
-        except MacroArgumentError as error:
-            raise self._refuse(INCLUDE, error.problem, call) from None
-        included = MacroTemplate(
-            name,
-            _without_semicolon(
-                source,
-                _Scanner(source, name, self.namespace, chain),
-            ),
-            self.macros,
-            mtime,
-            self.namespace,
-            load=self.load,
-            chain=chain,
-        )
-        self.includes.update({name: mtime, **included.includes})
+            included = self.include(name, chain)
+        except TemplateNotFoundError as error:
+            raise self._refuse(INCLUDE, str(error).rstrip("."), call) from None
+        self.includes.update({name: included.mtime, **included.includes})
         self.paths.update(included.paths)
-        return included._compiled
+        return included._compiled  # noqa: SLF001 - a template of this class
 
     def _flattened(self, match: re.Match[str]) -> str:
         """Write `:a.b` as the parameter it binds as, and leave the rest alone."""
@@ -1591,6 +1586,10 @@ def _arity(macro: Macro) -> str:
     return f"{macro.minimum} to {int(macro.maximum)}"
 
 
+_INCLUDED = 1024
+"""How many included templates an engine keeps, one per chain it was read in."""
+
+
 class MacroEngine:
     """Renders templates with `tpl.` macros, each file read once and kept."""
 
@@ -1607,9 +1606,14 @@ class MacroEngine:
         self.auto_reload = auto_reload
         self.namespace = namespace
         self._loaded: dict[str, MacroTemplate] = {}
+        self._included: dict[tuple[str, Chain], MacroTemplate] = {}
         self._from_string = lru_cache(maxsize=256)(
             lambda source: MacroTemplate(
-                "<string>", source, self.macros, namespace=namespace, load=self._read
+                "<string>",
+                source,
+                self.macros,
+                namespace=namespace,
+                include=self.included,
             )
         )
 
@@ -1653,10 +1657,41 @@ class MacroEngine:
             self.macros,
             path.stat().st_mtime,
             self.namespace,
-            load=self._read,
+            include=self.included,
         )
         self._loaded[name] = loaded
         return loaded
+
+    def included(self, name: str, chain: Chain) -> MacroTemplate:
+        """Return a template another includes, read once while no file changes.
+
+        It is kept for the chain of includes it was read in, which its errors
+        name. An editor reads the including text on each keystroke, and the
+        included ones are read from here.
+
+        Raises:
+            TemplateNotFoundError: if no path holds it.
+
+        """
+        key = (name, chain)
+        found = self._included.get(key)
+        if found is not None and not self._changed(found):
+            return found
+        path = self._find(name)
+        source = path.read_text(encoding="utf-8")
+        found = MacroTemplate(
+            name,
+            _without_semicolon(source, _Scanner(source, name, self.namespace, chain)),
+            self.macros,
+            path.stat().st_mtime,
+            self.namespace,
+            include=self.included,
+            chain=chain,
+        )
+        if len(self._included) >= _INCLUDED:
+            del self._included[next(iter(self._included))]
+        self._included[key] = found
+        return found
 
     def _changed(self, template: MacroTemplate) -> bool:
         """Whether the file, or a file it includes, changed since it was read."""
@@ -1668,19 +1703,6 @@ class MacroEngine:
             )
         except TemplateNotFoundError:
             return True
-
-    def _read(self, name: str) -> tuple[str, float]:
-        """Return an included template's source, and when it changed.
-
-        Raises:
-            MacroArgumentError: if it is not under the paths.
-
-        """
-        try:
-            path = self._find(name)
-        except TemplateNotFoundError as error:
-            raise MacroArgumentError(INCLUDE, str(error).rstrip(".")) from None
-        return path.read_text(encoding="utf-8"), path.stat().st_mtime
 
     def _find(self, name: str) -> Path:
         pieces = name.split("/")
@@ -2727,7 +2749,7 @@ class Templates:
             macro.expanded([f":{param}" for param in macro.params]),
             self.macros if macros is None else macros,
             namespace=self.namespace,
-            load=self.engine._read,  # noqa: SLF001 - the engine reads includes
+            include=self.engine.included,
             expanding=(macro.name,),
             first_line=macro.body_line,
         )
