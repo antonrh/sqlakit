@@ -136,6 +136,7 @@ _MACRO_STATEMENT = re.compile(
 )
 """The statement an SQL macro is: `SELECT <expression> AS <name> FROM <arguments>`."""
 _COLUMN_AS = re.compile(r"\s*([A-Za-z_]\w*)\s*=(?!=)\s*(.+?)\s*", re.DOTALL)
+_BRANCH_NAMED = re.compile(r"\s*([A-Za-z_]\w*)\s*=(?!=)")
 _NULLS_AFTER = re.compile(r"\s*NULLS\b", re.IGNORECASE)
 
 
@@ -244,7 +245,7 @@ class Inline:
         ``name`` is a stage, qualified or not, `~` for the user's, or `%table`
         for a table's. ``path`` is parts of letters, digits, `_`, `.`, `-` and
         `=`, as a partition writes them, joined by `/` and ending in one for a
-        prefix. `..` and an empty part are refused.
+        prefix. `..`, `--` and an empty part are refused.
 
         Raises:
             InlineValueError: if either holds anything else.
@@ -255,7 +256,8 @@ class Inline:
         parts = path.split("/") if path else []
         prefix = bool(parts) and parts[-1] == ""
         for part in parts[:-1] if prefix else parts:
-            if part in (".", "..") or not _PATH_PART.fullmatch(part):
+            # `--` would start a comment, and cut off what follows on the line.
+            if part in (".", "..") or "--" in part or not _PATH_PART.fullmatch(part):
                 raise InlineValueError(
                     path, f"holds `{part}`, which a stage path does not"
                 )
@@ -387,15 +389,19 @@ class Macro:
         """Call the macro from another one, the way a template calls it.
 
         ```python
-        tpl.icontains("name", q)
+        tpl.icontains(Sql("name"), q)
         tpl.each([1, 2, 3])
         ```
 
-        The context is the render's, a string is SQL, and a value where a
-        `:parameter` goes is bound as one.
+        The context is the render's, and a value where a `:parameter` goes is
+        bound as one. Where SQL goes, a plain `str` is refused, as it could be a
+        value from a request: write `Sql("...")` for SQL of your own. An
+        argument the macro was given, a `Param`, and what another macro returns
+        are SQL already.
 
         Raises:
-            MacroArgumentError: if it needs a context and no template is rendering.
+            MacroArgumentError: if it needs a context and no template is rendering,
+                or a plain `str` stands where SQL goes.
 
         """
         if args and isinstance(args[0], Context):
@@ -405,13 +411,22 @@ class Macro:
         if ctx is None and self.context:
             raise _outside_a_template(self.name)
         converted = [self._converted(index, arg, ctx) for index, arg in enumerate(args)]
-        return self.func(*([ctx] if self.context else []), *converted)
+        written = self.func(*([ctx] if self.context else []), *converted)
+        # SQL for the next macro to take, as a macro writes SQL and not values.
+        return Sql(written) if type(written) is str else written
 
     def _converted(self, index: int, arg: Any, ctx: Context | None) -> Any:  # noqa: ANN401
         kind = self._kind_or_none(index)
         if kind is Param and not isinstance(arg, Param):
             return _Value(arg, ctx, self.name)
-        if kind is Sql and not isinstance(arg, Sql):
+        if kind is Sql and isinstance(arg, str) and not isinstance(arg, Sql):
+            problem = (
+                f"argument {index + 1} is SQL, and a plain `str` could be a value "
+                f"from a request: write `Sql(...)` for SQL of your own, or pass "
+                f"the `Param` for a value"
+            )
+            raise MacroArgumentError(self.name, problem)
+        if kind is Sql and not isinstance(arg, Sql | _Deferred):
             return Sql(arg)
         return arg
 
@@ -502,6 +517,10 @@ class SqlMacro(Macro):
             self.body if body is None else body,
         )
         return f"({written})"
+
+    def __call__(self, *_: Any) -> Any:  # noqa: ANN401
+        """Refuse, before the arguments: an SQL macro runs in a template."""
+        return self._from_python()
 
     def _from_python(self, *_: Any) -> str:  # noqa: ANN401
         problem = "is written in SQL, and expands in a template, not in Python"
@@ -1412,6 +1431,15 @@ class _Deferred:
     def strip(self) -> str:
         return str(self).strip()
 
+    def head(self) -> str:
+        """Return the text before the first macro's call, rendering nothing."""
+        written = []
+        for part in self._parts:
+            if not isinstance(part, str):
+                break
+            written.append(part)
+        return "".join(written)
+
 
 @dataclass(frozen=True, slots=True)
 class _Expansion:
@@ -1630,20 +1658,20 @@ def _as_bound(sql: str, values: Mapping[str, Any], dialect: str) -> str:
 
     `IN (:ids)` is how a linter reads a list, and a list binds as one expanding
     parameter, which writes the brackets itself: `IN :ids`. A `LIMIT :limit`
-    or an `OFFSET :offset` the call passes no value for takes every row and
-    skips none, on the databases that read no `NULL` there.
+    or an `OFFSET :offset` the call passes no value for, or `None`, takes every
+    row and skips none, on the databases that read no `NULL` there.
     """
 
     def in_list(found: re.Match[str]) -> str:
-        return (
-            f"IN :{found.group(1)}"
-            if _expands(values.get(found.group(1)))
-            else found.group()
+        value = values.get(found.group(1))
+        many = (
+            value.expanding if isinstance(value, sa.BindParameter) else _expands(value)
         )
+        return f"IN :{found.group(1)}" if many else found.group()
 
     def limit(found: re.Match[str]) -> str:
         clause, space, name = found.groups()
-        if name not in values or values[name] is not None:
+        if values.get(name) is not None:
             return found.group()
         written = "0" if clause.upper() == "OFFSET" else _UNLIMITED.get(dialect)
         return found.group() if written is None else f"{clause}{space}{written}"
@@ -1882,6 +1910,9 @@ def array(ctx: Context, values: Param, type_name: Sql = Sql("")) -> str:  # noqa
         )
         raise MacroArgumentError(array.name, problem)
     items = values.value
+    if isinstance(items, str | bytes):
+        problem = f"`:{values.name}` is a string, and takes a list"
+        raise MacroArgumentError(array.name, problem)
     if items is None:
         bound = None
     else:
@@ -1898,17 +1929,25 @@ def array(ctx: Context, values: Param, type_name: Sql = Sql("")) -> str:  # noqa
 
 
 _JOINS_CONDITIONS = re.compile(r"\b(AND|OR)\b", re.IGNORECASE)
+_CASE = re.compile(r"(?<!\w)CASE\b", re.IGNORECASE)
+_END = re.compile(r"(?<!\w)END\b", re.IGNORECASE)
+_NAMED_OR_SORTED = re.compile(
+    r"(?:\bAS\s+[\w\"`]+|\b(?:ASC|DESC))(?:\s+NULLS\s+(?:FIRST|LAST))?\s*$",
+    re.IGNORECASE,
+)
 
 
 @lru_cache(maxsize=1024)
 def _grouped(sql: str) -> str:
     """Return a condition in brackets when it joins others with `AND` or `OR`.
 
-    Only a join outside brackets and strings counts: `(a OR b)` and `'a or b'`
-    stay as they are. A branch holds placeholders, not values, so the texts it
-    sees are few, and each is read once.
+    Only a join outside brackets, `CASE ... END` and strings counts: `(a OR b)`
+    and `'a or b'` stay as they are. A column named with `AS`, or a sort term
+    ending in `ASC` or `DESC`, is no condition, and stays too. A branch holds
+    placeholders, not values, so the texts it sees are few, and each is read
+    once.
     """
-    if not _JOINS_CONDITIONS.search(sql):
+    if not _JOINS_CONDITIONS.search(sql) or _NAMED_OR_SORTED.search(sql):
         return sql
     scanner = _Scanner(sql, "", NAMESPACE)
     depth = index = 0
@@ -1918,9 +1957,9 @@ def _grouped(sql: str) -> str:
             index = skipped
             continue
         char = sql[index]
-        if char in "([{":
+        if char in "([{" or _CASE.match(sql, index):
             depth += 1
-        elif char in ")]}":
+        elif char in ")]}" or _END.match(sql, index):
             depth -= 1
         elif depth == 0 and _JOINS_CONDITIONS.match(sql, index):
             return f"({sql})"
@@ -2037,6 +2076,8 @@ def icontains(
     param = _PARAMETER.fullmatch(text)
     if param and param.group(1) in ctx.values:
         # A plain parameter: escape its value here, and bind the pattern.
+        if ctx.values[param.group(1)] is None:
+            return "FALSE"  # `None` holds no text, as `LIKE NULL` finds none
         value = str(ctx.values[param.group(1)])
         escaped = value.replace("!", "!!").replace("%", "!%").replace("_", "!_")
         pattern = ctx.bind(f"%{escaped}%", f"{param.group(1)}__like")
@@ -2244,6 +2285,9 @@ def json_object(ctx: Context, *pairs: Sql) -> str:
         sqlite="json_object",
         oracle="JSON_OBJECT",
     )
+    if len(pairs) % 2:
+        problem = f"takes keys and values in pairs, got {len(pairs)} arguments"
+        raise MacroArgumentError(json_object.name, problem)
     if ctx.dialect == "oracle":
         keyed = [
             f"{key} VALUE {value}"
@@ -2329,7 +2373,7 @@ def array_contains(ctx: Context, array: Sql, value: Sql) -> str:
     return f"{value} = ANY({array})"
 
 
-@sql_macro
+@sql_macro(lazy=True)
 def on_dialect(ctx: Context, branch: Sql, *branches: Sql) -> str:
     """Write the SQL of the database in hand: `postgresql = a, snowflake = b`.
 
@@ -2346,22 +2390,25 @@ def on_dialect(ctx: Context, branch: Sql, *branches: Sql) -> str:
             database in hand.
 
     """
-    written: dict[str, str] = {}
+    # Only the branch for the database in hand renders, so a macro in another,
+    # one this database has no form for, never runs.
+    named: dict[str, Sql | _Deferred] = {}
     for one in (branch, *branches):
-        named = _COLUMN_AS.fullmatch(one)
-        if named is None:
-            problem = f"takes `dialect = sql` branches, got {one.strip()!r}"
+        head = one.head() if isinstance(one, _Deferred) else str(one)
+        found = _BRANCH_NAMED.match(head)
+        if found is None:
+            problem = f"takes `dialect = sql` branches, got {head.strip()!r}"
             raise MacroArgumentError(on_dialect.name, problem)
-        written[named.group(1)] = named.group(2)
-    if ctx.dialect in written:
-        return written[ctx.dialect]
-    if "default" in written:
-        return written["default"]
-    problem = (
-        f"has no branch for {ctx.dialect}, and no `default = ...`: "
-        f"it has {', '.join(written)}"
-    )
-    raise MacroArgumentError(on_dialect.name, problem)
+        named[found.group(1)] = one
+    chosen = named.get(ctx.dialect, named.get("default"))
+    if chosen is None:
+        problem = (
+            f"has no branch for {ctx.dialect}, and no `default = ...`: "
+            f"it has {', '.join(named)}"
+        )
+        raise MacroArgumentError(on_dialect.name, problem)
+    written = _COLUMN_AS.fullmatch(str(chosen))
+    return written.group(2) if written is not None else str(chosen)
 
 
 def _for_dialect(ctx: Context, macro: str, **forms: Any) -> Any:  # noqa: ANN401
@@ -2404,10 +2451,13 @@ def identifier(ctx: Context, name: Param, *allowed: Sql) -> str:
             return offered[_field_named(value, offered)]
         except UnknownOrderFieldError:
             raise UnknownIdentifierError(value, offered) from None
+    if isinstance(value, Inline):
+        raise UnknownIdentifierError(value.text)
     parts = (value,) if isinstance(value, str) else tuple(value or ())
     if not parts or not all(isinstance(part, str) and part for part in parts):
         raise UnknownIdentifierError(value)
-    return ".".join(ctx.quote(part) for part in parts)
+    # A colon in a quoted name is the name's, and not a parameter to bind.
+    return ".".join(ctx.quote(part) for part in parts).replace(":", "\\:")
 
 
 @sql_macro
@@ -2424,6 +2474,9 @@ def each(ctx: Context, values: Param) -> str:
         MacroArgumentError: if the list is empty: `IN ()` is not SQL.
 
     """
+    if isinstance(values.value, str | bytes):
+        problem = f"`:{values.name}` is a string, and takes a list"
+        raise MacroArgumentError(each.name, problem)
     items = list(values.value or ())
     if not items:
         problem = f"`:{values.name}` is empty, and `IN ()` is not SQL"

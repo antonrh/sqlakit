@@ -573,7 +573,20 @@ def test_a_macro_that_binds_cannot_be_called_outside_a_template() -> None:
 
 
 def test_a_macro_that_only_writes_sql_can() -> None:
-    assert tpl.if_set(Param("q", None), "x = 1") == "TRUE"
+    assert tpl.if_set(Param("q", None), Sql("x = 1")) == "TRUE"
+
+
+def test_a_plain_str_where_sql_goes_is_refused_from_python() -> None:
+    ctx = Context("postgresql", postgresql.dialect().identifier_preparer, {})
+
+    # A value from a request reaches a macro as a str, and would be written in.
+    with pytest.raises(MacroArgumentError, match="argument 2 is SQL, and a plain"):
+        tpl.icontains(ctx, Sql("name"), "x') OR 1=1 --")
+
+    nested = tpl.if_set(
+        ctx, Param("q", 1), tpl.icontains(ctx, Sql("name"), Param("q", "a"))
+    )
+    assert "ILIKE" in nested
 
 
 @pytest.mark.parametrize(
@@ -1699,6 +1712,8 @@ def test_a_stage_is_written_as_snowflake_names_one(
         ("exports", "a//b"),
         ("exports", "a b.csv"),
         ("exports", "a';--"),
+        ("exports", "x--"),
+        ("exports", "a/--b/"),
     ],
 )
 def test_a_stage_that_is_not_one_is_refused(name: str, path: str) -> None:
