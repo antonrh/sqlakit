@@ -140,7 +140,7 @@ def discover(root: Path) -> Discovered:
     if not found.paths:
         found.paths = [
             directory
-            for directory, _ in _walk(root)
+            for directory, _ in walk(root)
             if directory.name == "sql" and directory != root
         ]
         for directory in found.paths:
@@ -152,13 +152,13 @@ def discover(root: Path) -> Discovered:
 
 
 def _python_files(root: Path) -> Iterator[Path]:
-    for directory, files in _walk(root):
+    for directory, files in walk(root):
         for name in files:
             if name.endswith(".py"):
                 yield directory / name
 
 
-def _walk(root: Path) -> Iterator[tuple[Path, list[str]]]:
+def walk(root: Path) -> Iterator[tuple[Path, list[str]]]:
     """Yield each directory of the project's own and its files, in order.
 
     A directory `SKIPPED` names, or a hidden one, is not entered at all: a

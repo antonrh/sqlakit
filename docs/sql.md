@@ -736,7 +736,9 @@ In a `.sql` template it gives:
 - on hover, the SQL a call writes on the project's dialect, with its parameters
   given and not, above the macro's signature and docstring
 - go to definition on a macro, to its function or its SQL, and on an included
-  template, to the file
+  template, to the file, and go to implementation from a macro's SQL file to
+  its function and back
+- the name in `tpl.include('...')` as a link to the file
 - find references: every call of a macro, from a call or from its definition,
   and everything that reads a template, `tpl.include` and `db.sql(...)`, asked
   from anywhere in the template
@@ -746,6 +748,11 @@ In a `.sql` template it gives:
   from the server: in Zed, `"semantic_tokens": "combined"` in the settings
 - a parameter no call of the project passes, marked, and a warning with a
   quick fix when a call passes a name close to it
+- **Show rendered SQL**, a code action that opens the whole template as the
+  SQL it writes, the parameters left as placeholders
+- the outline of a template, with the templates it includes, the macros it
+  calls and its parameters, and a search for a macro or a template across the
+  project
 
 In your Python, the name in `db.sql("users/search.sql")`, `from_file` or
 `from_sql` completes, links to the file, and is marked when no template
