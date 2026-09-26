@@ -6,6 +6,7 @@ import inspect
 import itertools
 import re
 from collections.abc import Mapping, Sized
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, is_dataclass
 from functools import cache, cached_property, lru_cache
@@ -47,7 +48,7 @@ from .exceptions import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Sequence
+    from collections.abc import Callable, Iterable, Iterator, Sequence
 
     from pydantic import BaseModel, TypeAdapter
     from sqlalchemy.sql import Executable
@@ -79,6 +80,26 @@ __all__ = [
 ]
 
 _context: ContextVar[Context] = ContextVar("sqlakit.macro_context")
+
+_calls_kept: ContextVar[bool] = ContextVar("sqlakit.calls_kept", default=False)
+
+
+@contextmanager
+def calls_kept() -> Iterator[None]:
+    """Write a call that cannot be made with the values at hand as the call itself.
+
+    An editor shows a template rendered with made-up values, or with none: a
+    call that cannot take them stays a call, its arguments written out, and the
+    rest renders. A macro read from its source, and never run, is such a call.
+    Outside this block, the call raises as it always does.
+    """
+    token = _calls_kept.set(True)
+    try:
+        yield
+    finally:
+        _calls_kept.reset(token)
+
+
 """The call a macro template is rendering, for a macro that calls another."""
 
 RowT = TypeVar("RowT")
@@ -1240,14 +1261,30 @@ class MacroTemplate:
     def _render(self, parts: Sequence[_Part], ctx: Context) -> str:
         return "".join(
             [
-                part
-                if isinstance(part, str)
-                else self._from_values(part, ctx)
-                if isinstance(part, _FileExpansion)
-                else str(self._call(part, ctx))
+                part if isinstance(part, str) else self._expanded(part, ctx)
                 for part in parts
             ]
         )
+
+    def _expanded(self, part: _Expansion | _FileExpansion, ctx: Context) -> str:
+        """Write what a call writes, or, under `calls_kept`, the call it cannot."""
+        try:
+            if isinstance(part, _FileExpansion):
+                return self._from_values(part, ctx)
+            return str(self._call(part, ctx))
+        except Exception:
+            if not _calls_kept.get():
+                raise
+            call = part.call if isinstance(part, _FileExpansion) else part
+            written = [
+                self._render(parts or (), ctx) if param is None else self._shown(param)
+                for param, parts in call.args
+            ]
+            return f"{self.namespace}.{call.macro.name}({', '.join(written)})"
+
+    def _shown(self, param: str) -> str:
+        """Write a parameter as the template does: `:a.b`, not the `:a__b` it binds as."""
+        return ":" + ".".join(self.paths.get(param, (param,)))
 
     def _from_values(self, part: _FileExpansion, ctx: Context) -> str:
         """Call a `FileMacro` for its values, and write its SQL bound to them."""

@@ -28,8 +28,6 @@ import ast
 import inspect
 import re
 from collections import Counter
-from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -40,7 +38,7 @@ from .exceptions import MacroArgumentError
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-__all__ = ["Discovered", "StaticMacro", "discover", "written_as_called"]
+__all__ = ["Discovered", "StaticMacro", "discover"]
 
 SKIPPED = {
     ".git",
@@ -98,32 +96,9 @@ class StaticMacro(Macro):
         """The line and the column of the function's name, as an editor goes to it."""
         self.func = self._unread
 
-    def _unread(self, *args: Any) -> str:  # noqa: ANN401
-        namespace = _written_as_called.get()
-        if namespace is None:
-            problem = "was read from its source, and is not run"
-            raise MacroArgumentError(self.name, problem)
-        written = ", ".join(str(one) for one in args if not isinstance(one, Context))
-        return f"{namespace}.{self.name}({written})"
-
-
-_written_as_called: ContextVar[str | None] = ContextVar(
-    "sqlakit.written_as_called", default=None
-)
-
-
-@contextmanager
-def written_as_called(namespace: str) -> Iterator[None]:
-    """Have a macro read from its source write its own call, rather than refuse.
-
-    An editor shows a template rendered: the macros it can run expand, and one
-    it has only read stays a call, under ``namespace``, its arguments expanded.
-    """
-    token = _written_as_called.set(namespace)
-    try:
-        yield
-    finally:
-        _written_as_called.reset(token)
+    def _unread(self, *_: Any) -> str:  # noqa: ANN401
+        problem = "was read from its source, and is not run"
+        raise MacroArgumentError(self.name, problem)
 
 
 @dataclass

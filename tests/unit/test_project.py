@@ -494,16 +494,21 @@ def test_a_call_under_tpl_is_marked_when_the_namespace_is_another(
     ]
 
 
-def test_a_macro_read_from_its_source_writes_its_call_when_asked(project: Path) -> None:
-    from sqlakit._sql import Context
-    from sqlakit._static import written_as_called
+def test_a_call_that_cannot_be_made_stays_a_call_when_asked(project: Path) -> None:
+    from sqlakit._sql import Context, calls_kept
 
     loaded = load_project(project)
-    template = loaded.load("x.sql", "SELECT 1 WHERE tpl.if_set(:q, tpl.mine(:teams))")
-    values = {"q": 1, "teams": [1]}
+    template = loaded.load(
+        "x.sql",
+        "SELECT * FROM tpl.values(:rows) AS v\n"
+        "WHERE tpl.if_set(:q, tpl.mine(:teams)) AND tpl.if_set(:b, b = :b)",
+    )
+    values = {"q": 1, "teams": [1], "b": None, "rows": None}
     ctx = Context("postgresql", postgresql.dialect().identifier_preparer, values)
 
-    with pytest.raises(MacroArgumentError, match="was read from its source"):
+    with pytest.raises(MacroArgumentError, match="has no rows"):
         template.render(ctx)
-    with written_as_called("tpl"):
-        assert template.render(ctx) == "SELECT 1 WHERE tpl.mine(:teams)"
+    with calls_kept():
+        assert template.render(ctx) == (
+            "SELECT * FROM tpl.values(:rows) AS v\nWHERE tpl.mine(:teams) AND TRUE"
+        )
