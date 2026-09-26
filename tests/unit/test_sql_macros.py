@@ -1913,3 +1913,31 @@ def test_a_file_macro_in_a_file_of_macros_is_registered_once(tmp_path: Path) -> 
     assert isinstance(templates.macros["for_tenant"], sql_module.FileMacro)
     assert isinstance(templates.macros["other"], sql_module.SqlMacro)
     assert templates.names() == ["a.sql"]
+
+
+def test_a_template_names_the_parameters_a_call_passes(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        {
+            "inner.sql": "SELECT id FROM users WHERE team = :team",
+            "outer.sql": (
+                "SELECT * FROM tpl.include('inner.sql') AS i\n"
+                "WHERE tpl.if_set(:q, tpl.icontains(name, :q))\n"
+                "  AND kind = :filters.kind AND tpl.of_tenant(u, :tenant)\n"
+                "  AND '::text' = :x::text\n"
+                "LIMIT :limit"
+            ),
+        },
+    )
+    (tmp_path / "tenant.sql").write_text(
+        "SELECT u.tenant_id = :tenant_id AS of_tenant FROM u;\n"
+    )
+
+    @sql_macro(str(tmp_path / "tenant.sql"))
+    def of_tenant(u: Sql, tenant: Param) -> dict[str, Any]:
+        return {"tenant_id": tenant.value}
+
+    templates = Templates(tmp_path, macros=[of_tenant])
+    template = templates.engine.get("outer.sql")
+
+    assert template.parameters() == {"team", "q", "filters", "tenant", "x", "limit"}

@@ -994,6 +994,34 @@ class MacroTemplate:
         self._check(self.parts)
         self._compiled = self._compile(self.parts)
 
+    def parameters(self) -> frozenset[str]:
+        """Return the names a call passes values under.
+
+        That is every `:name` the template reads: in its text, in the templates
+        it includes, and as an argument of a macro. `:a.b` is `a`. A parameter a
+        macro binds itself, as `@sql_macro("file.sql")` does, is not one.
+        """
+        roots = {key: path[0] for key, path in self.paths.items()}
+        found: set[str] = set()
+
+        def read(parts: Sequence[_Part], internal: str | None = None) -> None:
+            for part in parts:
+                if isinstance(part, str):
+                    for match in PARAMETER_IN_TEXT.finditer(part):
+                        name = match.group("param")
+                        if name and not (internal and name.startswith(internal)):
+                            found.add(roots.get(name, name))
+                elif isinstance(part, _FileExpansion):
+                    read([part.call])
+                    read(part.parts, f"{part.prefix}__")
+                else:
+                    found.update(roots.get(name, name) for name in part.params)
+                    for _, argument in part.args:
+                        read(argument or ())
+
+        read(self._compiled)
+        return frozenset(found)
+
     def render(self, ctx: Context) -> str:
         """Return the SQL for this call, the values it bound going to ``ctx``."""
         for key, (root, *path) in self.paths.items():
